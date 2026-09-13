@@ -64,6 +64,29 @@ def test_verify_names_the_index_line_a_changed_byte_broke(spec, tmp_path):
     assert f"error: tracks/{TRACK}/index-0000.jsonl:2: not UTF-8" in verify.stdout
 
 
+def test_verify_says_which_key_it_trusted_and_can_be_told_which_to_expect(spec, tmp_path):
+    """manifest.json is unsigned, so a store re-signed under another key is self-consistent; the
+    only way to know it is the competition's store is to pin the key."""
+    root, key = tmp_path / "store", tmp_path / "key"
+    assert cli("store", "init", str(root), "--key", str(key)).returncode == 0
+    store = Store(root, spec, Signer.from_file(key))
+    publish(
+        store, spec, make_record(spec, "genesis", 0, SubmissionRef.make("org/g", "a" * 40), None)
+    )
+    mine = Signer.from_file(key).verify_key_hex
+
+    ok = cli("store", "verify", str(root))
+    assert ok.returncode == 0 and f"validator_key: {mine}" in ok.stdout
+    pinned = cli("store", "verify", str(root), "--validator-key", mine)
+    assert pinned.returncode == 0
+
+    other = Signer.generate().verify_key_hex
+    wrong = cli("store", "verify", str(root), "--validator-key", other)
+    assert wrong.returncode == 1
+    assert f"error: manifest.json is signed by {mine}, not the expected {other}" in wrong.stdout
+    assert f"error: tracks/{TRACK}/index-0000.jsonl:1: bad signature" in wrong.stdout
+
+
 def test_init_refuses_to_resign_a_store_with_another_key(tmp_path):
     root = tmp_path / "store"
     assert cli("store", "init", str(root), "--key", str(tmp_path / "a")).returncode == 0

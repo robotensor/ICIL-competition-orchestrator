@@ -84,7 +84,8 @@ def cmd_store(args: argparse.Namespace) -> int:
     if args.store_cmd == "verify":
         from .store.verify import verify_store
 
-        report = verify_store(args.root, spec)
+        report = verify_store(args.root, spec, validator_key=args.validator_key)
+        print(f"validator_key: {report.validator_key}")
         for w in report.warnings:
             print("warning:", w)
         for e in report.errors:
@@ -179,6 +180,12 @@ def build_parser() -> argparse.ArgumentParser:
         "verify", help="check signatures, sequence, events, media, schema"
     )
     st_verify.add_argument("root")
+    st_verify.add_argument(
+        "--validator-key",
+        default=None,
+        help="the ed25519 public key (hex) this store must be signed by; without it the store's "
+        "own unsigned manifest says which key to trust",
+    )
     st_mirror = st_sub.add_parser("mirror", help="push the store to a Hugging Face dataset repo")
     st_mirror.add_argument("root")
     st_mirror.add_argument("--repo", required=True, help="Hugging Face dataset repo owner/name")

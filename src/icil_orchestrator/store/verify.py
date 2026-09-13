@@ -37,6 +37,8 @@ class Report:
     records: int = 0
     events: int = 0
     media: int = 0
+    #: The key the signatures were checked against, which a reader should recognise.
+    validator_key: str = ""
 
     @property
     def ok(self) -> bool:
@@ -97,7 +99,17 @@ class SchemaCheck:
             report.errors.append(f"{where}: schema {ref}: {err.message} at {path}")
 
 
-def verify_store(root: str | Path, spec: Spec, schema: dict[str, Any] | None = None) -> Report:
+def verify_store(
+    root: str | Path,
+    spec: Spec,
+    schema: dict[str, Any] | None = None,
+    validator_key: str | None = None,
+) -> Report:
+    """Verify the store at `root`.
+
+    `validator_key` is the key the caller expects to have signed it; without one the manifest's own
+    key is trusted and reported, which shows only that the store agrees with itself.
+    """
     report = Report()
     store = Store(root, spec)
     validator = SchemaCheck(schema if schema is not None else load_schema())
@@ -108,6 +120,10 @@ def verify_store(root: str | Path, spec: Spec, schema: dict[str, Any] | None = N
         return report
     validator.check("Manifest", manifest, "manifest.json", report)
     key = str(manifest.get("validator_key", ""))
+    if validator_key is not None and key != validator_key:
+        report.errors.append(f"manifest.json is signed by {key}, not the expected {validator_key}")
+        key = validator_key
+    report.validator_key = key
     if manifest.get("spec_fingerprint") != spec.fingerprint:
         report.warnings.append("manifest spec_fingerprint differs from the loaded spec.json")
 
