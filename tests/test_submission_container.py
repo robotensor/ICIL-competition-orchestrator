@@ -12,6 +12,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -325,3 +326,34 @@ def test_requirements_that_do_not_install_are_rejected_at_build_and_nothing_runs
     assert [s.status for s in report.steps] == ["ok", "ok", "ok", "rejected", "skipped", "skipped"]
     assert not any(n.startswith(f"icil-policy-{report.key}") for n in containers(docker))
     assert docker.image_id(f"icil-submission:{report.key}-{report.sha}") is None
+
+
+def test_requirements_that_never_finish_installing_are_rejected_at_build_in_time(
+    spec, docker, base, cache, tmp_path
+):
+    """A setup.py that never returns: the build is cut at its timeout, the submission is
+    rejected at build, and no image of it is left."""
+    stalled = shutil.copytree(EXAMPLE, tmp_path / "stalled")
+    (stalled / "requirements.txt").write_text("./stall\n")
+    (stalled / "stall").mkdir()
+    (stalled / "stall" / "setup.py").write_text(
+        "import time\ntime.sleep(10**6)\nfrom setuptools import setup\nsetup(name='stall')\n"
+    )
+    started = time.monotonic()
+    report = check_submission(
+        spec,
+        "local/stalled",
+        "main",
+        fetcher=LocalFetcher(cache, stalled),
+        docker=docker,
+        work_dir=tmp_path / "work",
+        base_digest=base.base.digest,
+        gpus=0,
+        build_timeout_s=20.0,
+    )
+    took = time.monotonic() - started
+    assert report.verdict == "rejected" and report.failed_step.name == "build", report.as_dict()
+    assert report.failed_step.detail == "installing requirements.txt did not finish within 20s"
+    assert 20 <= took < 60, took
+    assert docker.image_id(f"icil-submission:{report.key}-{report.sha}") is None
+    assert not any(n.startswith(f"icil-policy-{report.key}") for n in containers(docker))

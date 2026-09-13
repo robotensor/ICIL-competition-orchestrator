@@ -25,6 +25,10 @@ from .image import base_image, build_submission_image
 
 STEPS = ("resolve", "fetch", "manifest", "build", "start", "hello")
 CONTAINER_PREFIX = "icil-policy"
+#: How long a submission's image may take to build - its requirements to install, with network.
+#: A wall clock the orchestrator enforces, so it belongs in `spec.budgets` next to
+#: `policy_start_seconds`; until the spec carries it (a dashboard change), it lives here.
+BUILD_TIMEOUT_S = 1800.0
 
 
 @dataclass
@@ -133,8 +137,12 @@ def check_submission(
     """Every step in order, stopping at the first that fails; the container is gone on return.
 
     `fetcher` is a `HubFetcher` or a `LocalFetcher`; `work_dir` holds the socket directory and
-    the policy's log, which are left for the caller to look at or remove.
+    the policy's log, which are left for the caller to look at or remove. The build is bounded
+    by `build_timeout_s` (`BUILD_TIMEOUT_S` when None): a submission whose requirements never
+    finish installing is rejected at build, not waited for.
     """
+    if build_timeout_s is None:
+        build_timeout_s = BUILD_TIMEOUT_S
     report = SubmissionReport(repo=repo, revision=revision)
     container: PolicyContainer | None = None
     current = report.steps[0]

@@ -126,3 +126,26 @@ def test_requirements_that_do_not_install_reject_the_submission_with_the_reason(
     assert info.value.reason.startswith("installing requirements.txt failed:")
     assert "No matching distribution found for icil-no-such-package" in info.value.reason
     assert docker.runs == [], "nothing ran"
+
+
+def test_requirements_that_never_finish_installing_reject_the_submission_at_build(
+    spec, docker, base, ref, tmp_path
+):
+    """What the requirements do at install time is the submission's, like what its policy does
+    at start: a build that is not done within its timeout is a rejection, not a wait."""
+    root = write_policy_repo(tmp_path / "repo", requirements="requirements.txt")
+    (root / "requirements.txt").write_text("./stalls-forever\n")
+    docker.images["x:y"] = FAKE_BASE_DIGEST
+    docker.build_seconds = 100.0
+    with pytest.raises(SubmissionRejected) as info:
+        build_submission_image(
+            docker, spec, root, check_repository(root, spec), ref, base, timeout_s=25.0
+        )
+    assert info.value.step == "build"
+    assert info.value.reason == "installing requirements.txt did not finish within 25s"
+    assert docker.build_timeouts == [25.0] and docker.runs == []
+    # Given the time, it builds.
+    built = build_submission_image(
+        docker, spec, root, check_repository(root, spec), ref, base, timeout_s=200.0
+    )
+    assert built.tag == submission_tag(ref)

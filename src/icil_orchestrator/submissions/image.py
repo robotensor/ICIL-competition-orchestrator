@@ -26,7 +26,7 @@ from icil_policy.manifest import Manifest
 
 from ..ids import SubmissionRef
 from ..spec import IMAGE_DIGEST_RE
-from .docker import BuildFailed, Docker
+from .docker import BuildFailed, BuildTimedOut, Docker
 from .errors import SubmissionError, SubmissionRejected
 
 #: The base image's Dockerfile, relative to the repository root that is its build context.
@@ -155,20 +155,26 @@ def build_submission_image(
     timeout_s: float | None = None,
 ) -> BuiltImage:
     """`checkout` as an image FROM `base`, tagged by `ref`. A build that fails - the requirements
-    do not install - is a rejection with the log's tail; a base that is not there is not."""
+    do not install - or is not done within `timeout_s` is a rejection with the reason: what the
+    requirements do at install time is the submission's, like what its policy does at start. A
+    base that is not there is not."""
     ensure_base(docker, base)
     dockerfile = submission_dockerfile(base, manifest, spec)
     tag = submission_tag(ref)
     started = time.monotonic()
+    installing = (
+        f"installing {manifest.requirements}"
+        if manifest.requirements is not None
+        else "building the image"
+    )
     try:
         image_id = docker.build(checkout, dockerfile, tag=tag, timeout_s=timeout_s)
     except BuildFailed as exc:
-        what = (
-            f"installing {manifest.requirements} failed"
-            if manifest.requirements is not None
-            else "the image did not build"
-        )
-        raise SubmissionRejected("build", f"{what}:\n{exc.log}") from None
+        raise SubmissionRejected("build", f"{installing} failed:\n{exc.log}") from None
+    except BuildTimedOut as exc:
+        raise SubmissionRejected(
+            "build", f"{installing} did not finish within {exc.timeout_s:g}s"
+        ) from None
     return BuiltImage(
         tag=tag, image_id=image_id, base=base, seconds=round(time.monotonic() - started, 3)
     )

@@ -15,7 +15,7 @@ import pytest
 
 from icil_orchestrator.cli import main
 from icil_orchestrator.ids import is_commit_sha
-from icil_orchestrator.submissions.check import STEPS, check_submission
+from icil_orchestrator.submissions.check import BUILD_TIMEOUT_S, STEPS, check_submission
 from icil_orchestrator.submissions.fetch import LocalFetcher, RepoCache
 from submission_helpers import FAKE_BASE_DIGEST, FakeDocker
 
@@ -73,6 +73,7 @@ def test_check_takes_the_replay_example_through_every_step_and_reports_them(
     assert "action_type qpos" in lines[5] and "listening after" in lines[5]
     assert fake_docker.removed == [fake_docker.runs[0][fake_docker.runs[0].index("--name") + 1]]
     assert (tmp_path / "work" / "policy" / "policy.log").is_file(), "--work keeps the log"
+    assert fake_docker.build_timeouts == [BUILD_TIMEOUT_S], "the build is bounded by default"
 
     # Again, as JSON: the checkout is cached, the image is built again (Docker's cache is its
     # own), and the side an event would record names the commit and the base image.
@@ -137,6 +138,27 @@ def test_check_rejects_requirements_that_do_not_install_and_runs_nothing(
     statuses = [line.split()[1] for line in out.splitlines() if line.split()[:1][0] in STEPS]
     assert statuses == ["ok", "ok", "ok", "rejected", "skipped", "skipped"]
     assert fake_docker.runs == [] and fake_docker.removed == []
+
+
+def test_check_rejects_requirements_that_never_finish_installing_at_build(
+    sandbox_spec, fake_docker, tmp_path, capsys
+):
+    fake_docker.build_seconds = 10.0
+    code = check(
+        sandbox_spec,
+        tmp_path,
+        "local/replay_policy@main",
+        "--local",
+        str(EXAMPLE),
+        "--base-image",
+        FAKE_BASE_DIGEST,
+        "--build-timeout",
+        "5",
+    )
+    out = capsys.readouterr().out
+    assert code == 1 and out.strip().endswith(": REJECTED at build"), out
+    assert "installing requirements.txt did not finish within 5s" in out
+    assert fake_docker.build_timeouts == [5.0] and fake_docker.runs == []
 
 
 def test_check_rejects_a_manifest_naming_a_missing_class_at_hello(

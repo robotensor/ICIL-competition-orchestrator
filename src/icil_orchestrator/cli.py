@@ -221,6 +221,7 @@ def cmd_submission(args: argparse.Namespace) -> int:
             work_dir=work,
             base_digest=args.base_image,
             gpus=args.gpus,
+            build_timeout_s=args.build_timeout,
         )
     finally:
         if not args.work:
@@ -322,6 +323,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sm_check.add_argument(
         "--gpus", type=int, default=None, help="GPUs for the container (default: the spec's)"
+    )
+    sm_check.add_argument(
+        "--build-timeout",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help="how long the image build (the requirements install) may take before the "
+        "submission is rejected at build (default: submissions.check.BUILD_TIMEOUT_S)",
     )
     sm_check.add_argument("--json", action="store_true")
     sm_base = sm_sub.add_parser("build-base", help="build docker/policy-base and print its digest")

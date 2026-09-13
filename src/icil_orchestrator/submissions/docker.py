@@ -42,6 +42,15 @@ class DockerError(SubmissionError):
     """Docker itself could not do what was asked: not installed, not running, refused."""
 
 
+class DockerTimeout(DockerError):
+    """A docker command did not finish within its timeout and was killed."""
+
+    def __init__(self, command: str, timeout_s: float) -> None:
+        self.command = command
+        self.timeout_s = timeout_s
+        super().__init__(f"docker {command} did not finish within {timeout_s:g}s")
+
+
 class BuildFailed(DockerError):
     """`docker build` ran and failed; `log` is the tail of its output."""
 
@@ -49,6 +58,16 @@ class BuildFailed(DockerError):
         self.tag = tag
         self.log = log
         super().__init__(f"building {tag} failed:\n{log}")
+
+
+class BuildTimedOut(DockerError):
+    """`docker build` did not finish within `timeout_s`. The client was killed, and BuildKit
+    cancels a build whose client is gone, so nothing of it keeps running in the daemon."""
+
+    def __init__(self, tag: str, timeout_s: float) -> None:
+        self.tag = tag
+        self.timeout_s = timeout_s
+        super().__init__(f"building {tag} did not finish within {timeout_s:g}s")
 
 
 @dataclass(frozen=True)
@@ -93,7 +112,7 @@ class Docker:
         except FileNotFoundError:
             raise DockerError(f"{self.binary} is not installed or not on PATH") from None
         except subprocess.TimeoutExpired:
-            raise DockerError(f"docker {args[0]} did not finish within {timeout_s:g}s") from None
+            raise DockerTimeout(args[0], timeout_s or 0.0) from None
         if check and done.returncode != 0:
             raise DockerError(
                 f"docker {' '.join(args[:2])} failed ({done.returncode}): {_tail(done.stderr)}"
@@ -131,14 +150,18 @@ class Docker:
         timeout_s: float | None = None,
     ) -> str:
         """Build `dockerfile` (its text; read from stdin) with `context`, tagged `tag`; the image
-        id. `BuildFailed` with the log's tail when the build itself fails."""
+        id. `BuildFailed` with the log's tail when the build itself fails, `BuildTimedOut` when
+        it is not done within `timeout_s`."""
         args = ["build", "--tag", tag, "--file", "-"]
         for key, value in (build_args or {}).items():
             args += ["--build-arg", f"{key}={value}"]
         with tempfile.TemporaryDirectory(prefix="icil-build-") as tmp:
             iidfile = Path(tmp) / "iid"
             args += ["--iidfile", str(iidfile), str(context)]
-            done = self._run(args, input_text=dockerfile, timeout_s=timeout_s, check=False)
+            try:
+                done = self._run(args, input_text=dockerfile, timeout_s=timeout_s, check=False)
+            except DockerTimeout as exc:
+                raise BuildTimedOut(tag, exc.timeout_s) from None
             if done.returncode != 0:
                 raise BuildFailed(tag, _tail(done.stderr + done.stdout))
             try:

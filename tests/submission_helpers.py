@@ -13,7 +13,7 @@ from typing import Any
 import httpx
 from huggingface_hub.errors import RepositoryNotFoundError, RevisionNotFoundError
 
-from icil_orchestrator.submissions.docker import BuildFailed, ContainerState
+from icil_orchestrator.submissions.docker import BuildFailed, BuildTimedOut, ContainerState
 
 SHA_A = "a" * 40
 SHA_B = "b" * 40
@@ -113,6 +113,10 @@ class FakeDocker:
     processes: dict[str, subprocess.Popen] = field(default_factory=dict)
     #: When set, every build fails with this as its log.
     build_failure: str | None = None
+    #: How long a build "takes": one over its timeout times out instead of building.
+    build_seconds: float = 0.0
+    #: The timeout each build was given.
+    build_timeouts: list[float | None] = field(default_factory=list)
 
     # -- images
     def image_id(self, ref):
@@ -123,8 +127,11 @@ class FakeDocker:
 
     def build(self, context, dockerfile, *, tag, build_args=None, timeout_s=None):
         self.builds.append((Path(context), dockerfile, tag, dict(build_args or {})))
+        self.build_timeouts.append(timeout_s)
         if self.build_failure is not None:
             raise BuildFailed(tag, self.build_failure)
+        if timeout_s is not None and self.build_seconds > timeout_s:
+            raise BuildTimedOut(tag, timeout_s)
         image_id = "sha256:" + hashlib.sha256(f"{context}\n{dockerfile}".encode()).hexdigest()
         self.images[tag] = image_id
         self.contexts[image_id] = Path(context)
