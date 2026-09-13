@@ -69,9 +69,12 @@ import sibling  # beside the policy: importable only with the repository root on
 class Probe:
     action_type = "ee"
 
-    def __init__(self, act_sleep_s=0.0, close_marker=None, broken_init=False):
+    def __init__(self, act_sleep_s=0.0, close_marker=None, broken_init=False, linger=False):
         if broken_init:
             raise RuntimeError("the probe refuses to be built")
+        if linger:  # a thread that would keep a politely exiting interpreter alive forever
+            import threading
+            threading.Thread(target=time.sleep, args=(3600,), daemon=False).start()
         print("probe: built", flush=True)
         self.act_sleep_s = act_sleep_s
         self.close_marker = close_marker
