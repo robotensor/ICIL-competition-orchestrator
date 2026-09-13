@@ -36,6 +36,15 @@ class FrameConn:
         raise AssertionError("recv unpickles")
 
 
+class Unconvertible:
+    """Like a tensor on a GPU: it has a shape, and numpy cannot make an array of it."""
+
+    shape = (7,)
+
+    def __array__(self, *args, **kwargs):
+        raise TypeError("can't convert cuda:0 device type tensor to numpy")
+
+
 def nested(depth):
     value = []
     for _ in range(depth):
@@ -118,6 +127,29 @@ def test_an_array_of_any_other_dtype_is_refused_before_anything_is_sent(value):
     conn = FrameConn()
     with pytest.raises(WireError, match="cannot be sent"):
         wire.send(conn, "act", {}, {"ok": np.zeros(1), "bad": value})
+    assert conn.frames == []
+
+
+STRING_DTYPE = getattr(getattr(np, "dtypes", None), "StringDType", None)  # numpy 2 only
+
+
+@pytest.mark.parametrize(
+    "make",
+    [
+        pytest.param(lambda: [[1, 2], [3]], id="ragged"),
+        pytest.param(Unconvertible, id="tensor-on-a-gpu"),
+        pytest.param(
+            lambda: np.array(["a"], dtype=STRING_DTYPE()),
+            id="stringdtype",
+            marks=pytest.mark.skipif(STRING_DTYPE is None, reason="numpy 1 has no StringDType"),
+        ),
+    ],
+)
+def test_a_value_numpy_cannot_turn_into_a_sendable_array_is_refused_before_anything_is_sent(make):
+    conn = FrameConn()
+    # numpy 1 makes an object array of a ragged list where numpy 2 raises; either way it is refused.
+    with pytest.raises(WireError, match="'bad'.*cannot be sent"):
+        wire.send(conn, "act", {}, {"ok": np.zeros(1), "bad": make()})
     assert conn.frames == []
 
 

@@ -248,16 +248,13 @@ class Session:
             self._send("ok")
 
     def _op_act(self, fields: dict[str, Any], arrays: dict[str, np.ndarray]) -> None:
-        ok, result = self._call("act", lambda obs: checked_action(self.policy.act(obs)), arrays)
-        if not ok:
-            return
-        try:
-            frames = wire.encode("action", arrays=result)
-        except WireError as exc:
-            log.error("act returned arrays that cannot be sent: %s", exc)
-            self._error("WireError", f"act: {exc}")
-            return
-        self._send_frames(frames)
+        # Encoding is part of the guarded call: what act returned is the policy's to get right.
+        ok, frames = self._call("act", self._act_frames, arrays)
+        if ok:
+            self._send_frames(frames)
+
+    def _act_frames(self, observation: dict[str, np.ndarray]) -> list[bytes]:
+        return wire.encode("action", arrays=checked_action(self.policy.act(observation)))
 
     def _op_close(self, fields: dict[str, Any], arrays: dict[str, np.ndarray]) -> None:
         close = getattr(self.policy, "close", None)

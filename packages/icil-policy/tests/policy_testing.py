@@ -111,6 +111,17 @@ class Probe:
             return {"action": np.ones((4, 7), np.float32)}
         if mode == "list":
             return {"action": [1.0, 2.0]}
+        if mode == "ragged":
+            return {"action": np.zeros(7), "aux": [[1, 2], [3]]}
+        if mode == "tensor":
+
+            class OnTheGpu:
+                shape = (7,)
+
+                def __array__(self, *args, **kwargs):
+                    raise TypeError("can't convert cuda:0 device type tensor to numpy")
+
+            return {"action": OnTheGpu()}
         state = {
             "cwd": os.getcwd(),
             "path0": sys.path[0],

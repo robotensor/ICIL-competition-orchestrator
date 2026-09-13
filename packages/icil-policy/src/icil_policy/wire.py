@@ -164,8 +164,11 @@ def encode(
 
 
 def _checked(name: str, value: Any) -> np.ndarray:
-    array = value if isinstance(value, np.ndarray) else np.asarray(value)
-    little = array.dtype.newbyteorder("<")
+    try:
+        array = value if isinstance(value, np.ndarray) else np.asarray(value)
+        little = array.dtype.newbyteorder("<")
+    except (TypeError, ValueError) as exc:  # a ragged list, a tensor on a GPU, a new-style dtype
+        raise WireError(f"array {name!r} cannot be sent: {type(exc).__name__}: {exc}") from None
     if little.str not in DTYPES or array.dtype.hasobject:
         raise WireError(f"array {name!r}: dtype {array.dtype} cannot be sent")
     if array.ndim > MAX_NDIM:
