@@ -189,6 +189,10 @@ def test_hello_through_the_container_keeps_the_session_and_removal_follows(
         assert reply == {"protocol": 1, "action_type": "qpos", "policy": "pkg.policy:Policy"}
         assert container.session is not None and container.session.action_type == "qpos"
         assert container.listening_after_s is not None and container.listening_after_s < 30
+        # The start budget was for hello; what drives the policy next gets the act budget.
+        assert container.session.timeout_s == sandbox_spec.budgets["act_timeout_s"]
+        assert container.session.timeout_s < sandbox_spec.budgets["policy_start_seconds"]
+        assert container.session.act({"obs": [0.0]}) == {"action": [0.0]}
         # The server unlinks the socket once its one client is in; the log stays.
         assert not container.socket_path.exists() and container.log_path.exists()
         assert docker.state("icil-policy-test").running and docker.removed == []

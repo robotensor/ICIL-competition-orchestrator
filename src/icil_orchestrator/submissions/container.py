@@ -296,8 +296,10 @@ class PolicyContainer:
         """Wait for the server to listen, then `hello`, all within `timeout_s`; the reply.
 
         The session stays open on `self.session`: the server serves one client, so whoever drives
-        the policy next uses this one. A policy that cannot be built, a server that never listens
-        or a container that exits first is a rejection with the reason and the log's tail.
+        the policy next uses this one, and every call on it is bounded by `budgets.act_timeout_s`
+        - the start budget was for `hello` alone. A policy that cannot be built, a server that
+        never listens or a container that exits first is a rejection with the reason and the
+        log's tail.
         """
         if self.started_at is None:
             self.start()
@@ -311,6 +313,7 @@ class PolicyContainer:
             reply = policy.hello()
         except PolicyUnavailable as exc:
             raise SubmissionRejected("hello", str(exc)) from None
+        policy.timeout_s = float(self.spec.budgets["act_timeout_s"])
         self.session = policy
         return reply
 
