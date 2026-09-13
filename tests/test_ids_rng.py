@@ -2,8 +2,8 @@ from icil_orchestrator.ids import (
     SubmissionRef,
     duel_id,
     event_id,
+    is_commit_sha,
     is_repo,
-    is_sha_revision,
     submission_key,
     unit_id,
     unit_seed,
@@ -45,7 +45,14 @@ def test_golden_values():
 
 def test_repo_and_revision_shapes():
     assert is_repo("org/name") and not is_repo("not a repo") and not is_repo("org/")
-    assert is_sha_revision("abcdef0") and not is_sha_revision("main")
+    # A published record names a resolved commit, and its key and duel id hash that string: an
+    # abbreviation of the same commit is another key, and a branch is code that can change.
+    assert is_commit_sha("a" * 40)
+    assert (
+        not is_commit_sha("main") and not is_commit_sha("abcdef0") and not is_commit_sha("A" * 40)
+    )
+    # `$` in Python matches before a final newline; these must match the whole string.
+    assert not is_repo("org/name\n") and not is_commit_sha("a" * 40 + "\n")
 
 
 def test_hash_rng_determinism_and_range():

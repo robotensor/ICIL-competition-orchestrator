@@ -104,7 +104,7 @@ def cmd_store(args: argparse.Namespace) -> int:
 
 
 def cmd_queue(args: argparse.Namespace) -> int:
-    from .ids import SubmissionRef, is_repo
+    from .ids import SubmissionRef
     from .queue import Queues
 
     spec = _spec(args)
@@ -116,18 +116,17 @@ def cmd_queue(args: argparse.Namespace) -> int:
         return 2
 
     if args.queue_cmd == "add":
-        if not is_repo(args.repo):
-            print(
-                f"error: {args.repo!r} is not a Hugging Face repo id (owner/name)", file=sys.stderr
-            )
-            return 2
         if args.duel_size is not None and args.duel_size not in spec.sizes(track):
             sizes = ", ".join(spec.sizes(track))
             print(f"error: duel size {args.duel_size!r} is not one of {sizes}", file=sys.stderr)
             return 2
-        entry, position = queue.add(
-            args.repo, args.revision, duel_size=args.duel_size, source="cli"
-        )
+        try:
+            entry, position = queue.add(
+                args.repo, args.revision, duel_size=args.duel_size, source="cli"
+            )
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
         print(f"{entry.ref.entry} key={entry.key} track={track} position={position}")
     elif args.queue_cmd == "list":
         for i, e in enumerate(queue.entries(), start=1):
@@ -213,7 +212,7 @@ def build_parser() -> argparse.ArgumentParser:
     q_sub = q.add_subparsers(dest="queue_cmd", required=True)
     q_add = q_sub.add_parser("add", help="queue repo@revision at the back")
     q_add.add_argument("repo")
-    q_add.add_argument("revision")
+    q_add.add_argument("revision", help="a resolved commit sha (40 hex characters)")
     q_add.add_argument("--duel-size", default=None)
     q_sub.add_parser("list")
     q_rm = q_sub.add_parser("remove", help="drop an entry by its key")

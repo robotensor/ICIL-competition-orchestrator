@@ -117,9 +117,9 @@ class Queue:
         source: str = "",
         now: str | None = None,
     ) -> tuple[QueueEntry, int]:
-        """Queue a submission at the back. Re-adding the same `repo@revision` moves it to the back
-        rather than queueing it twice."""
-        ref = SubmissionRef.make(repo, revision)
+        """Queue a submission at the back, at a repo id and a resolved commit sha. Re-adding the
+        same `repo@revision` moves it to the back rather than queueing it twice."""
+        ref = SubmissionRef.resolved(repo, revision)
         with self._locked():
             self.state.entries = [e for e in self.state.entries if e.key != ref.key]
             entry = QueueEntry(

@@ -12,8 +12,10 @@ from dataclasses import dataclass
 
 from .canon import sha256_hex
 
-REPO_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
-HEX_RE = re.compile(r"^[0-9a-f]+$")
+#: Matched with `fullmatch`: Python's `$` also matches before a final newline, and a repo id or a
+#: revision with a newline in it would be hashed into a key and published.
+REPO_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*")
+COMMIT_SHA_RE = re.compile(r"[0-9a-f]{40}")
 
 
 @dataclass(frozen=True)
@@ -28,6 +30,17 @@ class SubmissionRef:
     @classmethod
     def make(cls, repo: str, revision: str) -> SubmissionRef:
         return cls(key=submission_key(repo, revision), repo=repo, revision=revision)
+
+    @classmethod
+    def resolved(cls, repo: str, revision: str) -> SubmissionRef:
+        """`make`, for a submission being accepted: the repo id and the commit are checked."""
+        if not is_repo(repo):
+            raise ValueError(f"{repo!r} is not a Hugging Face repo id (owner/name)")
+        if not is_commit_sha(revision):
+            raise ValueError(
+                f"{revision!r} is not a resolved commit sha (40 lowercase hex characters)"
+            )
+        return cls.make(repo, revision)
 
     def as_dict(self) -> dict[str, str]:
         return {"key": self.key, "repo": self.repo, "revision": self.revision}
@@ -74,8 +87,14 @@ def unit_id(code: str, index: int) -> str:
 
 
 def is_repo(value: str) -> bool:
-    return bool(REPO_RE.match(value)) and len(value) <= 200
+    return bool(REPO_RE.fullmatch(value)) and len(value) <= 200
 
 
-def is_sha_revision(value: str) -> bool:
-    return bool(HEX_RE.match(value)) and 7 <= len(value) <= 64
+def is_commit_sha(value: str) -> bool:
+    """A resolved git commit, which is what a submission is queued and published at.
+
+    A branch or a tag is code that can change after it was queued or crowned, while the key, the
+    duel id and the published record - all hashes of this string - stay as they were. An
+    abbreviation is refused too: it is a different key for the same code.
+    """
+    return bool(COMMIT_SHA_RE.fullmatch(value))

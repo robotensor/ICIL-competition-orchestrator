@@ -10,6 +10,7 @@ from pathlib import Path
 from icil_orchestrator.canon import Signer
 from icil_orchestrator.cli import main
 from icil_orchestrator.ids import SubmissionRef
+from icil_orchestrator.queue import Queue
 from icil_orchestrator.store.writer import Store
 from store_helpers import TRACK, make_record, publish
 
@@ -161,6 +162,14 @@ def test_queue_add_refuses_what_it_cannot_queue(tmp_path, capsys):
     assert main([*base, "add", "not a repo", "1" * 40]) == 2
     assert main([*base, "add", "org/policy", "1" * 40, "--duel-size", "enormous"]) == 2
     assert main(["queue", "--queue", str(tmp_path / "queue"), "--track", "video_only", "list"]) == 2
+    # A branch or an abbreviation is code that can change, or another key for the same code.
+    assert main([*base, "add", "org/policy", "main"]) == 2
+    assert main([*base, "add", "org/policy", "1" * 7]) == 2
     err = capsys.readouterr().err
     assert "is not a Hugging Face repo id" in err and "is not one of smoke, light" in err
     assert "unknown track 'video_only'; the tracks are franka_1arm" in err
+    assert err.count("is not a resolved commit sha (40 lowercase hex characters)") == 2
+    assert (
+        not list((tmp_path / "queue").glob("*.json"))
+        or not Queue(tmp_path / "queue" / f"{TRACK}.json").entries()
+    )
