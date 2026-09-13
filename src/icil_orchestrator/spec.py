@@ -29,6 +29,10 @@ BENCHMARK_ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
 IMAGE_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
+#: What a policy may answer `hello` with, and what `environment.action_dims` is keyed by. The wire
+#: carries one action array per step or chunk, of the dimension its type names.
+ACTION_TYPES = ("qpos", "ee")
+
 #: How a track stops a policy from simply replaying the demonstration it was shown.
 PROTOCOLS = ("different_initial_state", "same_initial_state")
 
@@ -48,6 +52,38 @@ BUDGETS = (
     "side_wall_seconds",
     "duel_wall_seconds",
 )
+
+
+def _environment_errors(where: str, env: dict[str, Any], need) -> None:
+    """A skill's environment is the demonstration's shape: what the prompt holds and what a policy
+    must answer with. The benchmark builds scenes from `embodiment`, the dashboard lays clips out
+    by `cameras`, and a policy's actions are checked against `action_dims`, so a typo here is a
+    duel that voids rather than a contract that fails to load."""
+    embodiment = env.get("embodiment")
+    need(
+        f"{where}.embodiment [left arm, right arm, distance|null]",
+        isinstance(embodiment, list)
+        and len(embodiment) == 3
+        and all(_text(arm) for arm in embodiment[:2])
+        and (embodiment[2] is None or _number(embodiment[2])),
+    )
+    cameras = env.get("cameras")
+    need(
+        f"{where}.cameras non-empty list of names",
+        isinstance(cameras, list) and bool(cameras) and all(_text(c) for c in cameras),
+    )
+    types = env.get("action_types")
+    need(
+        f"{where}.action_types non-empty subset of {list(ACTION_TYPES)}",
+        isinstance(types, list) and bool(types) and all(t in ACTION_TYPES for t in types),
+    )
+    dims = env.get("action_dims")
+    need(f"{where}.action_dims mapping", isinstance(dims, dict))
+    for action_type in types if isinstance(types, list) else ():
+        need(
+            f"{where}.action_dims.{action_type}>0",
+            isinstance(dims, dict) and _positive_int(dims.get(action_type)),
+        )
 
 
 def _non_root(value: Any) -> bool:
@@ -105,6 +141,10 @@ def _positive_int(value: Any) -> bool:
 
 def _positive_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0
+
+
+def _number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
 def _text(value: Any) -> bool:
@@ -169,7 +209,9 @@ def validate_spec(doc: dict[str, Any]) -> list[str]:
         bench = s.get("benchmark")
         need(f"skills.{sid}.benchmark declared", isinstance(bench, str) and bench in benchmarks)
         need(f"skills.{sid}.max_steps", _positive_int(s.get("max_steps")))
-        need(f"skills.{sid}.environment", isinstance(s.get("environment"), dict))
+        env = s.get("environment")
+        need(f"skills.{sid}.environment", isinstance(env, dict))
+        _environment_errors(f"skills.{sid}.environment", env if isinstance(env, dict) else {}, need)
         for gone in ("architecture", "simulator", "tasks", "perturbations"):
             need(f"skills.{sid}.{gone} removed", gone not in s)
 

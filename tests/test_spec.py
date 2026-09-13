@@ -138,6 +138,26 @@ def test_the_sandbox_cannot_be_loosened(spec_doc):
         assert message in validate_spec(doc), (key, value)
 
 
+def test_a_skill_environment_is_the_shape_the_benchmark_and_dashboard_read(spec_doc):
+    """The demonstration's shape lives here: RoboTwin's [left arm, right arm, distance], the clip
+    cameras the dashboard lays out, and the action dimensions a policy must return."""
+    import copy
+
+    for path, value, message in (
+        (("embodiment",), "franka-panda", "skills.franka_stacking.environment.embodiment"),
+        (("embodiment",), ["franka-panda"], "skills.franka_stacking.environment.embodiment"),
+        (("cameras",), "head_camera", "skills.franka_stacking.environment.cameras"),
+        (("cameras",), [], "skills.franka_stacking.environment.cameras"),
+        (("action_types",), ["qpos", "torque"], "skills.franka_stacking.environment.action_types"),
+        (("action_types",), [], "skills.franka_stacking.environment.action_types"),
+        (("action_dims",), {"qpos": "16"}, "skills.franka_stacking.environment.action_dims.qpos>0"),
+        (("action_dims",), {"qpos": 16}, "skills.franka_stacking.environment.action_dims.ee>0"),
+    ):
+        doc = copy.deepcopy(spec_doc)
+        doc["skills"]["franka_stacking"]["environment"][path[0]] = value
+        assert any(e.startswith(message) for e in validate_spec(doc)), (path, value)
+
+
 def test_every_skill_belongs_to_exactly_one_track(spec_doc):
     import copy
 
