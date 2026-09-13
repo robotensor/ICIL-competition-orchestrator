@@ -191,9 +191,10 @@ class Session:
                 except (EOFError, OSError):
                     log.info("the client hung up")
                     return EXIT_OK
-                except WireError as exc:
-                    log.error("malformed message, ending the session: %s", exc)
-                    self._error("WireError", str(exc))
+                except Exception as exc:  # WireError, or whatever else a hostile message raises
+                    why = str(exc) if isinstance(exc, WireError) else f"{type(exc).__name__}: {exc}"
+                    log.error("malformed message, ending the session: %s", why)
+                    self._error("WireError", why)
                     return EXIT_FAILED
                 self._dispatch(op, fields, arrays)
         except _HungUp:

@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import json
 import math
+import reprlib
 from collections.abc import Mapping
 from typing import Any
 
@@ -48,6 +49,7 @@ __all__ = [
     "MAX_ARRAYS",
     "MAX_HEADER_BYTES",
     "MAX_MESSAGE_BYTES",
+    "MAX_NDIM",
     "PROTOCOL_VERSION",
     "REPLY_OPS",
     "WireError",
@@ -93,9 +95,17 @@ MAX_MESSAGE_BYTES = 16 << 30
 #: The most arrays one message may hold. A demonstration holds one per camera and a few more; the
 #: bound keeps checking a header quick, since arrays of size zero cost no bytes at all.
 MAX_ARRAYS = 1024
+#: The most dimensions an array may have: the lowest limit of any numpy this runs with (numpy 1).
+MAX_NDIM = 32
 
 _HEADER_KEYS = frozenset({"protocol", "op", "fields", "arrays"})
 _ARRAY_KEYS = frozenset({"name", "dtype", "shape"})
+
+#: What a refusal quotes of the value it refuses: an excerpt, since the sender chose its size.
+_EXCERPT = reprlib.Repr()
+_EXCERPT.maxlevel = 3
+_EXCERPT.maxstring = _EXCERPT.maxother = _EXCERPT.maxlong = 60
+_EXCERPT.maxlist = _EXCERPT.maxtuple = _EXCERPT.maxdict = _EXCERPT.maxset = 8
 
 
 def parse_address(address: str) -> tuple[str, Any]:
@@ -146,7 +156,7 @@ def encode(
     header = {"protocol": PROTOCOL_VERSION, "op": op, "fields": dict(fields), "arrays": described}
     try:
         encoded = json.dumps(header, separators=(",", ":"), allow_nan=False).encode()
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, RecursionError) as exc:
         raise WireError(f"{op}: fields are not plain JSON: {exc}") from None
     if len(encoded) > MAX_HEADER_BYTES:
         raise WireError(f"{op}: header of {len(encoded)} bytes exceeds {MAX_HEADER_BYTES}")
@@ -158,6 +168,10 @@ def _checked(name: str, value: Any) -> np.ndarray:
     little = array.dtype.newbyteorder("<")
     if little.str not in DTYPES or array.dtype.hasobject:
         raise WireError(f"array {name!r}: dtype {array.dtype} cannot be sent")
+    if array.ndim > MAX_NDIM:
+        raise WireError(
+            f"array {name!r}: {array.ndim} dimensions cannot be sent; at most {MAX_NDIM}"
+        )
     return array.astype(little, copy=False)
 
 
@@ -184,15 +198,15 @@ def recv(
     raw = _frame(conn, MAX_HEADER_BYTES, "header")
     try:
         header = json.loads(raw.decode("utf-8"), parse_constant=_no_constant)
-    except (ValueError, UnicodeDecodeError) as exc:
+    except (ValueError, UnicodeDecodeError, RecursionError) as exc:  # or nested past the stack
         raise WireError(f"malformed header: {type(exc).__name__}: {exc}") from None
     if not isinstance(header, dict):
         raise WireError("header is not a JSON object")
     protocol = header.get("protocol")
     if type(protocol) is not int or protocol != PROTOCOL_VERSION:
-        raise WireError(f"protocol {protocol!r}; this end speaks protocol {PROTOCOL_VERSION}")
+        raise WireError(f"protocol {_excerpt(protocol)}; this end speaks {PROTOCOL_VERSION}")
     if set(header) != _HEADER_KEYS:
-        raise WireError(f"header keys {sorted(header)}; expected {sorted(_HEADER_KEYS)}")
+        raise WireError(f"header keys {_excerpt(sorted(header))}; expected {sorted(_HEADER_KEYS)}")
     op, fields, described = header["op"], header["fields"], header["arrays"]
     if not isinstance(op, str) or not op:
         raise WireError("header op is not a non-empty string")
@@ -203,35 +217,45 @@ def recv(
     if len(described) > MAX_ARRAYS:
         raise WireError(f"header describes {len(described)} arrays; at most {MAX_ARRAYS}")
 
-    specs: list[tuple[str, np.dtype, tuple[int, ...], int]] = []
+    specs: list[tuple[str, str, np.dtype, tuple[int, ...], int]] = []
     seen: set[str] = set()
     total = 0
     for entry in described:
         if not isinstance(entry, dict) or set(entry) != _ARRAY_KEYS:
-            raise WireError(f"array description {entry!r} is not {{name, dtype, shape}}")
+            raise WireError(f"array description {_excerpt(entry)} is not {{name, dtype, shape}}")
         name, dtype, shape = entry["name"], entry["dtype"], entry["shape"]
         if not isinstance(name, str) or not name:
-            raise WireError(f"array name {name!r} is not a non-empty string")
+            raise WireError(f"array name {_excerpt(name)} is not a non-empty string")
+        label = _excerpt(name)
         if name in seen:
-            raise WireError(f"array {name!r} is described twice")
+            raise WireError(f"array {label} is described twice")
         seen.add(name)
         if not isinstance(dtype, str) or dtype not in DTYPES:
-            raise WireError(f"array {name!r}: dtype {dtype!r} is not one this format carries")
+            raise WireError(
+                f"array {label}: dtype {_excerpt(dtype)} is not one this format carries"
+            )
         if not isinstance(shape, list) or not all(
             isinstance(d, int) and not isinstance(d, bool) and d >= 0 for d in shape
         ):
-            raise WireError(f"array {name!r}: shape {shape!r} is not a shape")
-        nbytes = math.prod(shape) * np.dtype(dtype).itemsize
+            raise WireError(f"array {label}: shape {_excerpt(shape)} is not a shape")
+        if len(shape) > MAX_NDIM:
+            raise WireError(f"array {label}: {len(shape)} dimensions; at most {MAX_NDIM}")
+        itemsize = np.dtype(dtype).itemsize
+        # numpy multiplies out every non-zero dimension even when another one is zero, and refuses
+        # a product past its index range, so an empty array is bounded like a full one.
+        if math.prod(d for d in shape if d) * itemsize > max_bytes:
+            raise WireError(f"array {label} exceeds {max_bytes} bytes")
+        nbytes = math.prod(shape) * itemsize
         total += nbytes
         if total > max_bytes:
-            raise WireError(f"message arrays exceed {max_bytes} bytes at {name!r}")
-        specs.append((name, np.dtype(dtype), tuple(shape), nbytes))
+            raise WireError(f"message arrays exceed {max_bytes} bytes at {label}")
+        specs.append((name, label, np.dtype(dtype), tuple(shape), nbytes))
 
     arrays: dict[str, np.ndarray] = {}
-    for name, dtype, shape, nbytes in specs:
-        payload = _frame(conn, nbytes, f"array {name!r}")
+    for name, label, dtype, shape, nbytes in specs:
+        payload = _frame(conn, nbytes, f"array {label}")
         if len(payload) != nbytes:
-            raise WireError(f"array {name!r}: {len(payload)} bytes for a {list(shape)} {dtype.str}")
+            raise WireError(f"array {label}: {len(payload)} bytes for a {list(shape)} {dtype.str}")
         arrays[name] = np.frombuffer(payload, dtype=dtype).reshape(shape)
     return op, fields, arrays
 
@@ -247,6 +271,10 @@ def _frame(conn: Any, limit: int, what: str) -> bytes:
         if readable and not getattr(conn, "readable", True):
             raise WireError(f"{what}: frame longer than {limit} bytes") from None
         raise
+
+
+def _excerpt(value: Any) -> str:
+    return _EXCERPT.repr(value)
 
 
 def _no_constant(token: str) -> Any:

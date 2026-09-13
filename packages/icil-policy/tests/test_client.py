@@ -347,6 +347,51 @@ def test_a_reply_claiming_more_than_a_reply_may_carry_raises_before_reading_it(f
         policy.act({"qpos": np.zeros(2)})
 
 
+def action_header(shape):
+    head = {"protocol": 1, "op": "action", "fields": {}}
+    head["arrays"] = [{"name": "action", "dtype": "<f8", "shape": shape}]
+    return json.dumps(head).encode()
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        [action_header([1] * 70), b"\0" * 8],
+        [action_header([0, 2**64]), b""],
+        [action_header([0, 2**63]), b""],
+        [b"[" * 200_000],
+    ],
+    ids=["ndim-70", "dim-2**64", "dim-2**63", "nested-json"],
+)
+def test_a_reply_numpy_cannot_build_raises_and_abandons_the_connection(fake_server, reply):
+    address, key = fake_server(answering(HELLO_OK, reply))
+    policy = RemotePolicy(address, key, timeout_s=10)
+    policy.hello()
+    with pytest.raises(PolicyUnavailable, match="malformed reply"):
+        policy.act({"qpos": np.zeros(2)})
+    with pytest.raises(PolicyUnavailable, match="closed after an earlier failure"):
+        policy.reset(0)
+
+
+def test_anything_else_a_reply_raises_while_being_read_is_policy_unavailable(
+    fake_server, monkeypatch
+):
+    real_recv = wire.recv
+
+    def recv(conn, **kwargs):  # the fake server's thread keeps the real one
+        if threading.current_thread() is threading.main_thread():
+            raise RuntimeError("an unforeseen way to fail")
+        return real_recv(conn, **kwargs)
+
+    address, key = fake_server(answering(HELLO_OK))
+    policy = RemotePolicy(address, key, timeout_s=10)
+    monkeypatch.setattr(wire, "recv", recv)
+    with pytest.raises(PolicyUnavailable, match="malformed reply: RuntimeError: an unforeseen"):
+        policy.hello()
+    with pytest.raises(PolicyUnavailable, match="closed after an earlier failure"):
+        policy.reset(0)
+
+
 def test_a_reply_describing_too_many_arrays_raises_within_the_timeout(fake_server):
     head = {"protocol": 1, "op": "ok", "fields": {"protocol": 1, "action_type": "ee"}}
     head["arrays"] = [{"name": f"a{i}", "dtype": "|u1", "shape": [0]} for i in range(80_000)]
