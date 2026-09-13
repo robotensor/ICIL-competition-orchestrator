@@ -275,6 +275,42 @@ def test_a_clip_swapped_under_its_name_is_found(history):
     ]
 
 
+@pytest.mark.parametrize(
+    "field, value, error",
+    [
+        (
+            "king",
+            {"key": "e" * 16, "repo": "evil/king", "revision": "e" * 40},
+            "head.json king differs from the king the signed records crown",
+        ),
+        ("block", 9, "head.json block differs from the last record"),
+        (
+            "finished_at",
+            "2030-01-01T00:00:00Z",
+            "head.json finished_at differs from the last record",
+        ),
+    ],
+)
+def test_the_head_is_held_to_what_the_signed_records_say(history, field, value, error):
+    """head.json is unsigned and the dashboard renders it: every field of it is rebuilt from the
+    signed index."""
+    store, sp, _ = history
+    path = store.head_path(TRACK)
+    head = json.loads(path.read_text())
+    head[field] = value
+    path.write_text(json.dumps(head))
+    assert f"tracks/{TRACK}/{error}" in verify_store(store.root, sp).errors
+
+
+def test_an_empty_track_has_an_empty_head(spec, tmp_path):
+    store = Store(tmp_path / "store", spec, Signer.generate())
+    store.init(store.signer.verify_key_hex)
+    store.write_head(TRACK, seq=0, event_id="", block=0, finished_at="", king=KING.as_dict())
+    assert verify_store(store.root, spec).errors == [
+        f"tracks/{TRACK}/head.json king differs from the king the signed records crown"
+    ]
+
+
 def test_the_schema_rejects_scores_outside_zero_to_one(spec, tmp_path):
     store = Store(tmp_path / "store", spec, Signer.generate())
     store.init(store.signer.verify_key_hex)

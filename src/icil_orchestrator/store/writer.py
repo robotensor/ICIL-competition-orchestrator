@@ -33,6 +33,26 @@ CROWNING = frozenset({"duel", "genesis", "succession"})
 LOCK_FILE = ".orchestrator.lock"
 
 
+def king_after(record: dict[str, Any], previous: dict | None) -> dict | None:
+    """Who holds the crown after `record`, given who held it before.
+
+    Crowning is an allow-list: only a duel, a genesis, a succession or a vacancy can move it. Any
+    other kind leaves it exactly as it was - it cannot take the crown, lose it, or blank it by
+    omission - and a kind added later cannot start doing so by accident. The writer's head and
+    `store verify` both go through here, so the head a reader checks is the head the writer meant.
+    """
+    kind = record.get("kind")
+    if record.get("new_king") and kind in CROWNING:
+        return record["new_king"]
+    if kind in ("genesis", "succession"):
+        return record.get("king")
+    if kind == "vacancy":
+        return None
+    if kind == "duel":
+        return record.get("new_king") if record.get("dethroned") else record.get("king")
+    return previous
+
+
 @contextmanager
 def store_lock(root: str | Path):
     """One writer per store. Publishing commands take this; a second writer fails fast."""
@@ -184,17 +204,8 @@ class Store:
         finally:
             os.close(fd)
         self._touch(path)
-        # Crowning is an allow-list: a kind that is not one of these cannot take the crown, and a
-        # kind added later cannot start doing so by accident.
-        king = (
-            record.get("new_king")
-            if record.get("new_king") and record.get("kind") in CROWNING
-            else (
-                record.get("king")
-                if record.get("kind") in ("genesis", "succession")
-                else self.current_king(track, record)
-            )
-        )
+        head = self.head(track)
+        king = king_after(record, head.get("king") if head else None)
         self.write_head(
             track,
             seq=seq,
@@ -204,19 +215,6 @@ class Store:
             king=king,
         )
         return seq
-
-    def current_king(self, track: str, record: dict[str, Any]) -> dict | None:
-        """Who holds the crown after this record.
-
-        Only a duel, a genesis, a succession or a vacancy can move it. Any other kind leaves the
-        head exactly as it was: it cannot take the crown, lose it, or blank it by omission.
-        """
-        if record.get("kind") == "vacancy":
-            return None
-        if record.get("kind") == "duel":
-            return record.get("new_king") if record.get("dethroned") else record.get("king")
-        head = self.head(track)
-        return head.get("king") if head else None
 
     def iter_index(self, track: str) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []

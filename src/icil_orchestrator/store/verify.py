@@ -2,6 +2,18 @@
 
 What a third party runs against a published store. Every problem is reported with the file, and
 for an index line its line number, so a tampered or corrupted record is found, not just detected.
+
+What it proves, and what it cannot:
+
+- Each index line is signed by the key verify trusts; its event file is the one the record's
+  `event_sha256` names; every clip is the bytes its name hashes to; `head.json` and the event
+  bodies agree with the signed records. So nothing published under a signed record can change.
+- `manifest.json` and `head.json` are unsigned. The key comes from the manifest unless the caller
+  pins it (`store verify --validator-key`), so without a pin verify shows only that a store is
+  consistent with *some* key, which it prints.
+- A signed log can be cut short: dropping its last lines and rewriting the head leaves a shorter,
+  valid store. Verify cannot see that from the files alone; a reader who knows a newer tip (an
+  earlier `records=` count, the Hugging Face mirror's commit history) can.
 """
 
 from __future__ import annotations
@@ -15,7 +27,7 @@ from typing import Any
 from ..canon import canonical_json, sha256_file, sha256_hex, verify_signature
 from ..spec import Spec, load_schema
 from .records import media_shas, unit_tally
-from .writer import Store
+from .writer import Store, king_after
 
 
 @dataclass
@@ -117,6 +129,7 @@ def verify_store(root: str | Path, spec: Spec, schema: dict[str, Any] | None = N
     for track in spec.tracks:
         expected_seq = 1
         last: dict[str, Any] | None = None
+        king: dict[str, Any] | None = None
         part = 0
         while True:
             path = store.index_part_path(track, part)
@@ -178,6 +191,7 @@ def verify_store(root: str | Path, spec: Spec, schema: dict[str, Any] | None = N
                 validator.check("IndexRecord", record, where, report)
                 report.records += 1
                 last = record
+                king = king_after(record, king)
 
                 event_where = f"events/{track}/{record.get('event_id')}.json"
                 event_path = store.event_path(track, str(record.get("event_id", "")))
@@ -235,12 +249,22 @@ def verify_store(root: str | Path, spec: Spec, schema: dict[str, Any] | None = N
             report.errors.append(f"tracks/{track}/head.json missing or unreadable")
         else:
             validator.check("Head", head, f"tracks/{track}/head.json", report)
-            if last is not None and (
-                head.get("seq") != last.get("seq") or head.get("event_id") != last.get("event_id")
-            ):
-                report.errors.append(f"tracks/{track}/head.json does not point at the last record")
-            if last is None and head.get("seq") not in (0, None):
-                report.errors.append(f"tracks/{track}/head.json claims records that do not exist")
+            # head.json is unsigned and the dashboard renders it, so all of it is rebuilt from the
+            # signed records and compared - the king through the same rule the writer applies.
+            where = f"tracks/{track}/head.json"
+            if last is None:
+                if head.get("seq") not in (0, None):
+                    report.errors.append(f"{where} claims records that do not exist")
+            else:
+                if head.get("seq") != last.get("seq") or head.get("event_id") != last.get(
+                    "event_id"
+                ):
+                    report.errors.append(f"{where} does not point at the last record")
+                for k in ("block", "finished_at"):
+                    if head.get(k) != last.get(k):
+                        report.errors.append(f"{where} {k} differs from the last record")
+            if head.get("king") != king:
+                report.errors.append(f"{where} king differs from the king the signed records crown")
         queue = store.queue_path(track)
         if queue.exists():
             snapshot, problem = read_json_file(queue)
