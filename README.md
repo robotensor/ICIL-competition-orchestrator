@@ -28,5 +28,10 @@ icil-orchestrator queue --store store/ add owner/policy <commit-sha> --duel-size
 icil-orchestrator queue list
 ```
 
+`store init` writes the store's ed25519 signing key to `keys/orchestrator.ed25519` (mode 0600)
+unless `--key` says otherwise. It is the only thing that can publish as this store, so keep it out
+of the checkout and off the mirror: `/keys/` and `/queue/` are git-ignored, and the mirror uploads
+the store's layout and nothing beside it.
+
 `tests/fixtures/store` is a small signed history for rendering the dashboard
 (`ICIL_STORE=$PWD/tests/fixtures/store npm run dev` in the dashboard); it is not a result.
