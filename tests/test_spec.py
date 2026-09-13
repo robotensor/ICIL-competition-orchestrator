@@ -158,6 +158,20 @@ def test_a_skill_environment_is_the_shape_the_benchmark_and_dashboard_read(spec_
         assert any(e.startswith(message) for e in validate_spec(doc)), (path, value)
 
 
+def test_only_a_view_the_orchestrator_can_honour_is_accepted(spec_doc):
+    """Demonstration views beyond `sensorimotor` need the withholding that was not ported; a spec
+    that asks for one would publish a view nothing enforces."""
+    import copy
+
+    doc = copy.deepcopy(spec_doc)
+    doc["tracks"]["franka_1arm"]["demonstration"]["view"] = "video_only"
+    assert "tracks.franka_1arm.demonstration.view" in validate_spec(doc)
+
+    doc = copy.deepcopy(spec_doc)
+    doc["tracks"]["franka_1arm"]["demonstration"]["withheld"] = ["actions"]
+    assert "tracks.franka_1arm.demonstration.withheld is empty" in validate_spec(doc)
+
+
 def test_every_skill_belongs_to_exactly_one_track(spec_doc):
     import copy
 

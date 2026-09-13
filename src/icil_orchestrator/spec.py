@@ -36,8 +36,10 @@ ACTION_TYPES = ("qpos", "ee")
 #: How a track stops a policy from simply replaying the demonstration it was shown.
 PROTOCOLS = ("different_initial_state", "same_initial_state")
 
-#: What a track's policies may see of a demonstration.
-DEMO_VIEWS = ("sensorimotor", "video_only")
+#: What a track's policies may see of a demonstration. Only the whole demonstration: withholding a
+#: channel (icilval's `video_only`) needs the demonstration view that was not ported, so a spec
+#: asking for one would publish a view nothing enforces.
+DEMO_VIEWS = ("sensorimotor",)
 
 #: Where a track's prompts come from. Only "materialized" exists here: prompts are produced once
 #: per duel by the benchmark and published with the event. Pools were the weights-era alternative.
@@ -272,6 +274,7 @@ def validate_spec(doc: dict[str, Any]) -> list[str]:
             isinstance(demo.get("modalities"), list) and "video" in demo["modalities"],
         )
         need(f"tracks.{tid}.demonstration.withheld", isinstance(demo.get("withheld"), list))
+        need(f"tracks.{tid}.demonstration.withheld is empty", demo.get("withheld") == [])
         track_skills = t.get("skills")
         need(
             f"tracks.{tid}.skills non-empty", isinstance(track_skills, list) and bool(track_skills)
