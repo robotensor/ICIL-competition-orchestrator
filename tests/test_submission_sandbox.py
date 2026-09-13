@@ -8,6 +8,8 @@ kernel's isolation, which the container tests check for real.
 
 from __future__ import annotations
 
+import os
+import socket
 import time
 
 import pytest
@@ -19,6 +21,7 @@ from icil_orchestrator.submissions.container import (
     AUTHKEY_ENV,
     HARDENING,
     PolicyContainer,
+    is_socket,
     prepare_socket_dir,
     run_argv,
     serve_argv,
@@ -113,6 +116,23 @@ def test_the_shared_directory_is_private_to_the_sandbox_user(sandbox_spec, tmp_p
     uid, gid = sandbox_user(sandbox_spec)
     assert (info.st_mode & 0o777, info.st_uid, info.st_gid) == (0o700, uid, gid)
     assert not (shared / "policy.sock").exists(), "a stale socket would be connected to"
+
+
+def test_only_a_socket_itself_counts_as_listening(tmp_path):
+    """The policy can write to the socket's directory: a plain file, a link to a socket or to
+    anything else at the socket's name is not a server listening."""
+    assert not is_socket(tmp_path / "policy.sock"), "nothing there yet"
+    (tmp_path / "policy.sock").write_text("not a socket")
+    assert not is_socket(tmp_path / "policy.sock")
+    (tmp_path / "policy.sock").unlink()
+    os.symlink("/etc/passwd", tmp_path / "policy.sock")
+    assert not is_socket(tmp_path / "policy.sock"), "exists(), which follows, would say yes"
+    (tmp_path / "policy.sock").unlink()
+    with socket.socket(socket.AF_UNIX) as real:
+        real.bind(str(tmp_path / "real.sock"))
+        assert is_socket(tmp_path / "real.sock")
+        os.symlink(tmp_path / "real.sock", tmp_path / "policy.sock")
+        assert not is_socket(tmp_path / "policy.sock"), "a link to a socket is not the socket"
 
 
 def test_hello_through_the_container_keeps_the_session_and_removal_follows(

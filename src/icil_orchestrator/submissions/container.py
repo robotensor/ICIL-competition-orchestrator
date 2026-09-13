@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import os
 import secrets
+import stat
 import time
 from pathlib import Path
 from typing import Any
@@ -116,6 +117,16 @@ def run_argv(
     return args
 
 
+def is_socket(path: Path) -> bool:
+    """True when `path` is a Unix socket itself - not a symbolic link to one, or to anything, and
+    not a file of another kind. The policy can write to the socket's directory, so what is there
+    is looked at without following it."""
+    try:
+        return stat.S_ISSOCK(os.lstat(path).st_mode)
+    except OSError:
+        return False
+
+
 def prepare_socket_dir(directory: Path, spec: Any) -> Path:
     """The shared directory: created, mode 0700, owned by the sandbox user."""
     uid, gid = sandbox_user(spec)
@@ -200,7 +211,7 @@ class PolicyContainer:
 
     def _wait_listening(self, deadline: float) -> None:
         while True:
-            if self.socket_path.exists():
+            if is_socket(self.socket_path):
                 self.listening_after_s = round(time.monotonic() - self.started_at, 3)  # type: ignore[operator]
                 return
             state = self.docker.state(self.name)
