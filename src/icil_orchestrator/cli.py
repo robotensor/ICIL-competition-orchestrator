@@ -203,6 +203,24 @@ def cmd_submission(args: argparse.Namespace) -> int:
             print(built.image_id)
         return 0
 
+    if args.submission_cmd == "prune":
+        from .submissions import SubmissionError
+        from .submissions.image import prune_submission_images
+
+        try:
+            removed, kept = prune_submission_images(docker)
+        except SubmissionError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        if args.json:
+            print(json.dumps({"removed": removed, "kept": kept}, indent=2, sort_keys=True))
+        else:
+            for ref in removed:
+                print(f"removed {ref}")
+            for ref, why in kept.items():
+                print(f"kept    {ref}: {why}")
+        return 0
+
     from .submissions.check import check_submission
     from .submissions.fetch import HubFetcher, LocalFetcher, RepoCache
 
@@ -342,6 +360,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--context", default=".", help="the repository root (default: the current directory)"
     )
     sm_base.add_argument("--json", action="store_true")
+    sm_prune = sm_sub.add_parser(
+        "prune", help="remove the submission images no container was made from"
+    )
+    sm_prune.add_argument("--json", action="store_true")
     sm.set_defaults(func=cmd_submission)
 
     return p

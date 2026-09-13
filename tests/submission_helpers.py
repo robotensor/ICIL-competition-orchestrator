@@ -126,6 +126,8 @@ class FakeDocker:
     run_envs: list[dict] = field(default_factory=list)
     removed: list[str] = field(default_factory=list)
     processes: dict[str, subprocess.Popen] = field(default_factory=dict)
+    #: The image each container was made from, by name, until it is removed.
+    container_images: dict[str, str] = field(default_factory=dict)
     #: Every container's labels, by name, until it is removed; a test may add one it never ran.
     labels: dict[str, dict[str, str]] = field(default_factory=dict)
     #: When set, every build fails with this as its log.
@@ -158,8 +160,15 @@ class FakeDocker:
         self.images[ref] = image if image.startswith("sha256:") else self.images[image]
         self.tags.append((image, ref))
 
-    def remove_image(self, ref):
+    def image_refs(self, repository):
+        return [ref for ref in self.images if ref.startswith(f"{repository}:")]
+
+    def remove_image(self, ref, *, force=True):
+        users = [name for name, image in self.container_images.items() if image == ref]
+        if users and not force:
+            return f"conflict: unable to remove {ref}: container {users[0]} is using it"
         self.images.pop(ref, None)
+        return ""
 
     # -- containers
     def run(self, args, *, env=None):
@@ -173,6 +182,7 @@ class FakeDocker:
         mount = next(a for a in args if a.startswith("type=bind,src="))
         shared = mount.removeprefix("type=bind,src=").split(",")[0]
         image = args[args.index("--env") + 2]
+        self.container_images[name] = image
         checkout = self.contexts[self.images[image]]
         argv = [
             a.replace("/submission", str(checkout)).replace("/run/icil", shared)
@@ -213,6 +223,7 @@ class FakeDocker:
     def remove(self, name):
         self.removed.append(name)
         self.labels.pop(name, None)
+        self.container_images.pop(name, None)
         process = self.processes.pop(name, None)
         if process is not None:
             process.kill()

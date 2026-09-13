@@ -103,3 +103,22 @@ def test_policy_containers_are_listed_with_their_labels_and_a_vanished_one_skipp
     assert found.name == "icil-policy-one" and found.running
     assert found.labels["icil.shared-dir"] == "/work/a b,c/policy", "a path is taken whole"
     assert "label=icil.orchestrator=policy" in (tmp_path / "ps").read_text()
+
+
+def test_images_are_listed_by_repository_and_removed_unforced_with_the_reason(tmp_path):
+    script = (
+        'if [ "$1" = images ]; then printf "icil-submission:k-s\\nicil-submission:<none>\\n"; '
+        "exit 0; fi\n"
+        'echo "$@" >> ' + str(tmp_path / "rmi") + "\n"
+        'if [ "$2" = icil-submission:used ]; then echo "conflict: in use" >&2; exit 1; fi\n'
+    )
+    docker = Docker(binary=fake_binary(tmp_path / "docker", script))
+    assert docker.image_refs("icil-submission") == ["icil-submission:k-s"]
+    assert docker.remove_image("icil-submission:k-s", force=False) == ""
+    assert docker.remove_image("icil-submission:used", force=False) == "conflict: in use"
+    assert docker.remove_image("x:y") == ""
+    assert (tmp_path / "rmi").read_text().splitlines() == [
+        "rmi icil-submission:k-s",
+        "rmi icil-submission:used",
+        "rmi --force x:y",
+    ]

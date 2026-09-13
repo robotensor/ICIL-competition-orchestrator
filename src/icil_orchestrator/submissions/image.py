@@ -13,6 +13,13 @@ names the digest, never the tag.
 **A submission's image** is its checkout copied to `/submission` and its requirements installed,
 with network, at build time - and nothing else. The image is tagged by the submission's key and
 commit sha, so the same submission builds to the same tag and Docker's cache does the rest.
+
+**Copied, not mounted.** The checkout is in the image rather than bind-mounted read-only at run
+time: the requirements install needs it at build time (a requirement may be the repository's own
+package), the image id recorded with a side is then exactly the code that ran, and the container
+mounts nothing of the host but its socket directory. Under `--read-only` `/submission` is as
+unwritable as a read-only mount. The cost is disk: a checkout of up to `max_repo_bytes` is also a
+layer, so images stay until `submission prune` (`prune_submission_images`) removes them.
 """
 
 from __future__ import annotations
@@ -199,3 +206,18 @@ def build_submission_image(
     return BuiltImage(
         tag=tag, image_id=image_id, base=base, seconds=round(time.monotonic() - started, 3)
     )
+
+
+def prune_submission_images(docker: Docker) -> tuple[list[str], dict[str, str]]:
+    """Remove every `SUBMISSION_IMAGE` tag no container was made from: `(removed, {kept: why})`.
+    Never forced, so an image a container still uses - a check or a duel in progress, or a
+    leftover `reap_orphans` has not reached - is kept and says why."""
+    removed: list[str] = []
+    kept: dict[str, str] = {}
+    for ref in docker.image_refs(SUBMISSION_IMAGE):
+        why = docker.remove_image(ref, force=False)
+        if why:
+            kept[ref] = why
+        else:
+            removed.append(ref)
+    return removed, kept

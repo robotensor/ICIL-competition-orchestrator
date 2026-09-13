@@ -187,8 +187,23 @@ class Docker:
     def tag(self, image: str, ref: str) -> None:
         self._run(["tag", image, ref], timeout_s=60)
 
-    def remove_image(self, ref: str) -> None:
-        self._run(["rmi", "--force", ref], check=False, timeout_s=300)
+    def image_refs(self, repository: str) -> list[str]:
+        """Every local `repository:tag` of `repository`; an untagged image has none."""
+        done = self._run(
+            ["images", "--format", "{{.Repository}}:{{.Tag}}", repository], timeout_s=60
+        )
+        refs = (line.strip() for line in done.stdout.splitlines())
+        return [
+            ref
+            for ref in refs
+            if ref.startswith(f"{repository}:") and ref != f"{repository}:<none>"
+        ]
+
+    def remove_image(self, ref: str, *, force: bool = True) -> str:
+        """`docker rmi`: "" once `ref` is gone, docker's reason when it is not - without `force`,
+        an image a container (running or not) was made from is refused."""
+        done = self._run(["rmi", *(["--force"] if force else []), ref], check=False, timeout_s=300)
+        return "" if done.returncode == 0 else _tail(done.stderr, 300) or f"exit {done.returncode}"
 
     # -- containers -------------------------------------------------------------------------
 

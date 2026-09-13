@@ -209,3 +209,30 @@ def test_build_base_prints_the_digest(spec, fake_docker, capsys):
     assert fake_docker.image_id(f"icil-policy-base:{digest[7:]}") == digest
     assert main(["submission", "build-base", "--context", str(EXAMPLE.parents[3]), "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["base"]["digest"] == digest
+
+
+def test_prune_removes_the_submission_images_no_container_uses(
+    sandbox_spec, fake_docker, tmp_path, capsys
+):
+    """The checkout is copied into its image, so every checked submission leaves an image of up
+    to max_repo_bytes; `prune` removes those nothing uses, and never the base."""
+    assert check(sandbox_spec, tmp_path, "local/replay_policy@main", "--local", str(EXAMPLE),
+                 "--base-image", FAKE_BASE_DIGEST) == 0  # fmt: skip
+    capsys.readouterr()
+    (checked,) = [ref for ref in fake_docker.images if ref.startswith("icil-submission:")]
+    fake_docker.images["icil-submission:in-use"] = "sha256:" + "c" * 64
+    fake_docker.container_images["icil-policy-running"] = "icil-submission:in-use"
+
+    assert main(["submission", "prune"]) == 0
+    out = capsys.readouterr().out.splitlines()
+    assert out[0] == f"removed {checked}"
+    assert out[1].startswith("kept    icil-submission:in-use: conflict")
+    assert checked not in fake_docker.images and "icil-submission:in-use" in fake_docker.images
+    assert fake_docker.images["icil-policy-base:latest"] == FAKE_BASE_DIGEST
+
+    del fake_docker.container_images["icil-policy-running"]
+    assert main(["submission", "prune", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "removed": ["icil-submission:in-use"],
+        "kept": {},
+    }
