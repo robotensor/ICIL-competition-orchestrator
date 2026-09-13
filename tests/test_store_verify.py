@@ -157,6 +157,25 @@ def test_an_event_file_that_is_not_json_is_unreadable_not_missing(history):
     assert f"{INDEX}:2: event file unreadable (not UTF-8)" in verify_store(store.root, sp).errors
 
 
+def test_a_manifest_that_hides_a_track_hides_nothing(history):
+    """manifest.json is unsigned; the tracks verified are the spec's, whatever it lists."""
+    import json
+
+    store, sp, _ = history
+    _flip_one_byte(store, 2, b"1", b"7")
+    manifest = json.loads((store.root / "manifest.json").read_text())
+    manifest["tracks"] = []
+    (store.root / "manifest.json").write_text(json.dumps(manifest))
+    (store.root / "tracks" / "elsewhere").mkdir()
+    (store.root / "tracks" / "elsewhere" / "index-0000.jsonl").write_text("")
+
+    report = verify_store(store.root, sp)
+    assert not report.ok and report.records == 3
+    assert f"{INDEX}:2: bad signature" in report.errors
+    assert "manifest.json lists tracks [] but the spec's are ['franka_1arm']" in report.errors
+    assert "tracks/elsewhere is not a track of the spec" in report.errors
+
+
 def test_a_flipped_signature_byte_is_named(history):
     store, sp, _ = history
     path = store.root / INDEX

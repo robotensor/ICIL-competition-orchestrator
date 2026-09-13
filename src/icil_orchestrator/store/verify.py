@@ -97,7 +97,19 @@ def verify_store(root: str | Path, spec: Spec, schema: dict[str, Any] | None = N
         report.warnings.append("manifest spec_fingerprint differs from the loaded spec.json")
 
     video_ext = spec.video_format
-    for track in manifest.get("tracks", []):
+    # manifest.json is unsigned, so it cannot choose what is verified: the tracks are the spec's,
+    # and anything the store holds for another track is reported rather than skipped.
+    listed = manifest.get("tracks")
+    if listed != list(spec.tracks):
+        report.errors.append(
+            f"manifest.json lists tracks {listed!r} but the spec's are {list(spec.tracks)!r}"
+        )
+    for top in ("tracks", "events"):
+        folder = store.root / top
+        for entry in sorted(folder.iterdir()) if folder.is_dir() else ():
+            if entry.name not in spec.tracks:
+                report.errors.append(f"{top}/{entry.name} is not a track of the spec")
+    for track in spec.tracks:
         expected_seq = 1
         last: dict[str, Any] | None = None
         part = 0
