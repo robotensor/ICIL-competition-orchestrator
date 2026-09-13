@@ -210,7 +210,8 @@ def test_queue_add_refuses_what_it_cannot_queue(tmp_path, capsys, monkeypatch):
     err = capsys.readouterr().err
     assert "is not a Hugging Face repo id" in err and "is not one of smoke, light" in err
     assert "unknown track 'video_only'; the tracks are franka_1arm" in err
-    assert err.count("Revision Not Found") == 2 and "Repository Not Found" in err
+    assert err.count("revision not found: Invalid rev id: ") == 2
+    assert "org/missing@main: repository not found" in err and "Request ID" not in err
     assert hub.calls == [
         ("org/policy", "no-such-branch"),
         ("org/policy", "a" * 7),

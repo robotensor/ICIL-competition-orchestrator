@@ -59,12 +59,18 @@ def test_the_resolved_ref_is_keyed_by_the_sha_and_lists_the_files_with_sizes(hub
 
 
 def test_what_the_hub_does_not_have_is_rejected_with_the_reason(hub):
-    with pytest.raises(SubmissionRejected, match="Repository Not Found") as info:
+    """The reason carries the Hub's own words, which its 404 puts lines after the request id."""
+    with pytest.raises(SubmissionRejected) as info:
         resolve("org/missing", "main", api=hub)
     assert info.value.step == "resolve"
-    with pytest.raises(SubmissionRejected, match="Revision Not Found"):
+    assert info.value.reason == "org/missing@main: repository not found"
+    with pytest.raises(SubmissionRejected) as info:
         resolve("org/policy", "no-such-branch", api=hub)
-    with pytest.raises(SubmissionRejected, match="Revision Not Found"):
+    assert info.value.reason == (
+        "org/policy@no-such-branch: revision not found: Invalid rev id: no-such-branch"
+    )
+    assert "Request ID" not in info.value.reason
+    with pytest.raises(SubmissionRejected, match="revision not found: Invalid rev id: c+$"):
         resolve("org/policy", "c" * 40, api=hub)
     with pytest.raises(SubmissionRejected, match="is not a Hugging Face repo id"):
         resolve("not a repo", "main", api=hub)

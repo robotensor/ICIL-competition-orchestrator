@@ -65,8 +65,14 @@ def resolve(repo: str, revision: str, *, api: Any = None) -> Resolved:
 
     try:
         info = api.repo_info(repo, revision=revision, repo_type=REPO_TYPE, files_metadata=True)
-    except (RepositoryNotFoundError, RevisionNotFoundError) as exc:
-        raise SubmissionRejected("resolve", f"{repo}@{revision}: {_first_line(exc)}") from None
+    except RepositoryNotFoundError as exc:
+        raise SubmissionRejected(
+            "resolve", f"{repo}@{revision}: {_not_found('repository not found', exc)}"
+        ) from None
+    except RevisionNotFoundError as exc:
+        raise SubmissionRejected(
+            "resolve", f"{repo}@{revision}: {_not_found('revision not found', exc)}"
+        ) from None
     except HfHubHTTPError as exc:
         raise SubmissionError(
             f"the Hub could not resolve {repo}@{revision}: {_first_line(exc)}"
@@ -102,6 +108,16 @@ def _files(siblings: Iterable[Any] | None) -> tuple[RepoFile, ...]:
         size = getattr(entry, "size", None)
         files.append(RepoFile(path=path, size=int(size) if isinstance(size, int) else None))
     return tuple(files)
+
+
+def _not_found(what: str, exc: BaseException) -> str:
+    """`what`, and the Hub's own words for it when it gave any: its 404 reads "404 Client Error.
+    (Request ID: ...)" first and says what was not found lines later, in `server_message` - for a
+    revision, "Invalid rev id: <name>"."""
+    message = getattr(exc, "server_message", None)
+    if isinstance(message, str) and message.strip() and message.strip().lower() != what:
+        return f"{what}: {message.strip()}"
+    return what
 
 
 def _first_line(exc: BaseException) -> str:

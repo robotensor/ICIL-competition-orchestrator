@@ -25,9 +25,15 @@ def hub_response(status: int) -> httpx.Response:
     return httpx.Response(status, request=request)
 
 
-def not_found(kind, what: str):
-    """The 404 the Hub answers with, as huggingface_hub raises it."""
-    return kind(f"404 Client Error. {what} Not Found", response=hub_response(404))
+def not_found(kind, what: str, detail: str, repo: str, revision: str):
+    """The 404 the Hub answers with, in the shape huggingface_hub raises it: a request id first,
+    what was not found lines later, and the server's own words last and in `server_message`."""
+    message = (
+        "404 Client Error. (Request ID: Root=1-6aa6e45a-5ab94e211267ab2143004ac4)\n\n"
+        f"{what} Not Found for url: https://huggingface.co/api/models/{repo}/revision/{revision}"
+        f"?blobs=true.\n{detail}"
+    )
+    return kind(message, response=hub_response(404), server_message=detail)
 
 
 @dataclass
@@ -61,9 +67,13 @@ class FakeHub:
         self.calls.append((repo_id, revision))
         assert repo_type == "model" and files_metadata
         if repo_id not in self.repos:
-            raise not_found(RepositoryNotFoundError, "Repository")
+            raise not_found(
+                RepositoryNotFoundError, "Repository", "Repository not found", repo_id, revision
+            )
         if revision not in self.repos[repo_id]:
-            raise not_found(RevisionNotFoundError, "Revision")
+            raise not_found(
+                RevisionNotFoundError, "Revision", f"Invalid rev id: {revision}", repo_id, revision
+            )
         sha, files = self.repos[repo_id][revision]
         return FakeInfo(sha, [FakeSibling(p, s) for p, s in files.items()])
 
