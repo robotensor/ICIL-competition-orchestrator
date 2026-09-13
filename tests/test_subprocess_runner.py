@@ -271,6 +271,40 @@ def test_a_result_carrying_only_what_the_abi_requires_still_makes_an_outcome():
     assert out.progress is None and out.metric is None and out.extra == {}
 
 
+def test_non_finite_numbers_in_a_result_never_stop_the_duel(fake, tmp_path):
+    """JSON parsers accept NaN and Infinity; `int(nan)` raises. One such result must not lose the
+    units after it, nor carry a NaN on to a record that cannot be signed."""
+
+    class NaN(type(fake)):
+        def run_command(self, *, out_dir, **kw):
+            body = '{"success": true, "void": false, "steps": NaN, "progress": Infinity, "metric": -Infinity}'
+            code = f"open({out_dir + '/result.json'!r}, 'w').write({body!r})"
+            return [sys.executable, "-c", code]
+
+        def read_result(self, *, out_dir):
+            return runner.read_result_file(out_dir)
+
+    outcomes = run(NaN(), [unit(0), unit(1)], tmp_path)
+    assert len(outcomes) == 2
+    for outcome in outcomes:
+        assert (outcome.success, outcome.void) == (True, False)
+        assert (outcome.steps, outcome.progress, outcome.metric) == (None, None, None)
+    assert runner.outcome_from({"success": False, "steps": 1e400}).steps is None
+
+
+def test_a_result_that_cannot_be_read_into_an_outcome_is_void(fake, tmp_path):
+    class Odd(dict):
+        def items(self):
+            raise RuntimeError("not today")
+
+    class Weird(type(fake)):
+        def read_result(self, *, out_dir):
+            return Odd(success=True, void=False)
+
+    (outcome,) = run(Weird(), [unit(0)], tmp_path)
+    assert outcome.void and outcome.error.startswith("fake: unusable result: RuntimeError")
+
+
 def test_read_result_file_never_raises(tmp_path):
     assert runner.read_result_file(tmp_path)["void"] is True
     (tmp_path / "result.json").write_text("[1, 2]")

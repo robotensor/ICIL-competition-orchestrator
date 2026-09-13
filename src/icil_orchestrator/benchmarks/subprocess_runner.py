@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import signal
 import subprocess
@@ -93,12 +94,18 @@ def voided(reason: str, *, wall_s: float = 0.0) -> Outcome:
     return Outcome(success=None, void=True, steps=None, error=reason, wall_s=wall_s)
 
 
+def _finite(value: Any) -> bool:
+    """A JSON number that can be scored and signed: `json.loads` accepts NaN and Infinity, which
+    `int()` refuses and canonical JSON cannot encode."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
 def _int_or_none(value: Any) -> int | None:
-    return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+    return int(value) if _finite(value) else None
 
 
 def _float_or_none(value: Any) -> float | None:
-    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+    return float(value) if _finite(value) else None
 
 
 def _str_or_none(value: Any) -> str | None:
@@ -252,7 +259,10 @@ def run_unit(
     if not isinstance(result, Mapping):
         return void(f"read_result returned {type(result).__name__}, not a mapping")
 
-    outcome = outcome_from(result, wall_s=round(time.monotonic() - started, 3))
+    try:
+        outcome = outcome_from(result, wall_s=round(time.monotonic() - started, 3))
+    except Exception as exc:  # noqa: BLE001 - whatever the mapping holds, it is this unit's problem
+        return void(f"unusable result: {type(exc).__name__}: {exc}")
     if outcome.void and not outcome.error.startswith(f"{name}: "):  # type: ignore[union-attr]
         outcome.error = f"{name}: {outcome.error}"
     clip = out / EVALUATION_CLIP
