@@ -92,7 +92,18 @@ def test_run_command_must_take_the_authkey_env_name():
         def run_command(self, *, unit, prompt, out_dir, policy_address):  # type: ignore[override]
             return []
 
-    assert validate_plugin(Broken()) == ["run_command: does not accept authkey_env"]
+    assert "run_command: does not accept authkey_env" in validate_plugin(Broken())
+
+
+def test_run_command_must_take_extra_keywords():
+    """ABI v1 is `run_command(*, ..., authkey_env, **extra)`, and the runner forwards `extra`; a
+    builder without it would raise on the first duel that passes one, voiding every unit."""
+
+    class Strict(Minimal):
+        def run_command(self, *, unit, prompt, out_dir, policy_address, authkey_env):  # type: ignore[override]
+            return []
+
+    assert validate_plugin(Strict()) == ["run_command: does not accept **extra"]
 
 
 def test_derive_units_must_take_a_category():

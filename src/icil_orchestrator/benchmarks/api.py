@@ -53,6 +53,9 @@ REQUIRED_KEYWORDS: dict[str, tuple[str, ...]] = {
     "run_command": ("unit", "prompt", "out_dir", "policy_address", "authkey_env"),
 }
 
+#: Methods that must also take `**extra`: the orchestrator forwards keywords a later duel adds.
+VAR_KEYWORD_METHODS = ("run_command",)
+
 #: Written by `materialize_command`'s subprocess: the prompt's named arrays (including the
 #: privileged `meta`, which never reaches a policy) ...
 PROMPT_FILE = "prompt.npz"
@@ -190,4 +193,7 @@ def _keyword_errors(name: str, method: Any) -> list[str]:
         for n, p in parameters.items()
         if p.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
     }
-    return [f"{name}: does not accept {n}" for n in required if n not in accepted]
+    errors = [f"{name}: does not accept {n}" for n in required if n not in accepted]
+    if name in VAR_KEYWORD_METHODS:
+        errors.append(f"{name}: does not accept **extra")
+    return errors
