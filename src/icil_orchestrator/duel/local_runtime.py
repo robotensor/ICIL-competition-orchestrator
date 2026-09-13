@@ -66,10 +66,12 @@ def local_directories(pairs: Mapping[str, str | os.PathLike[str]]) -> dict[str, 
 def tree_hash(directory: Path) -> str:
     """A 40-hex address of a directory's files and bytes, standing in for a commit sha."""
     digest = hashlib.sha1()
-    for path in sorted(directory.rglob("*")):
+    paths = []
+    for root, dirs, files in os.walk(directory):  # never follows a link to a directory
+        dirs[:] = [d for d in dirs if d not in IGNORED]
+        paths += [Path(root) / name for name in (*files, *dirs)]
+    for path in sorted(paths):
         rel = path.relative_to(directory)
-        if any(part in IGNORED for part in rel.parts):
-            continue
         info = os.lstat(path)
         if stat.S_ISREG(info.st_mode):
             content = hashlib.sha1(path.read_bytes()).hexdigest()
