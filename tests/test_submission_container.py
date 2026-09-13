@@ -201,25 +201,30 @@ def test_neither_the_store_nor_another_socket_directory_is_visible(
         # built is the protocol's own test: /proc/<pid>/environ shows the exec-time block.)
 
 
-def test_the_user_and_the_limits_are_the_specs(spec, running):
+def test_the_user_and_the_limits_are_the_specs(spec, docker, running):
     sandbox = spec.submission["sandbox"]
     uid, _, gid = sandbox["user"].partition(":")
     ids = inside(running, "import os\nprint(os.getuid(), os.getgid())").stdout.split()
     assert ids == [uid, gid or uid]
     caps = inside(running, "print(open('/proc/self/status').read())").stdout
     assert "CapEff:\t0000000000000000" in caps and "NoNewPrivs:\t1" in caps
+    # The limits are read from the container's cgroup v2 files; on a v1 host they are elsewhere,
+    # and the test says so rather than passing with nothing checked.
+    version = docker._run(["info", "--format", "{{.CgroupVersion}}"]).stdout.strip()
+    if version != "2":
+        pytest.skip(f"the daemon runs cgroup v{version}; the limits are read from v2 files")
     limits = inside(
         running,
         "for f in ('pids.max', 'memory.max', 'memory.swap.max', 'cpu.max'):\n"
         "    print(f, open('/sys/fs/cgroup/' + f).read().strip())",
     )
-    if limits.returncode == 0:  # cgroup v2; the host's driver says
-        lines = dict(line.split(" ", 1) for line in limits.stdout.strip().splitlines())
-        assert lines["pids.max"] == str(sandbox["pids"])
-        assert lines["memory.max"] == str(sandbox["memory_bytes"])
-        assert lines["memory.swap.max"] == "0", "the spec's bytes are the total: no swap"
-        quota, period = lines["cpu.max"].split()
-        assert int(quota) / int(period) == sandbox["cpus"]
+    assert limits.returncode == 0, limits.stderr
+    lines = dict(line.split(" ", 1) for line in limits.stdout.strip().splitlines())
+    assert lines["pids.max"] == str(sandbox["pids"])
+    assert lines["memory.max"] == str(sandbox["memory_bytes"])
+    assert lines["memory.swap.max"] == "0", "the spec's bytes are the total: no swap"
+    quota, period = lines["cpu.max"].split()
+    assert int(quota) / int(period) == sandbox["cpus"]
 
 
 def test_the_gpu_is_there_when_the_spec_asks_for_one(spec, docker, replay, tmp_path):
