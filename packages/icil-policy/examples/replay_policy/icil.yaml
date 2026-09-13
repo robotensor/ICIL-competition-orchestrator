@@ -1,0 +1,5 @@
+# A competitor's manifest. `python -m icil_policy.serve --manifest icil.yaml` serves this policy.
+api: 1
+policy: replay.policy:ReplayPolicy
+requirements: requirements.txt
+# benchmarks: [robotwin]   # optional: the benchmarks this policy is meant for
