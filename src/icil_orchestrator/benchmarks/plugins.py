@@ -190,10 +190,19 @@ def module_origin_problem(ep: Any, dist: Any) -> str | None:
     return f"{top} resolves to {where}, which is not a file of {dist.name}; refusing to import it"
 
 
+#: What is hashed against RECORD: everything that runs when the plugin is imported, and the
+#: metadata the pin is read from. A wheel's data files are not walked - a benchmark's assets can be
+#: gigabytes, and re-hashing them on every load would cost more than it tells.
+IMPORTABLE_SUFFIXES = (".py", ".so", ".pyd", ".dylib", ".pth")
+
+
 def record_problems(dist: Any) -> list[str]:
     """Installed files whose bytes no longer match the hash their RECORD gives them."""
     problems = []
     for f in dist.files or ():
+        name = str(f)
+        if not name.endswith(IMPORTABLE_SUFFIXES) and ".dist-info/" not in name:
+            continue
         if not f.hash or f.hash.mode != "sha256":
             continue
         path = Path(dist.locate_file(f))
