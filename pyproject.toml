@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "icil-orchestrator"
+version = "0.1.0.dev0"
+description = "Orchestration layer of the RoboTensor one-demonstration ICIL competition."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff==0.16.7"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/icil_orchestrator"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "W"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "sim: needs a plugged benchmark's simulator (assets, GPU)",
+  "container: needs Docker and builds or runs a policy container",
+  "slow: takes minutes",
+]
