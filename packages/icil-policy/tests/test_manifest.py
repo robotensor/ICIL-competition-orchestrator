@@ -1,5 +1,6 @@
 import os
 import textwrap
+import time
 
 import pytest
 
@@ -159,6 +160,36 @@ def test_merge_keys_share_kwargs_and_a_key_given_beside_a_merge_overrides_it(tmp
     assert loaded.kwargs["both"] == {"lr": 2, "horizon": 8, "seed": 3}
     with pytest.raises(ManifestError, match="'lr' is given twice"):
         manifest.load(write(tmp_path, text.replace("lr: 2", "lr: 2\n        lr: 3")))
+
+
+@pytest.mark.parametrize(
+    ("text", "problem"),
+    [
+        ('api: 1\npolicy: a:B\nrequirements: "req\\0uirements.txt"\n', "requirements"),
+        ("api: 1\npolicy: a:B\nrequirements: loop/requirements.txt\n", "requirements"),
+        ("api: 1\npolicy: a:B\nkwargs: {x: " + "[" * 5000 + "]" * 5000 + "}\n", "nested"),
+        ("api: 1\npolicy: a:B\nkwargs: {when: 2026-02-30}\n", "not valid YAML"),
+        ("api: 1\npolicy: a:B\n#" + "x" * (1 << 20) + "\n", "larger than"),
+    ],
+    ids=["nul-in-requirements", "symlink-loop", "deep-nesting", "impossible-date", "too-large"],
+)
+def test_every_way_a_file_can_fail_is_a_manifest_error(tmp_path, text, problem):
+    os.symlink("loop", tmp_path / "loop")
+    with pytest.raises(ManifestError, match=problem):
+        manifest.load(write(tmp_path, text))
+
+
+def test_a_problem_quotes_an_excerpt_of_a_value_however_many_aliases_it_expands_to(tmp_path):
+    lines = ["api: 1", "policy: a:B", "kwargs:", "  a0: &a0 [x, x, x, x, x, x, x, x, x, x]"]
+    for level in range(1, 8):  # 10**8 strings from a file of well under a kilobyte
+        lines.append(f"  a{level}: &a{level} [{', '.join([f'*a{level - 1}'] * 10)}]")
+    lines += ["benchmarks: *a7", "requirements: *a7", f"? extra_{'y' * 5000}", ": 1"]
+    started = time.monotonic()
+    with pytest.raises(ManifestError) as caught:
+        manifest.load(write(tmp_path, "\n".join(lines) + "\n"))
+    assert time.monotonic() - started < 2
+    assert len(caught.value.problems) == 3
+    assert len(str(caught.value)) < 2000
 
 
 def test_a_python_tag_is_refused_and_never_run(tmp_path):
