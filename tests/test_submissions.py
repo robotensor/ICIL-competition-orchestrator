@@ -231,6 +231,12 @@ def test_a_local_directory_is_addressed_by_its_tree_and_copied_links_as_links(
         "a link counts for itself, not for what it points at"
     )
     assert fetcher.fetch(fetcher.resolve("local/policy", "main")).cached
+    # The directory stands in for the Hub, not for the shape of a ref.
+    with pytest.raises(SubmissionRejected, match="is not a Hugging Face repo id") as info:
+        fetcher.resolve("not a repo id", "main")
+    assert info.value.step == "resolve"
+    with pytest.raises(SubmissionRejected, match="no revision"):
+        fetcher.resolve("local/policy", "")
 
     # Same tree, same address; a changed byte is another submission.
     copy = shutil.copytree(source, tmp_path / "copy", symlinks=True)

@@ -52,10 +52,7 @@ def resolve(repo: str, revision: str, *, api: Any = None) -> Resolved:
     `api` is an `HfApi` or anything with its `repo_info`. A repository or revision the Hub does not
     have is a `SubmissionRejected`; a Hub that cannot be asked is a `SubmissionError`.
     """
-    if not is_repo(repo):
-        raise SubmissionRejected("resolve", f"{repo!r} is not a Hugging Face repo id (owner/name)")
-    if not revision:
-        raise SubmissionRejected("resolve", "no revision given")
+    check_ref(repo, revision)
     if api is None:
         from huggingface_hub import HfApi
 
@@ -85,6 +82,15 @@ def resolve(repo: str, revision: str, *, api: Any = None) -> Resolved:
     return Resolved(
         repo=repo, revision=revision, sha=sha, files=_files(getattr(info, "siblings", None))
     )
+
+
+def check_ref(repo: str, revision: str) -> None:
+    """`repo@revision` as something that can be resolved at all: a repo id and a revision.
+    Otherwise a rejection at resolve, before the Hub or anything else is asked."""
+    if not is_repo(repo):
+        raise SubmissionRejected("resolve", f"{repo!r} is not a Hugging Face repo id (owner/name)")
+    if not revision:
+        raise SubmissionRejected("resolve", "no revision given")
 
 
 def _files(siblings: Iterable[Any] | None) -> tuple[RepoFile, ...]:

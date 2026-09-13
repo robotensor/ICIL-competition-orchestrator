@@ -31,7 +31,7 @@ from typing import Any
 from ..store.records import now_iso
 from ..store.writer import atomic_write_json
 from .errors import SubmissionError, SubmissionRejected
-from .resolve import REPO_TYPE, RepoFile, Resolved, resolve
+from .resolve import REPO_TYPE, RepoFile, Resolved, check_ref, resolve
 
 FETCHED_FILE = "fetched.json"
 REPO_DIR = "repo"
@@ -190,6 +190,7 @@ class LocalFetcher:
         self.directory = Path(directory)
 
     def resolve(self, repo: str, revision: str) -> Resolved:
+        check_ref(repo, revision)  # the ref is recorded as given, so it is held to the same shape
         if not self.directory.is_dir():
             raise SubmissionError(f"{self.directory} is not a directory")
         files = tuple(

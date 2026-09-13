@@ -187,8 +187,17 @@ def test_check_rejects_a_manifest_naming_a_missing_class_at_hello(
     assert len(fake_docker.removed) == 1, "the container is gone"
 
 
-def test_check_refuses_a_ref_that_is_not_repo_at_revision(sandbox_spec, fake_docker, tmp_path):
+def test_check_refuses_a_ref_that_is_not_repo_at_revision(
+    sandbox_spec, fake_docker, tmp_path, capsys
+):
     assert check(sandbox_spec, tmp_path, "local/replay_policy", "--local", str(EXAMPLE)) == 2
+    # A local directory stands in for the Hub, not for the shape of a ref: what is not a repo id
+    # is rejected at resolve, as the Hub path rejects it, not a traceback.
+    code = check(sandbox_spec, tmp_path, "not a repo id@main", "--local", str(EXAMPLE))
+    out = capsys.readouterr().out
+    assert code == 1 and out.strip().endswith(": REJECTED at resolve"), out
+    assert "'not a repo id' is not a Hugging Face repo id" in out
+    assert fake_docker.builds == [] and fake_docker.runs == []
 
 
 def test_build_base_prints_the_digest(spec, fake_docker, capsys):
