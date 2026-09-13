@@ -9,7 +9,7 @@ description = "Orchestration layer of the RoboTensor one-demonstration ICIL comp
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
-dependencies = []
+dependencies = ["pynacl>=1.5"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff==0.16.7"]
