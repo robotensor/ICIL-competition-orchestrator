@@ -37,3 +37,13 @@ def test_signatures_are_deterministic():
     """ed25519 signs deterministically, which is what lets a fixture store be byte-reproducible."""
     signer = Signer(bytes(range(32)))
     assert signer.sign("x") == Signer(bytes(range(32))).sign("x")
+
+
+def test_a_signature_is_over_the_published_bytes_not_a_re_encoding():
+    """Number formatting is Python's: a verifier must check the line as published. `3.0` here is
+    `3` to JSON.stringify and to RFC 8785, so a re-encoded record is a different message."""
+    assert canonical_json({"score_margin": 3.0}) == '{"score_margin":3.0}'
+    signer = Signer(bytes(range(32)))
+    line = canonical_json({"score_margin": 3.0})
+    assert verify_signature(signer.verify_key_hex, line, signer.sign(line))
+    assert not verify_signature(signer.verify_key_hex, '{"score_margin":3}', signer.sign(line))
