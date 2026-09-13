@@ -6,9 +6,12 @@ The fake benchmark is installed for real (a `.dist-info` on `sys.path`), so thes
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import sys
+import zipfile
+from importlib import metadata
 
 import pytest
 
@@ -128,18 +131,23 @@ def test_the_wheel_hash_is_read_from_every_place_an_installer_leaves_it(tmp_path
         def read_text(self, name):
             return None if self.doc is None else json.dumps(self.doc)
 
-    wheel = tmp_path / "x-0.1.0-py3-none-any.whl"
-    wheel.write_bytes(b"wheel bytes")
     digest = hashlib.sha256(b"wheel bytes").hexdigest()
     read = plugins.installed_wheel_sha256
     assert read(Dist({"url": "file:///x.whl", "archive_info": {"hash": f"sha256={digest}"}})) == (
         digest
     )
     assert read(Dist({"url": f"file:///x.whl#sha256={digest}", "archive_info": {}})) == digest
-    # uv records the file it installed from but no hash; the file is hashed if it is still there.
-    assert read(Dist({"url": wheel.as_uri(), "archive_info": {}})) == digest
     assert read(Dist({"url": "file:///gone.whl", "archive_info": {}})) is None
     assert read(Dist(None)) is None
+
+    # uv records the file it installed from but no hash; the file is hashed if it is still there
+    # and its RECORD is what was installed.
+    wheel = tmp_path / "x-0.1.0-py3-none-any.whl"
+    info, record = _install_with_record(tmp_path / "site", "x", "x_mod", "X = 1\n", wheel.as_uri())
+    with zipfile.ZipFile(wheel, "w") as zf:
+        zf.writestr("x_mod.py", "X = 1\n")
+        zf.writestr(f"{info.name}/RECORD", "\n".join(record) + "\n")
+    assert read(metadata.PathDistribution(info)) == plugins.sha256_file(wheel)
 
 
 @pytest.mark.parametrize(
@@ -199,3 +207,81 @@ def test_two_distributions_claiming_one_name_are_refused(
     fake = discover(fake_spec, load=True)["fake"]
     assert any("advertised by 2 entry points" in p for p in fake.problems)
     assert fake.benchmark is None
+
+
+def test_a_module_shadowing_the_pinned_distribution_is_refused_before_import(
+    install_distribution, spec_doc, write_spec, tmp_path, monkeypatch
+):
+    """The pin is checked on a distribution's metadata, but an entry point imports by module name:
+    a same-named module earlier on sys.path (the cwd under `python -m`, a checkout) would be what
+    runs. It must be refused, and never imported."""
+    install_distribution(
+        "icil-variant-benchmark",
+        entry_points={"fake": "icil_variant_shadowed"},
+        modules={"icil_variant_shadowed": variant("    pass")},
+    )
+    shadow = tmp_path / "checkout"
+    shadow.mkdir()
+    (shadow / "icil_variant_shadowed.py").write_text("raise SystemExit('shadow imported')\n")
+    monkeypatch.syspath_prepend(str(shadow))
+    spec = write_spec(
+        fake_spec_doc(spec_doc, {**FAKE_PIN, "distribution": "icil-variant-benchmark"})
+    )
+    fake = discover(spec, load=True)["fake"]
+    assert fake.benchmark is None and "icil_variant_shadowed" not in sys.modules
+    (problem,) = fake.problems
+    assert problem.startswith("icil_variant_shadowed resolves to ")
+    assert str(shadow) in problem and "not a file of icil-variant-benchmark" in problem
+
+
+def _record_hash(data: bytes) -> str:
+    return "sha256=" + base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=").decode()
+
+
+def _install_with_record(site, name, module, code, wheel_url):
+    info = site / f"{name.replace('-', '_')}-0.1.0.dist-info"
+    info.mkdir(parents=True)
+    (info / "METADATA").write_text(f"Metadata-Version: 2.1\nName: {name}\nVersion: 0.1.0\n")
+    (info / "entry_points.txt").write_text(f"[icil.benchmarks]\nfake = {module}\n")
+    (site / f"{module}.py").write_text(code)
+    record = [f"{module}.py,{_record_hash(code.encode())},{len(code)}"]
+    (info / "RECORD").write_text("\n".join([*record, f"{info.name}/RECORD,,"]) + "\n")
+    (info / "direct_url.json").write_text(json.dumps({"url": wheel_url, "archive_info": {}}))
+    return info, record
+
+
+def test_installed_files_must_still_be_the_pinned_wheel(
+    tmp_path, monkeypatch, spec_doc, write_spec
+):
+    """With a wheel pin, the bytes imported are held to the wheel: a file edited after install, or
+    a wheel rebuilt in place without reinstalling, is refused."""
+    name, module = "icil-variant-benchmark", "icil_variant_recorded"
+    code = variant("    pass")
+    wheel = tmp_path / "icil_variant_benchmark-0.1.0-py3-none-any.whl"
+    site = tmp_path / "site"
+    info, record = _install_with_record(site, name, module, code, wheel.as_uri())
+    with zipfile.ZipFile(wheel, "w") as zf:
+        zf.writestr(f"{module}.py", code)
+        zf.writestr(f"{info.name}/RECORD", "\n".join(record) + "\n")
+    monkeypatch.syspath_prepend(str(site))
+    pin = {**FAKE_PIN, "distribution": name, "wheel_sha256": plugins.sha256_file(wheel)}
+    spec = write_spec(fake_spec_doc(spec_doc, pin))
+    assert discover(spec, load=True)["fake"].ok
+    sys.modules.pop(module, None)
+
+    (site / f"{module}.py").write_text(code + "\n# edited after install\n")
+    fake = discover(spec, load=True)["fake"]
+    assert fake.benchmark is None and module not in sys.modules
+    assert (
+        f"{module}.py differs from its RECORD hash: the installed files are not the pinned wheel"
+        in fake.problems
+    )
+
+    (site / f"{module}.py").write_text(code)
+    with zipfile.ZipFile(wheel, "w") as zf:  # rebuilt with other code, never reinstalled
+        zf.writestr(f"{module}.py", code + "# v2\n")
+        zf.writestr(f"{info.name}/RECORD", f"{module}.py,{_record_hash(b'v2')},2\n")
+    rebuilt = {**pin, "wheel_sha256": plugins.sha256_file(wheel)}
+    fake = discover(write_spec(fake_spec_doc(spec_doc, rebuilt), name="rebuilt.json"), load=True)
+    assert fake["fake"].benchmark is None
+    assert any("cannot be confirmed" in p for p in fake["fake"].problems), fake["fake"].problems

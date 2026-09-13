@@ -12,10 +12,13 @@ Nothing here raises for a listing: an operator asking what is wrong is told ever
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import importlib.util
 import json
 import re
 import sys
+import zipfile
 from collections.abc import Collection
 from dataclasses import dataclass, field
 from importlib import metadata
@@ -23,6 +26,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
+from ..canon import sha256_file
 from .api import ENTRY_POINT_GROUP, validate_plugin
 
 #: Top-level modules of the simulator and model stacks a benchmark or a submission may bring.
@@ -76,22 +80,29 @@ def _entry_points() -> list[Any]:
     return list(metadata.entry_points(group=ENTRY_POINT_GROUP))
 
 
+def _direct_url(dist: Any) -> dict[str, Any]:
+    try:
+        text = dist.read_text("direct_url.json")
+    except (OSError, ValueError):
+        text = None
+    try:
+        doc = json.loads(text) if text else {}
+    except ValueError:
+        doc = {}
+    return doc if isinstance(doc, dict) else {}
+
+
 def installed_wheel_sha256(dist: Any) -> str | None:
     """The sha256 of the wheel a distribution was installed from, when that can be known.
 
     From its `direct_url.json` (PEP 610): the recorded archive hash (pip), a `#sha256=` fragment
     on the url, or the wheel file itself when it is still where it was installed from (uv records
-    the path but no hash). An index install records none of these, and the pin cannot be confirmed.
+    the path but no hash) - and then only if that wheel's RECORD agrees with what was installed,
+    since a wheel rebuilt in place without reinstalling says nothing about the installed code. An
+    index install records none of these, and the pin cannot be confirmed.
     """
-    try:
-        text = dist.read_text("direct_url.json")
-    except (OSError, ValueError):
-        text = None
-    if not text:
-        return None
-    try:
-        doc = json.loads(text)
-    except ValueError:
+    doc = _direct_url(dist)
+    if not doc:
         return None
     archive = doc.get("archive_info") or {}
     hashes = archive.get("hashes") or {}
@@ -107,9 +118,95 @@ def installed_wheel_sha256(dist: Any) -> str | None:
         return fragment["sha256"].lower()
     if parsed.scheme == "file":
         path = Path(unquote(parsed.path))
-        if path.is_file() and path.suffix == ".whl":
-            return hashlib.sha256(path.read_bytes()).hexdigest()
+        if path.is_file() and path.suffix == ".whl" and _wheel_is_installed(path, dist):
+            return sha256_file(path)
     return None
+
+
+def _record_hashes(lines: str) -> dict[str, str]:
+    """`{path: "sha256=<urlsafe b64>"}` for the hashed entries of a RECORD file."""
+    out: dict[str, str] = {}
+    for line in lines.splitlines():
+        parts = line.rsplit(",", 2)
+        if len(parts) == 3 and parts[1].startswith("sha256="):
+            out[parts[0]] = parts[1]
+    return out
+
+
+def _wheel_is_installed(wheel: Path, dist: Any) -> bool:
+    """Every file the wheel's RECORD hashes (scripts and data aside, which an installer moves) is
+    installed with that hash."""
+    installed = {str(f): f"{f.hash.mode}={f.hash.value}" for f in dist.files or () if f.hash}
+    try:
+        with zipfile.ZipFile(wheel) as zf:
+            names = [n for n in zf.namelist() if n.endswith(".dist-info/RECORD")]
+            if len(names) != 1:
+                return False
+            record = _record_hashes(zf.read(names[0]).decode("utf-8"))
+    except (OSError, zipfile.BadZipFile, UnicodeDecodeError):
+        return False
+    wanted = {k: v for k, v in record.items() if ".data/" not in k}
+    return bool(wanted) and all(installed.get(k) == v for k, v in wanted.items())
+
+
+def module_origin_problem(ep: Any, dist: Any) -> str | None:
+    """Why the module `ep` names would not be imported from the distribution that was pinned.
+
+    Entry points import by module name, so a same-named module earlier on `sys.path` - the cwd
+    under `python -m`, a benchmark checkout - would run in place of the pinned wheel while the
+    metadata checks passed. Resolved without importing anything.
+    """
+    module = str(getattr(ep, "module", "") or ep.value.split(":")[0]).strip()
+    top = module.split(".")[0]
+    try:
+        found = importlib.util.find_spec(top)
+    except (ImportError, ValueError):
+        return None  # loading reports the import failure with its own message
+    if found is None:
+        return None
+    if found.origin and found.has_location:
+        paths = [Path(found.origin).resolve()]
+    else:
+        paths = [Path(p).resolve() for p in found.submodule_search_locations or ()]
+    if not paths:
+        return f"{top} is not importable from a file, so it cannot be tied to {dist.name}"
+
+    direct = _direct_url(dist)
+    if (direct.get("dir_info") or {}).get("editable"):
+        root = Path(unquote(urlparse(str(direct.get("url") or "")).path)).resolve()
+        belongs = all(path.is_relative_to(root) for path in paths)
+    elif dist.files is not None:
+        files = {Path(dist.locate_file(f)).resolve() for f in dist.files}
+        belongs = all(
+            path in files or (path.is_dir() and any(f.is_relative_to(path) for f in files))
+            for path in paths
+        )
+    else:
+        site = Path(dist.locate_file("")).resolve()
+        belongs = all(path.is_relative_to(site) for path in paths)
+    if belongs:
+        return None
+    where = ", ".join(str(p) for p in paths)
+    return f"{top} resolves to {where}, which is not a file of {dist.name}; refusing to import it"
+
+
+def record_problems(dist: Any) -> list[str]:
+    """Installed files whose bytes no longer match the hash their RECORD gives them."""
+    problems = []
+    for f in dist.files or ():
+        if not f.hash or f.hash.mode != "sha256":
+            continue
+        path = Path(dist.locate_file(f))
+        try:
+            digest = hashlib.sha256(path.read_bytes()).digest()
+        except OSError:
+            problems.append(f"{f} is in its RECORD but missing")
+            continue
+        if base64.urlsafe_b64encode(digest).rstrip(b"=").decode() != f.hash.value:
+            problems.append(
+                f"{f} differs from its RECORD hash: the installed files are not the pinned wheel"
+            )
+    return problems
 
 
 def pin_problems(plugged: Plugged) -> None:
@@ -178,6 +275,13 @@ def discover(spec: Any, *, load: bool | Collection[str] = False) -> dict[str, Pl
             )
         pin_problems(plugged)
         wanted = load is True or (not isinstance(load, bool) and name in load)
+        if wanted and plugged.ok and dist is not None:
+            origin = module_origin_problem(ep, dist)
+            if origin:
+                plugged.problems.append(origin)
+            elif (plugged.pin or {}).get("wheel_sha256") is not None:
+                # A wheel pin holds the bytes that are imported, not only the metadata beside them.
+                plugged.problems.extend(record_problems(dist))
         if wanted and plugged.ok:
             _load_into(plugged, ep)
         found[name] = plugged
