@@ -22,7 +22,8 @@ client: when the client hangs up, even in the middle of a policy call that never
 process exits. (A call stuck in native code that holds the GIL cannot be interrupted from Python;
 the container around the server is the last resort.)
 
-**Exit status.** 0 after `close` or when the client hangs up; 1 when the policy could not be built
+**Exit status.** The process exits as soon as the session ends, without waiting for threads the
+policy started. 0 after `close` or when the client hangs up; 1 when the policy could not be built
 or a malformed message ended the session; 2 when serving never started (arguments, key, manifest
 or address).
 """
@@ -409,5 +410,11 @@ def main(argv: list[str] | None = None) -> int:
             conn.close()
 
 
+def _exit(status: int) -> None:
+    """Exit now, without waiting for threads the policy may have left running."""
+    _flush()
+    os._exit(status)
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    _exit(main())

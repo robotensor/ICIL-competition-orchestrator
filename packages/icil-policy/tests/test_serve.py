@@ -233,6 +233,14 @@ def test_close_calls_the_policy_close_and_exits(probe_repo, serve, tmp_path):
     assert closed.read_text() == "closed"
 
 
+def test_the_server_exits_after_close_even_if_the_policy_left_a_thread_running(probe_repo, serve):
+    server = serve(probe_repo(kwargs={"linger": True}))
+    conn = server.connect()
+    call(conn, "hello")
+    assert call(conn, "close")[0] == "ok"
+    assert server.wait(timeout=10) == 0
+
+
 @pytest.mark.parametrize(
     ("policy", "kwargs", "kind", "message"),
     [
