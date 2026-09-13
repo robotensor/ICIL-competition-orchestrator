@@ -16,8 +16,8 @@ arrays.
 
 **Status:** in progress. The first milestone plugs RoboTwin and launches a 1-arm Franka competition
 with one sensorimotor demonstration per episode. The contract, benchmark discovery, the signed
-store, the queue, live frames and the policy protocol are in place; duels and the policy sandbox
-are not yet.
+store, the queue, live frames, the policy protocol and the policy sandbox are in place; duels are
+not yet.
 
 ```bash
 uv venv --python 3.10 .venv && uv pip install -e ".[dev]" -e packages/icil-policy
@@ -29,9 +29,24 @@ icil-orchestrator store init store/            # signing key in keys/ (generated
 icil-orchestrator store verify store/ --validator-key <hex>   # signatures, events, media, schema
 icil-orchestrator store mirror store/ --repo owner/dataset
 
-icil-orchestrator queue --store store/ add owner/policy <commit-sha> --duel-size smoke
+icil-orchestrator queue --store store/ add owner/policy main --duel-size smoke   # resolved to its commit
 icil-orchestrator queue list
+
+icil-orchestrator submission build-base                  # docker/policy-base, prints its digest
+icil-orchestrator submission check owner/policy@main --base-image sha256:<hex>   # resolve, fetch,
+                                                         # manifest, build, run, hello; reported
+icil-orchestrator submission check local/replay@main --local packages/icil-policy/examples/replay_policy
 ```
+
+A submission is a Hugging Face repository at a commit: `queue add` resolves a branch or a tag to
+its sha once, through the Hub, and everything published hangs off that sha. `submission check`
+fetches it into `cache/<sha>/` (git-ignored), reads its `icil.yaml` as a plain file, builds its
+image `FROM` the pinned base by digest with its requirements installed at build time, runs it
+under `spec.submission.sandbox` - no network, a read-only root, `/tmp` as tmpfs, a non-root user,
+memory, cpu and pid limits, one directory mounted for the socket - and says `hello`. A step that
+fails is the submission's rejection with the reason or the harness's error, and the container is
+removed either way. `--local DIR` takes a directory in the Hub's place. See
+[`docker/policy-base`](docker/policy-base/README.md) for the base image and what was measured.
 
 `store init` writes the store's ed25519 signing key to `keys/orchestrator.ed25519` (mode 0600)
 unless `--key` says otherwise. It is the only thing that can publish as this store, so keep it out

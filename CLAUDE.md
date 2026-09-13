@@ -30,6 +30,14 @@ runnable policy code and weights, run in a sandboxed container.
 - `packages/icil-policy/` is the policy protocol, a distribution of its own installed into every
   competitor's image: numpy and PyYAML only, never an import of `icil_orchestrator`. CI also tests
   it alone, installed with nothing but pytest: `pytest packages/icil-policy`.
+- The policy sandbox is `src/icil_orchestrator/submissions/` (resolve, fetch, checks, image,
+  container, check) and `docker/policy-base/Dockerfile`, built from the repository root by
+  `icil-orchestrator submission build-base`, which prints the digest to pin as
+  `spec.submission.base_image.digest` (null until pinned; `submission check --base-image` names
+  one meanwhile). `pytest -m container` builds the base and the replay example's image and looks
+  around inside a running policy container: Docker with the nvidia runtime and a GPU, so not CI.
+  Every docker call goes through `submissions.docker.Docker`; the pure tests stand `FakeDocker` in,
+  which runs the real server on the host in the container's place.
 
 ## Rules
 

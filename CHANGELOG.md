@@ -43,4 +43,17 @@
   bytes, an `icil.yaml` of at most 1 MiB whose problems quote only excerpts, and a session that
   ends after `--idle-timeout-s` of silence. Examples `replay_policy` and `zero_policy` are
   complete competitor repositories. Depends on numpy and PyYAML.
+- (feat): a submission runs pinned to its commit, with no network. `queue add` resolves a branch
+  or a tag to its commit sha through the Hub, once; the checkout is fetched into a cache addressed
+  by that sha, no larger than `max_repo_bytes`; `icil.yaml` and its requirements must be plain
+  files of the repository (no symbolic link, no pipe) before `icil_policy` reads them;
+  `docker/policy-base/Dockerfile` (CUDA 12.8 runtime, Python 3.10, icil-policy) is built by
+  `submission build-base` and referenced by digest; a submission's image is its checkout and its
+  requirements installed at build time, nothing else; it runs under exactly
+  `spec.submission.sandbox` - `--network none`, `--read-only`, `--tmpfs /tmp`, the non-root user,
+  the GPU count and the memory, cpu and pid limits - with one directory mounted for the socket, the
+  authkey passed by variable name, and `hello` within `budgets.policy_start_seconds` as the health
+  check; the container is removed whatever happened. `icil-orchestrator submission check
+  <repo>@<revision> [--local DIR]` reports every step; a manifest naming a missing class or
+  requirements that do not install is a rejection with the reason and nothing runs.
 - (chore): scaffold the orchestrator: package, pure test suite, CI and the repository's rules.
