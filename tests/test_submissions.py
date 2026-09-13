@@ -2,14 +2,26 @@
 
 from __future__ import annotations
 
+import json
+import os
+import shutil
+from pathlib import Path
+
 import httpx
 import pytest
 from huggingface_hub.errors import HfHubHTTPError
 
-from icil_orchestrator.ids import SubmissionRef
+from icil_orchestrator.ids import SubmissionRef, is_commit_sha
 from icil_orchestrator.submissions import SubmissionError, SubmissionRejected
+from icil_orchestrator.submissions.fetch import (
+    HubFetcher,
+    LocalFetcher,
+    RepoCache,
+    measure,
+    tree_hash,
+)
 from icil_orchestrator.submissions.resolve import Resolved, resolve
-from submission_helpers import SHA_A, SHA_B, FakeHub, hub_response
+from submission_helpers import SHA_A, SHA_B, FakeHub, hub_response, write_policy_repo
 
 # -- resolve ------------------------------------------------------------------------------------
 
@@ -91,3 +103,137 @@ def test_an_entry_the_hub_gives_no_size_for_counts_nothing_until_it_is_fetched(h
     resolved = resolve("org/lfs", "main", api=hub)
     assert resolved.declared_bytes == 80
     assert [f.size for f in resolved.files] == [80, None]
+
+
+# -- fetch --------------------------------------------------------------------------------------
+
+
+def fake_download(source: Path, calls: list):
+    """`snapshot_download` stood in for: copies `source` into `local_dir` and leaves the Hub's
+    bookkeeping directory behind, as the real one does."""
+
+    def download(repo_id, *, revision, repo_type, local_dir):
+        calls.append((repo_id, revision, repo_type))
+        shutil.copytree(source, local_dir, dirs_exist_ok=True)
+        bookkeeping = Path(local_dir) / ".cache" / "huggingface" / "download"
+        bookkeeping.mkdir(parents=True)
+        (bookkeeping / "policy.py.metadata").write_text("etag")
+
+    return download
+
+
+@pytest.fixture
+def source(tmp_path):
+    root = write_policy_repo(tmp_path / "source")
+    (root / "weights.bin").write_bytes(b"\0" * 4000)
+    return root
+
+
+def test_fetch_downloads_once_into_a_checkout_addressed_by_the_sha(spec, tmp_path, hub, source):
+    calls: list = []
+    cache = RepoCache(tmp_path / "cache", spec.submission["max_repo_bytes"])
+    fetcher = HubFetcher(cache, api=hub, download=fake_download(source, calls))
+    resolved = fetcher.resolve("org/policy", "main")
+
+    fetched = fetcher.fetch(resolved)
+    assert fetched.root == tmp_path / "cache" / SHA_A / "repo"
+    assert not fetched.cached and calls == [("org/policy", SHA_A, "model")]
+    assert sorted(p.name for p in fetched.root.iterdir()) == ["icil.yaml", "pkg", "weights.bin"]
+    assert not (fetched.root / ".cache").exists(), "the Hub's bookkeeping is not the repository"
+    assert (fetched.bytes, fetched.files) == measure(source)
+    marker = json.loads((tmp_path / "cache" / SHA_A / "fetched.json").read_text())
+    assert (marker["repo"], marker["sha"], marker["bytes"]) == ("org/policy", SHA_A, fetched.bytes)
+
+    again = fetcher.fetch(resolved)
+    assert again.cached and again.root == fetched.root and len(calls) == 1
+    # Another revision name for the same commit is the same checkout.
+    hub.add("org/policy", SHA_A, {}, "release")
+    assert fetcher.fetch(fetcher.resolve("org/policy", "release")).cached and len(calls) == 1
+
+
+def test_fetch_refuses_a_repository_over_max_repo_bytes_before_and_after_download(
+    tmp_path, hub, source
+):
+    calls: list = []
+    # The Hub declares 5280 bytes for org/policy@main; a limit under that refuses it unfetched.
+    small = HubFetcher(
+        RepoCache(tmp_path / "small", 5000), api=hub, download=fake_download(source, calls)
+    )
+    with pytest.raises(
+        SubmissionRejected, match="declares 5280 bytes, over max_repo_bytes"
+    ) as info:
+        small.fetch(small.resolve("org/policy", "main"))
+    assert info.value.step == "fetch" and calls == []
+    assert not (tmp_path / "small" / SHA_A).exists()
+
+    # Declared sizes are what the Hub says; what lands on disk is measured again.
+    hub.add("org/policy", SHA_B, {"icil.yaml": 1}, "tiny")
+    lying = HubFetcher(
+        RepoCache(tmp_path / "lying", 100), api=hub, download=fake_download(source, calls)
+    )
+    with pytest.raises(SubmissionRejected, match="bytes on disk, over max_repo_bytes"):
+        lying.fetch(lying.resolve("org/policy", "tiny"))
+    assert len(calls) == 1
+    assert not (tmp_path / "lying" / SHA_B / "repo").exists()
+    assert not (tmp_path / "lying" / SHA_B / "partial").exists()
+    assert not (tmp_path / "lying" / SHA_B / "fetched.json").exists()
+
+
+def test_a_download_that_fails_is_the_harness_problem_and_leaves_nothing_behind(
+    spec, tmp_path, hub
+):
+    def broken(repo_id, **kwargs):
+        Path(kwargs["local_dir"], "half.bin").write_bytes(b"x" * 10)
+        raise HfHubHTTPError("502 Bad Gateway", response=hub_response(502))
+
+    fetcher = HubFetcher(
+        RepoCache(tmp_path / "cache", spec.submission["max_repo_bytes"]), api=hub, download=broken
+    )
+    with pytest.raises(SubmissionError, match="downloading org/policy@a+ failed: HfHubHTTPError"):
+        fetcher.fetch(fetcher.resolve("org/policy", "main"))
+    assert not (tmp_path / "cache" / SHA_A / "repo").exists()
+    assert not (tmp_path / "cache" / SHA_A / "partial").exists()
+    assert fetcher.cache.lookup(fetcher.resolve("org/policy", "main")) is None
+
+
+def test_a_local_directory_is_addressed_by_its_tree_and_copied_links_as_links(
+    spec, tmp_path, source
+):
+    (source / "pkg" / "__pycache__").mkdir()
+    (source / "pkg" / "__pycache__" / "policy.cpython-310.pyc").write_bytes(b"\0")
+    (source / ".git").mkdir()
+    (source / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+    os.symlink("weights.bin", source / "link.bin")
+    os.symlink("/etc/hostname", source / "outside.txt")
+
+    cache = RepoCache(tmp_path / "cache", spec.submission["max_repo_bytes"])
+    fetcher = LocalFetcher(cache, source)
+    resolved = fetcher.resolve("local/policy", "main")
+    assert is_commit_sha(resolved.sha) and resolved.revision == "main"
+    assert resolved.ref == SubmissionRef.resolved("local/policy", resolved.sha)
+    assert {f.path for f in resolved.files} == {
+        "icil.yaml",
+        "pkg/__init__.py",
+        "pkg/policy.py",
+        "weights.bin",
+        "link.bin",
+        "outside.txt",
+    }, "neither .git nor __pycache__ is part of what would be pushed"
+
+    fetched = fetcher.fetch(resolved)
+    assert fetched.root == tmp_path / "cache" / resolved.sha / "repo"
+    assert not (fetched.root / ".git").exists() and not (fetched.root / "pkg/__pycache__").exists()
+    assert os.readlink(fetched.root / "link.bin") == "weights.bin"
+    assert os.readlink(fetched.root / "outside.txt") == "/etc/hostname"
+    assert fetched.bytes == sum(f.size for f in resolved.files if f.size is not None) < 5000, (
+        "a link counts for itself, not for what it points at"
+    )
+    assert fetcher.fetch(fetcher.resolve("local/policy", "main")).cached
+
+    # Same tree, same address; a changed byte is another submission.
+    copy = shutil.copytree(source, tmp_path / "copy", symlinks=True)
+    assert tree_hash(copy) == resolved.sha
+    (copy / "pkg" / "policy.py").write_text("class Policy: pass\n")
+    assert tree_hash(copy) != resolved.sha
+    os.chmod(source / "pkg" / "policy.py", 0o755)
+    assert tree_hash(source) != resolved.sha, "the executable bit is part of the tree, as in git"
