@@ -145,12 +145,13 @@ def build(out: Path) -> Path:
 
     # -- the queue as the dashboard sees it
     queue = Queue(out.parent / f".{out.name}-queue.json")
-    queue.state.block = 2
+    queue.set_block(2)
     queue.add(WAITING.repo, WAITING.revision, duel_size="smoke", now="2026-09-13T11:45:00Z")
     king = CHALLENGER if dethroned else KING
     snapshot = queue.snapshot(TRACK, king, schema, now="2026-09-13T12:00:00Z")
     store.write_queue(TRACK, snapshot)
     queue.path.unlink()
+    queue.path.with_name(queue.path.name + ".lock").unlink(missing_ok=True)
     # The store's own bookkeeping (locks) is never published and never part of the fixture.
     for dotfile in out.rglob(".*"):
         if dotfile.is_file():

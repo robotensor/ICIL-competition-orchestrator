@@ -2,18 +2,28 @@
 
 A queue is local state, not the record. What the dashboard shows is `snapshot()`, written to the
 store as `tracks/{track}/queue.json` (schema 4 `QueueSnapshot`) - unsigned and rewritten every cycle.
+
+The file is the state, not this object: a long-lived duel loop and a `queue add` on the command
+line hold the same queue. Every mutation takes a lock on the file, reloads, changes and writes, so
+one writer cannot save a list the other has already added to; every read reloads too. A queue file
+that exists but cannot be read is refused rather than taken for an empty queue, which would drop
+the waiting challengers and reset the block counter every event id is derived from.
 """
 
 from __future__ import annotations
 
+import fcntl
+import json
+import os
 from collections.abc import Sequence
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
 from .ids import SubmissionRef
 from .store.records import now_iso
-from .store.writer import atomic_write_json, read_json
+from .store.writer import atomic_write_json
 
 
 @dataclass
@@ -50,8 +60,33 @@ class Queue:
         self.path = Path(path)
         self.state = self._load()
 
+    @contextmanager
+    def _locked(self):
+        """Exclusive across processes for one queue file, held over load, change and save."""
+        lock = self.path.with_name(self.path.name + ".lock")
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            self.state = self._load()
+            yield
+            self.save()
+        finally:
+            os.close(fd)
+
+    def reload(self) -> QueueState:
+        self.state = self._load()
+        return self.state
+
     def _load(self) -> QueueState:
-        doc = read_json(self.path) or {}
+        try:
+            doc = json.loads(self.path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            doc = {}
+        except (OSError, ValueError, RecursionError) as exc:
+            raise ValueError(f"{self.path} is not a readable queue file: {exc}") from exc
+        if not isinstance(doc, dict):
+            raise ValueError(f"{self.path} is not a readable queue file: not a JSON object")
         # Fields a newer or older writer added are ignored rather than refused: a queue file is
         # local state and must survive an upgrade.
         entries = [
@@ -85,57 +120,65 @@ class Queue:
         """Queue a submission at the back. Re-adding the same `repo@revision` moves it to the back
         rather than queueing it twice."""
         ref = SubmissionRef.make(repo, revision)
-        self.state.entries = [e for e in self.state.entries if e.key != ref.key]
-        entry = QueueEntry(
-            key=ref.key,
-            repo=repo,
-            revision=revision,
-            commit_block=self.state.block,
-            duel_size=duel_size,
-            accepted_at=now or now_iso(),
-            source=source,
-        )
-        self.state.entries.append(entry)
-        self.save()
-        return entry, len(self.state.entries)
+        with self._locked():
+            self.state.entries = [e for e in self.state.entries if e.key != ref.key]
+            entry = QueueEntry(
+                key=ref.key,
+                repo=repo,
+                revision=revision,
+                commit_block=self.state.block,
+                duel_size=duel_size,
+                accepted_at=now or now_iso(),
+                source=source,
+            )
+            self.state.entries.append(entry)
+            position = len(self.state.entries)
+        return entry, position
 
     def remove(self, key: str) -> bool:
-        before = len(self.state.entries)
-        self.state.entries = [e for e in self.state.entries if e.key != key]
-        self.save()
-        return len(self.state.entries) != before
+        with self._locked():
+            before = len(self.state.entries)
+            self.state.entries = [e for e in self.state.entries if e.key != key]
+            removed = len(self.state.entries) != before
+        return removed
 
     def peek(self) -> QueueEntry | None:
-        return self.state.entries[0] if self.state.entries else None
+        entries = self.reload().entries
+        return entries[0] if entries else None
 
     def pop(self) -> QueueEntry | None:
-        if not self.state.entries:
-            return None
-        entry = self.state.entries.pop(0)
-        self.save()
+        with self._locked():
+            entry = self.state.entries.pop(0) if self.state.entries else None
         return entry
 
     def start(self, event_id: str, challenger: SubmissionRef, *, now: str | None = None) -> None:
-        self.state.in_progress = InProgress(
-            event_id=event_id, challenger=challenger.as_dict(), started_at=now or now_iso()
-        )
-        self.save()
+        with self._locked():
+            self.state.in_progress = InProgress(
+                event_id=event_id, challenger=challenger.as_dict(), started_at=now or now_iso()
+            )
 
     def finish(self) -> None:
-        self.state.in_progress = None
-        self.save()
+        with self._locked():
+            self.state.in_progress = None
 
     def advance_block(self) -> int:
-        self.state.block += 1
-        self.save()
-        return self.state.block
+        with self._locked():
+            self.state.block += 1
+            block = self.state.block
+        return block
+
+    def set_block(self, block: int) -> int:
+        """For a rebuilt or seeded queue: the block a new entry is stamped with."""
+        with self._locked():
+            self.state.block = block
+        return block
 
     @property
     def block(self) -> int:
-        return self.state.block
+        return self.reload().block
 
     def entries(self) -> list[QueueEntry]:
-        return list(self.state.entries)
+        return list(self.reload().entries)
 
     # ---------------------------------------------------------------- published view
     def snapshot(
@@ -146,6 +189,7 @@ class Queue:
         *,
         now: str | None = None,
     ) -> dict[str, Any]:
+        self.reload()
         return {
             "schema": schema,
             "track": track,

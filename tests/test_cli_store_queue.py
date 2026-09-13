@@ -132,6 +132,30 @@ def test_queue_add_list_remove_and_publish_the_snapshot(spec, tmp_path, capsys):
     assert main(["store", "verify", str(root)]) == 0
 
 
+def test_queue_add_waits_for_no_one_while_a_duel_holds_the_store(spec, tmp_path, capsys):
+    from icil_orchestrator.store.writer import store_lock
+
+    queue, root = tmp_path / "queue", tmp_path / "store"
+    assert main(["store", "init", str(root), "--key", str(tmp_path / "k")]) == 0
+    capsys.readouterr()
+    base = ["queue", "--queue", str(queue), "--store", str(root)]
+    with store_lock(root):
+        assert main([*base, "add", "org/policy", "1" * 40]) == 0
+    out = capsys.readouterr()
+    assert "it will publish the queue snapshot" in out.err
+    assert not (root / "tracks" / TRACK / "queue.json").exists()
+    assert main([*base, "list"]) == 0
+    assert "org/policy" in capsys.readouterr().out, "the entry was still queued"
+
+
+def test_queue_add_on_a_corrupt_queue_file_says_so(tmp_path, capsys):
+    queue = tmp_path / "queue"
+    queue.mkdir()
+    (queue / f"{TRACK}.json").write_text('{"entries": [], "block": 3')
+    assert main(["queue", "--queue", str(queue), "add", "org/policy", "1" * 40]) == 2
+    assert "is not a readable queue file" in capsys.readouterr().err
+
+
 def test_queue_add_refuses_what_it_cannot_queue(tmp_path, capsys):
     base = ["queue", "--queue", str(tmp_path / "queue")]
     assert main([*base, "add", "not a repo", "1" * 40]) == 2

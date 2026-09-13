@@ -67,6 +67,30 @@ def test_a_queue_written_by_the_validator_still_loads(tmp_path):
     assert loaded.repo == "org/old" and loaded.commit_block == 3
 
 
+def test_a_second_writer_does_not_lose_the_first_writer_entries(tmp_path):
+    """A long-lived daemon and a `queue add` on the command line hold the same file; each mutation
+    reloads under a lock, so neither writes back a stale list."""
+    path = tmp_path / "franka_1arm.json"
+    daemon = Queue(path)
+    daemon.add("org/first", "1" * 40)
+    cli = Queue(path)
+    cli.add("org/second", "2" * 40)
+    daemon.advance_block()
+    assert [e.repo for e in Queue(path).entries()] == ["org/first", "org/second"]
+    assert Queue(path).block == 1
+    assert [e.repo for e in daemon.entries()] == ["org/first", "org/second"]
+
+
+def test_a_queue_file_that_cannot_be_read_is_refused_not_emptied(tmp_path):
+    """Treating it as an empty queue would drop every waiting challenger and reset the block
+    counter, which event ids are derived from."""
+    path = tmp_path / "franka_1arm.json"
+    Queue(path).add("org/waiting", "3" * 40)
+    path.write_text(path.read_text()[:-3])
+    with pytest.raises(ValueError, match="is not a readable queue"):
+        Queue(path)
+
+
 def test_one_queue_per_track(tmp_path):
     queues = Queues(tmp_path / "queue", ["franka_1arm"])
     queues["franka_1arm"].add("org/x", "7" * 40)

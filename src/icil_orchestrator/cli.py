@@ -142,12 +142,18 @@ def cmd_queue(args: argparse.Namespace) -> int:
         print(f"removed {args.key}")
 
     if args.store and args.queue_cmd != "list":
-        from .store.writer import Store
+        from .store.writer import Store, store_lock
 
         store = Store(args.store, spec)
-        head = store.head(track) or {}
-        king = SubmissionRef.from_dict(head.get("king"))
-        store.write_queue(track, queue.snapshot(track, king, int(spec.store["schema"])))
+        try:
+            with store_lock(store.root):
+                head = store.head(track) or {}
+                king = SubmissionRef.from_dict(head.get("king"))
+                store.write_queue(track, queue.snapshot(track, king, int(spec.store["schema"])))
+        except RuntimeError as exc:
+            # The queue itself is changed; only its published snapshot is left to the orchestrator
+            # that holds the store, which rewrites it every cycle anyway.
+            print(f"note: {exc}; it will publish the queue snapshot", file=sys.stderr)
     return 0
 
 
