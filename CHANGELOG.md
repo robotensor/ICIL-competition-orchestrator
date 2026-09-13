@@ -56,4 +56,19 @@
   check; the container is removed whatever happened. `icil-orchestrator submission check
   <repo>@<revision> [--local DIR]` reports every step; a manifest naming a missing class or
   requirements that do not install is a rejection with the reason and nothing runs.
+- (fix): the policy sandbox after review. The container gets no swap (`--memory-swap` equal to
+  `--memory`), so `memory_bytes` is its total. The one directory it shares with the host is a
+  64 MiB, 64-entry tmpfs mounted by the orchestrator when root, so a policy cannot fill the host's
+  disk through it, and only a socket itself (not a link at its name) counts as listening. The
+  build is bounded (`submission check --build-timeout`, 1800 s by default until `spec.budgets`
+  carries a build budget) and one past it is a rejection; a build whose pip could not reach its
+  index is the harness's error, not a rejection. The session kept after `hello` is bounded by
+  `act_timeout_s`. A file the Hub declares no size for is not downloaded; a missing branch or
+  repository is rejected with the Hub's words for it; `queue add` confirms a commit sha on the Hub
+  too; `--local` holds the ref to a repo id. Containers are labelled with the process that started
+  them, and a start reaps those whose process has ended, with their tmpfs.
+- (feat): `icil-orchestrator submission prune` removes the `icil-submission` images no container
+  uses. The checkout is copied into its image rather than bind-mounted read-only as issue #4's
+  scope put it: the requirements install needs it at build time, the recorded image id is the code
+  that ran, and the container mounts nothing of the host but its socket directory.
 - (chore): scaffold the orchestrator: package, pure test suite, CI and the repository's rules.

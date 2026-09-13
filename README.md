@@ -36,17 +36,21 @@ icil-orchestrator submission build-base                  # docker/policy-base, p
 icil-orchestrator submission check owner/policy@main --base-image sha256:<hex>   # resolve, fetch,
                                                          # manifest, build, run, hello; reported
 icil-orchestrator submission check local/replay@main --local packages/icil-policy/examples/replay_policy
+icil-orchestrator submission prune                       # the icil-submission images nothing uses
 ```
 
 A submission is a Hugging Face repository at a commit: `queue add` resolves a branch or a tag to
-its sha once, through the Hub, and everything published hangs off that sha. `submission check`
-fetches it into `cache/<sha>/` (git-ignored), reads its `icil.yaml` as a plain file, builds its
-image `FROM` the pinned base by digest with its requirements installed at build time, runs it
-under `spec.submission.sandbox` - no network, a read-only root, `/tmp` as tmpfs, a non-root user,
-memory, cpu and pid limits, one directory mounted for the socket - and says `hello`. A step that
-fails is the submission's rejection with the reason or the harness's error, and the container is
-removed either way. `--local DIR` takes a directory in the Hub's place. See
-[`docker/policy-base`](docker/policy-base/README.md) for the base image and what was measured.
+its sha once, through the Hub, confirms a sha it is given, and everything published hangs off that
+sha. `submission check` fetches it into `cache/<sha>/` (git-ignored), reads its `icil.yaml` as a
+plain file, builds its image `FROM` the pinned base by digest with its checkout copied in and its
+requirements installed at build time (bounded by `--build-timeout`), runs it under
+`spec.submission.sandbox` - no network, a read-only root, `/tmp` as tmpfs, a non-root user, memory
+with no swap, cpu and pid limits, one directory shared for the socket (a small tmpfs when the
+orchestrator is root) - and says `hello`. A step that fails is the submission's rejection with the
+reason or the harness's error, and the container is removed either way; a container whose process
+was killed is removed by the next start. `--local DIR` takes a directory in the Hub's place. See
+[`docker/policy-base`](docker/policy-base/README.md) for the base image, what a policy finds at
+run time and what was measured.
 
 `store init` writes the store's ed25519 signing key to `keys/orchestrator.ed25519` (mode 0600)
 unless `--key` says otherwise. It is the only thing that can publish as this store, so keep it out

@@ -37,7 +37,11 @@ runnable policy code and weights, run in a sandboxed container.
   one meanwhile). `pytest -m container` builds the base and the replay example's image and looks
   around inside a running policy container: Docker with the nvidia runtime and a GPU, so not CI.
   Every docker call goes through `submissions.docker.Docker`; the pure tests stand `FakeDocker` in,
-  which runs the real server on the host in the container's place.
+  which runs the real server on the host in the container's place, and record the shared
+  directory's tmpfs mount instead of making it (the container tests mount it for real, as root).
+  Containers carry `icil.orchestrator=policy` and their owner's pid, start time and pid namespace;
+  `PolicyContainer.start` reaps those whose owner has ended, and `submission prune` removes the
+  `icil-submission` images no container uses.
 
 ## Rules
 

@@ -22,6 +22,30 @@ built image does not have, and refuses a bare image id; so the base is reached t
 named by its digest, and the id behind that tag is checked against the digest immediately before
 every submission build (`icil_orchestrator.submissions.image.ensure_base`).
 
+## What a policy finds at run time
+
+- `/submission`: its checkout, copied into the image at build time and read-only like the rest of
+  the root filesystem. (Issue #4's scope said the repository would be bind-mounted read-only; it is
+  copied instead, so that the requirements can install from it, the image id recorded with a side
+  is the code that ran, and nothing of the host but the socket directory is mounted.)
+- `/tmp`: a tmpfs, the only writable place of its own, and the sandbox user's `$HOME`. Docker
+  mounts it `noexec`, and the base has no C compiler: nothing written there can be run or
+  `dlopen`ed (checked: a shared library copied to `/tmp` fails with "failed to map segment from
+  shared object", an executable with "Permission denied"). A policy that compiles kernels at run
+  time - triton, `torch.compile`, cupy's JIT - fails at `hello` or `act`; compile ahead, into the
+  image, or do without. Its contents count against `memory_bytes`.
+- `/run/icil`: the socket and the server's log, shared with the host. When the orchestrator runs as
+  root it is a tmpfs of 64 MiB and 64 entries (`container.SHARED_DIR_BYTES`,
+  `SHARED_DIR_INODES`); as another user it is a plain directory with no cap.
+- No network, no swap (`memory_bytes` is the total), no capabilities, no setuid escalation, and the
+  spec's cpu and pid limits.
+
+The image build, where the requirements install with network, is bounded by `submission check
+--build-timeout` (1800 s by default); a build past it is a rejection at build. Checked images stay
+until `icil-orchestrator submission prune`, which removes every `icil-submission` image no
+container was made from. BuildKit's own cache is shared with every other build on the host and
+is left to `docker builder prune`.
+
 ## Measured on the development host
 
 Docker 27.3.1, x86_64, one RTX 5090, 2026-09-13, from this Dockerfile at the commit that adds it:
