@@ -130,11 +130,11 @@ def run_side(
         prompt_sha = prompt.sha256 if prompt is not None and not prompt.void else None
         if refused is not None:
             outcome = voided(f"the {side}'s submission was refused: {refused}")
-        elif void_units and unit_id in void_units:
-            outcome = voided(f"not played: {void_units[unit_id]}")
         elif prompt is None or prompt.void:
             reason = prompt.error if prompt is not None else "no prompt was materialized"
             outcome = voided(f"no prompt: {reason}")
+        elif void_units and unit_id in void_units:
+            outcome = voided(f"not played: {void_units[unit_id]}")
         elif dead is not None:
             outcome = voided(f"the {side}'s policy runtime died earlier in this side: {dead}")
         elif time.monotonic() >= side_deadline:
