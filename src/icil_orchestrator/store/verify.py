@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ..canon import canonical_json, verify_signature
+from ..canon import canonical_json, sha256_file, verify_signature
 from ..spec import Spec, load_schema
 from .records import media_shas
 from .writer import Store
@@ -97,6 +97,8 @@ def verify_store(root: str | Path, spec: Spec, schema: dict[str, Any] | None = N
         report.warnings.append("manifest spec_fingerprint differs from the loaded spec.json")
 
     video_ext = spec.video_format
+    #: Each clip is hashed once, however many units and events refer to it.
+    hashed: dict[str, bool] = {}
     # manifest.json is unsigned, so it cannot choose what is verified: the tracks are the spec's,
     # and anything the store holds for another track is reported rather than skipped.
     listed = manifest.get("tracks")
@@ -192,10 +194,16 @@ def verify_store(root: str | Path, spec: Spec, schema: dict[str, Any] | None = N
                     if event.get(k) != record.get(k):
                         report.errors.append(f"{where}: event.{k} differs from the index record")
                 for sha in media_shas(event.get("units", [])):
-                    if store.has_media(sha, video_ext):
-                        report.media += 1
-                    else:
+                    if not store.has_media(sha, video_ext):
                         report.errors.append(f"{where}: media {sha[:12]} missing")
+                        continue
+                    report.media += 1
+                    if sha not in hashed:
+                        hashed[sha] = sha256_file(store.media_path(sha, video_ext)) == sha
+                    if not hashed[sha]:
+                        report.errors.append(
+                            f"{where}: media {sha[:12]} content does not match its name"
+                        )
             part += 1
 
         head, _ = read_json_file(store.head_path(track))

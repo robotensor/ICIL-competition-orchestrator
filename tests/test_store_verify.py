@@ -196,6 +196,15 @@ def test_missing_media_and_a_stale_head_are_errors(history):
     assert f"tracks/{TRACK}/head.json does not point at the last record" in errors
 
 
+def test_a_clip_swapped_under_its_name_is_found(history):
+    """Media paths are content addresses; the bytes are held to them."""
+    store, sp, sha = history
+    store.media_path(sha, "mp4").write_bytes(b"EVIL" * 10)
+    assert verify_store(store.root, sp).errors == [
+        f"{INDEX}:2: media {sha[:12]} content does not match its name"
+    ]
+
+
 def test_the_schema_rejects_scores_outside_zero_to_one(spec, tmp_path):
     store = Store(tmp_path / "store", spec, Signer.generate())
     store.init(store.signer.verify_key_hex)
