@@ -299,6 +299,9 @@ def test_an_object_array_in_a_reply_raises(fake_server):
         (HELLO_OK, wire.encode("ok"), "answered 'ok', not 'action'"),
         (HELLO_OK, wire.encode("action", arrays={"x": np.zeros(2)}), "no usable 'action'"),
         (HELLO_OK, wire.encode("action", arrays={"action": np.zeros(())}), "no usable"),
+        (HELLO_OK, wire.encode("action", arrays={"action": np.zeros(0)}), r"shape \(0,\)"),
+        (HELLO_OK, wire.encode("action", arrays={"action": np.zeros((0, 7))}), r"shape \(0, 7\)"),
+        (HELLO_OK, wire.encode("action", arrays={"action": np.zeros((4, 0))}), r"shape \(4, 0\)"),
         (HELLO_OK, [b'{"protocol": 1, "op": "action"}'], "header keys"),
     ],
 )

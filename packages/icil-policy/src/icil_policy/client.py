@@ -115,7 +115,7 @@ class RemotePolicy:
         """The policy's answer to one observation: at least `action`, of shape (A,) or (H, A)."""
         _, arrays = self._call("act", {}, observation, expect="action")
         action = arrays.get("action")
-        if action is None or action.ndim not in (1, 2):
+        if action is None or action.ndim not in (1, 2) or 0 in action.shape:
             shape = None if action is None else action.shape
             raise self._unavailable("act", f"the reply holds no usable 'action' (shape {shape})")
         return arrays
