@@ -28,14 +28,19 @@ packages = ["src/icil_orchestrator"]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
-src = ["src", "tests"]
+src = ["src", "tests", "packages/icil-policy/src"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "W"]
 ignore = ["E501"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "packages/icil-policy/tests"]
+# Two test trees share module names such as test_package.py.
+addopts = "--import-mode=importlib"
+# importlib mode puts no test directory on sys.path; the orchestrator's tests import their
+# conftest and store_helpers as plain modules.
+pythonpath = ["tests"]
 markers = [
   "sim: needs a plugged benchmark's simulator (assets, GPU)",
   "container: needs Docker and builds or runs a policy container",
