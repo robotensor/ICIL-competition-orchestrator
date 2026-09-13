@@ -1,0 +1,104 @@
+"""What the duel tests share: the example policies, a runtime with faults, a recording reporter."""
+
+from __future__ import annotations
+
+import os
+import signal
+from pathlib import Path
+from typing import Any
+
+from icil_orchestrator.duel.local_runtime import SubprocessPolicyRuntime
+from icil_orchestrator.ids import SubmissionRef
+from icil_orchestrator.live import LiveReporter
+
+EXAMPLES = Path(__file__).resolve().parents[1] / "packages" / "icil-policy" / "examples"
+REPLAY = EXAMPLES / "replay_policy"
+ZERO = EXAMPLES / "zero_policy"
+
+REPLAY_REF = SubmissionRef.make("robotensor/icil-replay-policy", "2" * 40)
+ZERO_REF = SubmissionRef.make("robotensor/icil-zero-policy", "1" * 40)
+
+
+class Crash(BaseException):
+    """Stands for the orchestrator being killed: nothing in a duel catches it."""
+
+
+class FakePolicyRuntime(SubprocessPolicyRuntime):
+    """The subprocess runtime, with the ways a policy runtime goes wrong on demand.
+
+    `kill_on_serve`: serve numbers (0-based, counted across both sides) whose server is killed as
+    soon as it listens, the way a container dies. `crash_on_serve`: the serve number at which the
+    orchestrator itself "dies" (`Crash`), before the unit runs.
+    """
+
+    def __init__(
+        self,
+        spec: Any,
+        local: dict[str, Path] | None = None,
+        *,
+        kill_on_serve: set[int] | None = None,
+        kill_repo: str | None = None,
+        crash_on_serve: int | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(
+            spec,
+            local if local is not None else {REPLAY_REF.repo: REPLAY, ZERO_REF.repo: ZERO},
+            start_timeout_s=kwargs.pop("start_timeout_s", 30.0),
+            **kwargs,
+        )
+        self.kill_on_serve = set(kill_on_serve or ())
+        self.kill_repo = kill_repo
+        self.crash_on_serve = crash_on_serve
+        #: `(repo, unit directory name)` for every unit served.
+        self.serves: list[tuple[str, str]] = []
+        self.prepared: list[str] = []
+        #: Which serve is starting, or None for the health check `prepare` runs.
+        self._number: int | None = None
+        self._current: str | None = None
+
+    def prepare(self, fetched, *, workdir):
+        self.prepared.append(fetched.ref.repo)
+        self._number = None
+        return super().prepare(fetched, workdir=workdir)
+
+    def serve(self, prepared, *, workdir):
+        number = len(self.serves)
+        if number == self.crash_on_serve:
+            self.crash_on_serve = None
+            raise Crash(f"the orchestrator died before serving unit {Path(workdir).name}")
+        self.serves.append((prepared.ref.repo, Path(workdir).name))
+        self._current = prepared.ref.repo
+        self._number = number
+        return super().serve(prepared, workdir=workdir)
+
+    def _started(self, process, served):
+        if self._number is None:
+            return
+        killed = self._number in self.kill_on_serve or (
+            self.kill_repo is not None and self._current == self.kill_repo
+        )
+        if killed:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
+
+
+class RecordingReporter(LiveReporter):
+    """Every frame a duel builds, kept rather than posted."""
+
+    def __init__(self, spec: Any) -> None:
+        super().__init__(spec, None, None)
+        self.frames: list[dict[str, Any]] = []
+
+    @property
+    def enabled(self) -> bool:
+        return True
+
+    def post(self, frame: dict[str, Any], *, force: bool = False) -> bool:
+        self.frames.append(frame)
+        return True
+
+    @property
+    def phases(self) -> list[str]:
+        """The phases in the order they were first posted."""
+        return list(dict.fromkeys(f["phase"] for f in self.frames))
