@@ -22,6 +22,11 @@ runnable policy code and weights, run in a sandboxed container.
 ## Commands
 
 - Host env: `uv venv --python 3.10 .venv && uv pip install -e ".[dev]"`; `ruff check . && ruff format --check .`; `pytest -m "not sim and not container"`.
+- Tests run a benchmark through `tests/fake_benchmark` (a real `.dist-info` on `sys.path`; its
+  command half is a script). After an intended change to `spec.json` or the store layout,
+  regenerate the fixture store with `python tests/fixtures/make_store.py` and commit it.
+- `live.PHASES` must equal the dashboard's `PHASES` (`lib/live/types.ts`); a new phase is a
+  dashboard change first.
 
 ## Rules
 
