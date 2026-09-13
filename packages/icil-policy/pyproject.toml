@@ -21,6 +21,7 @@ packages = ["src/icil_policy"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--import-mode=importlib"
+pythonpath = ["tests"]
 markers = [
   "sim: needs a plugged benchmark's simulator (assets, GPU)",
   "container: needs Docker and builds or runs a policy container",
