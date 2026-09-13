@@ -4,6 +4,8 @@ import json
 import pickle
 import socket
 import struct
+import subprocess
+import sys
 import time
 from multiprocessing import AuthenticationError
 
@@ -273,6 +275,26 @@ def test_the_server_exits_after_close_even_if_the_policy_left_a_thread_running(p
     call(conn, "hello")
     assert call(conn, "close")[0] == "ok"
     assert server.wait(timeout=10) == 0
+
+
+def test_the_server_exits_even_if_the_policy_left_a_thread_and_an_exception_escaped(
+    probe_repo, serve
+):
+    server = serve(probe_repo(kwargs={"linger": True}))
+    conn = server.connect()
+    call(conn, "hello")
+    wire.send(conn, "act", {}, {"returns": mode("interrupt")})
+    assert server.wait(timeout=10) == 1
+    assert "serving failed" in server.log()
+    assert "KeyboardInterrupt" in server.log()
+
+
+def test_arguments_the_server_cannot_parse_exit_2():
+    process = subprocess.run(
+        [sys.executable, "-m", "icil_policy.serve", "--manifest"], capture_output=True, timeout=60
+    )
+    assert process.returncode == 2
+    assert b"usage:" in process.stderr
 
 
 def test_a_client_speaking_nonsense_during_authentication_does_not_stop_the_server(
