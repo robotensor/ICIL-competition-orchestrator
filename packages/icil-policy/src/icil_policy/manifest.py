@@ -138,12 +138,21 @@ def validate(data: Any, path: str | os.PathLike[str]) -> Manifest:
     )
 
 
+_MERGE_TAG = "tag:yaml.org,2002:merge"
+
+
 class _SafeUniqueLoader(yaml.SafeLoader):
-    """`yaml.safe_load`, refusing a key given twice instead of keeping the last one silently."""
+    """`yaml.safe_load`, refusing a key given twice instead of keeping the last one silently.
+
+    Only the keys written in a mapping count: a merge key (`<<: *anchor`) is left to the base
+    class, and a key written beside it overrides the merged one, as YAML says it does.
+    """
 
     def construct_mapping(self, node: Any, deep: bool = False) -> dict[Any, Any]:
         seen: set[Any] = set()
         for key_node, _ in node.value:
+            if key_node.tag == _MERGE_TAG:
+                continue
             key = self.construct_object(key_node, deep=deep)
             try:
                 duplicate = key in seen
