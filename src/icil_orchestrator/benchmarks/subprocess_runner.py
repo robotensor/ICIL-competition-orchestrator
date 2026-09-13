@@ -44,6 +44,46 @@ LOG_FILE = "benchmark.log"
 #: How much of the log a void unit's reason carries.
 TAIL_CHARS = 400
 
+#: What a benchmark subprocess inherits from the orchestrator when no environment is given: the
+#: locale, the paths an interpreter needs, and what a GPU simulator reads to find its device and
+#: display. Never the credentials that publish results (HF_TOKEN, the live token): the benchmark
+#: parses a hostile policy's replies, and a bug there must not hand out write access to the record.
+ENV_ALLOW = frozenset(
+    {
+        "PATH",
+        "HOME",
+        "USER",
+        "LOGNAME",
+        "SHELL",
+        "TERM",
+        "TZ",
+        "TMPDIR",
+        "LANG",
+        "LANGUAGE",
+        "VIRTUAL_ENV",
+        "CONDA_PREFIX",
+        "LD_LIBRARY_PATH",
+        "DISPLAY",
+        "XAUTHORITY",
+        "XDG_RUNTIME_DIR",
+        "CUDA_HOME",
+        "CUDA_VISIBLE_DEVICES",
+        "VK_ICD_FILENAMES",
+        "MUJOCO_GL",
+        "PYOPENGL_PLATFORM",
+        "EGL_PLATFORM",
+    }
+)
+ENV_ALLOW_PREFIXES = ("LC_", "NVIDIA_", "__EGL_", "__GLX_")
+
+
+def benchmark_environment(
+    source: Mapping[str, str], authkey_env: str, keep: Iterable[str] = ()
+) -> dict[str, str]:
+    """The allow-listed part of `source`, plus the authkey variable and any names in `keep`."""
+    names = ENV_ALLOW | {authkey_env, *keep}
+    return {k: v for k, v in source.items() if k in names or k.startswith(ENV_ALLOW_PREFIXES)}
+
 
 @dataclass
 class Outcome:
@@ -206,12 +246,16 @@ def run_unit(
     extra: Mapping[str, Any] | None = None,
 ) -> Outcome:
     """One unit against a served policy, start to finish. Every failure is a void outcome, never an
-    exception: one bad unit must not lose the rest of the duel."""
+    exception: one bad unit must not lose the rest of the duel.
+
+    `env` is the subprocess's whole environment; without it the benchmark gets
+    `benchmark_environment(os.environ, authkey_env)`, not everything the orchestrator holds.
+    """
     name = str(getattr(benchmark, "id", "benchmark"))
     started = time.monotonic()
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    environ = dict(os.environ if env is None else env)
+    environ = dict(benchmark_environment(os.environ, authkey_env) if env is None else env)
 
     def void(reason: str) -> Outcome:
         return voided(f"{name}: {reason}", wall_s=round(time.monotonic() - started, 3))

@@ -6,6 +6,7 @@ real result file, so the path under test is the one a duel takes - not a mock of
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import time
@@ -241,6 +242,40 @@ def test_no_authkey_in_the_environment_is_a_harness_fault(fake, tmp_path):
     assert outcome.void and outcome.error == (
         f"fake: no policy authkey in ${AUTHKEY_ENV} for the benchmark subprocess"
     )
+
+
+def test_by_default_the_benchmark_sees_an_allow_listed_environment(fake, tmp_path, monkeypatch):
+    """The benchmark parses a hostile policy's replies; it has no use for the credentials that
+    publish results, and must not hold them."""
+    monkeypatch.setenv("HF_TOKEN", "hf_publish_secret")
+    monkeypatch.setenv("ICIL_LIVE_TOKEN", "live_secret")
+    monkeypatch.setenv("LC_ALL", "C.UTF-8")
+    monkeypatch.setenv(AUTHKEY_ENV, AUTHKEY)
+
+    class Snoop(type(fake)):
+        def run_command(self, *, out_dir, **kw):
+            code = (
+                "import json, os\n"
+                f"open({out_dir + '/env.json'!r}, 'w').write(json.dumps(dict(os.environ)))\n"
+                f"open({out_dir + '/result.json'!r}, 'w').write('{{\"success\": true}}')\n"
+            )
+            return [sys.executable, "-c", code]
+
+    outcome = runner.run_unit(
+        Snoop(),
+        unit(0),
+        prompt="/prompts/p.npz",
+        out_dir=tmp_path / "u",
+        policy_address="/tmp/icil-test-policy.sock",
+        authkey_env=AUTHKEY_ENV,
+        timeout_s=30,
+    )
+    assert not outcome.void, outcome.error
+    seen = json.loads((tmp_path / "u" / "env.json").read_text())
+    assert "HF_TOKEN" not in seen and "ICIL_LIVE_TOKEN" not in seen
+    assert seen[AUTHKEY_ENV] == AUTHKEY and seen["PATH"] and seen["LC_ALL"] == "C.UTF-8"
+    kept = runner.benchmark_environment({"PATH": "/bin", "MUJOCO_GL": "egl", "X": "1"}, "K", ("X",))
+    assert kept == {"PATH": "/bin", "MUJOCO_GL": "egl", "X": "1"}
 
 
 def test_a_unit_with_no_materialized_prompt_is_void_rather_than_run(fake, tmp_path):
