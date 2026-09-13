@@ -8,7 +8,8 @@ A commit sha names one tree, so the same sha fetched twice is the same bytes and
 once. The checkout is filled next to its final place and moved there in one rename, under a lock
 per sha, so two processes fetching the same submission cannot half-fill each other's directory.
 `spec.submission.max_repo_bytes` is enforced twice: on the sizes the Hub declares before a byte is
-downloaded, and on the bytes actually on disk after.
+downloaded, and on the bytes actually on disk after. A file the Hub declares no size for is not
+downloaded at all, since the first check could not see it.
 
 `HubFetcher` is the real thing; `LocalFetcher` takes a directory in its place, for the tests and
 for `submission check --local`, and addresses it by a hash of its tree, so it too is pinned to
@@ -150,6 +151,17 @@ class HubFetcher:
         cached = self.cache.lookup(resolved)
         if cached is not None:
             return cached
+        # The cap is held to before the download on what the Hub declares, which with
+        # `files_metadata` is every file's size. A file it gave no size for cannot be bounded
+        # before it is on disk, so it is not downloaded: the Hub's answer, not the entry's doing.
+        unsized = [f.path for f in resolved.files if f.size is None]
+        if unsized:
+            shown = ", ".join(unsized[:3]) + (", ..." if len(unsized) > 3 else "")
+            raise SubmissionError(
+                f"the Hub declared no size for {len(unsized)} file(s) of "
+                f"{resolved.repo}@{resolved.sha} ({shown}), so the download cannot be held to "
+                f"max_repo_bytes before it happens"
+            )
         declared = resolved.declared_bytes
         if declared > self.cache.max_bytes:
             raise SubmissionRejected(

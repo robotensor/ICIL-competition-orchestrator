@@ -100,11 +100,24 @@ def test_a_hub_that_cannot_be_asked_is_the_harness_problem_not_the_submissions(h
         resolve("org/policy", SHA_A, api=Swapping())
 
 
-def test_an_entry_the_hub_gives_no_size_for_counts_nothing_until_it_is_fetched(hub):
+def test_an_entry_the_hub_gives_no_size_for_counts_nothing_and_is_not_downloaded(
+    hub, tmp_path, source
+):
+    """With `files_metadata` the Hub sizes every file, LFS ones included; an entry it does not
+    size cannot be held to max_repo_bytes before it is on disk, so it is not fetched at all -
+    the Hub's answer is the harness's problem, not the entry's."""
     hub.add("org/lfs", SHA_A, {"icil.yaml": 80, "weights.pt": None}, "main")
     resolved = resolve("org/lfs", "main", api=hub)
-    assert resolved.declared_bytes == 80
+    assert resolved.declared_bytes == 80, "a lower bound: what was sized"
     assert [f.size for f in resolved.files] == [80, None]
+    calls: list = []
+    fetcher = HubFetcher(
+        RepoCache(tmp_path / "cache", 10**9), api=hub, download=fake_download(source, calls)
+    )
+    with pytest.raises(SubmissionError, match="declared no size for 1 file.*weights.pt") as info:
+        fetcher.fetch(resolved)
+    assert not isinstance(info.value, SubmissionRejected)
+    assert calls == [] and not (tmp_path / "cache" / SHA_A).exists()
 
 
 # -- fetch --------------------------------------------------------------------------------------
