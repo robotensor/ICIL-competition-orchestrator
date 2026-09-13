@@ -128,7 +128,7 @@ def verify_store(
         report.warnings.append("manifest spec_fingerprint differs from the loaded spec.json")
 
     video_ext = spec.video_format
-    #: Each clip is hashed once, however many units and events refer to it.
+    # Each clip is hashed once, however many units and events refer to it.
     hashed: dict[str, bool] = {}
     # manifest.json is unsigned, so it cannot choose what is verified: the tracks are the spec's,
     # and anything the store holds for another track is reported rather than skipped.
