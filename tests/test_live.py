@@ -28,8 +28,10 @@ DASHBOARD_PHASES = ("fetching", "checking", "evaluating", "publishing", "done", 
 DASHBOARD_SIDES = ("challenger", "king")
 DASHBOARD_OUTCOMES = ("challenger", "king", "tie")
 MAX_BODY_BYTES = 512 * 1024
-EVENT_ID = re.compile(r"^[0-9a-f]{8,64}$")
-SHA256 = re.compile(r"^[0-9a-f]{64}$")
+# JavaScript's `$` matches the end of the string; Python's also matches before a final newline,
+# so every one of these is used with `fullmatch`.
+EVENT_ID = re.compile(r"[0-9a-f]{8,64}")
+SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
 def _is_record(v):
@@ -43,26 +45,52 @@ def _coerce_skill(v, skills):
     return s if s in skills else None
 
 
+def _number(value):
+    """`typeof value === 'number'`: a JSON number, and a bool is not one."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
 def _unit(v, skills):
     if not _is_record(v):
         return None
     skill = _coerce_skill(v.get("skill"), skills)
     task, instance = v.get("task"), v.get("instance")
-    # `typeof instance !== 'number'`: a JSON number, and a bool is not one.
-    if (
-        not skill
-        or not isinstance(task, str)
-        or not task
-        or not isinstance(instance, (int, float))
-        or isinstance(instance, bool)
-    ):
+    if not skill or not isinstance(task, str) or not task or not _number(instance):
         return None
     return {
         "skill": skill,
         "task": task,
-        "demo_video": v["demo_video"] if SHA256.match(str(v.get("demo_video"))) else None,
+        "demo_video": v["demo_video"] if SHA256.fullmatch(str(v.get("demo_video"))) else None,
         "outcome": v.get("outcome") if v.get("outcome") in DASHBOARD_OUTCOMES else None,
     }
+
+
+def _current(v, skills):
+    """`current()`: like a unit, but an empty task is allowed."""
+    if not _is_record(v):
+        return None
+    skill = _coerce_skill(v.get("skill"), skills)
+    if not skill or not isinstance(v.get("task"), str) or not _number(v.get("instance")):
+        return None
+    return {"skill": skill, "task": v["task"], "instance": v["instance"]}
+
+
+def _recent_media(v, skills):
+    if not _is_record(v) or not _is_record(v.get("unit")):
+        return None
+    unit = v["unit"]
+    skill = _coerce_skill(unit.get("skill"), skills)
+    if not skill or not isinstance(unit.get("task"), str) or not _number(unit.get("instance")):
+        return None
+    if v.get("side") not in DASHBOARD_SIDES:
+        return None
+    return {"unit": {"skill": skill, "task": unit["task"], "instance": unit["instance"]}}
+
+
+def _model_ref(v):
+    if not _is_record(v) or not isinstance(v.get("repo"), str) or not v["repo"]:
+        return None
+    return v
 
 
 def parse_live_frame(raw, tracks, skills, live_schema):
@@ -76,7 +104,7 @@ def parse_live_frame(raw, tracks, skills, live_schema):
         return {"ok": False, "reason": "validator_key must be a non-empty string."}
     if not isinstance(raw.get("track"), str) or raw["track"] not in tracks:
         return {"ok": False, "reason": f"track must be one of: {', '.join(tracks)}."}
-    if not isinstance(raw.get("event_id"), str) or not EVENT_ID.match(raw["event_id"]):
+    if not isinstance(raw.get("event_id"), str) or not EVENT_ID.fullmatch(raw["event_id"]):
         return {"ok": False, "reason": "event_id must be 8-64 lowercase hex characters."}
     if not isinstance(raw.get("phase"), str) or raw["phase"] not in DASHBOARD_PHASES:
         return {"ok": False, "reason": f"phase must be one of: {', '.join(DASHBOARD_PHASES)}."}
@@ -84,7 +112,18 @@ def parse_live_frame(raw, tracks, skills, live_schema):
     if side is not None and side not in DASHBOARD_SIDES:
         return {"ok": False, "reason": "side must be one of: challenger, king, or null."}
     units = [u for u in (_unit(i, skills) for i in raw.get("units") or []) if u]
-    return {"ok": True, "frame": {**raw, "units": units, "message": str(raw.get("message"))[:300]}}
+    return {
+        "ok": True,
+        "frame": {
+            **raw,
+            "units": units,
+            "current": _current(raw.get("current"), skills),
+            "recent_media": _recent_media(raw.get("recent_media"), skills),
+            "king": _model_ref(raw.get("king")),
+            "challenger": _model_ref(raw.get("challenger")),
+            "message": str(raw.get("message"))[:300],
+        },
+    }
 
 
 def post_body_accepted(body: bytes, tracks, skills, live_schema):
@@ -168,7 +207,10 @@ def test_every_phase_and_side_builds_a_frame_the_dashboard_accepts_whole(spec):
         built = frame(spec, phase=phase, side=side)
         parsed = post_body_accepted(reporter.encode(built), spec.tracks, skills, 4)
         assert parsed["ok"], (phase, side, parsed)
-        assert len(parsed["frame"]["units"]) == len(built["units"]), "the dashboard dropped units"
+        kept = parsed["frame"]
+        assert len(kept["units"]) == len(built["units"]), "the dashboard dropped units"
+        for part in ("current", "recent_media", "king", "challenger"):
+            assert kept[part] is not None, f"the dashboard dropped {part}"
 
 
 def test_the_frame_carries_progress_per_side_and_skill(spec):
@@ -206,6 +248,19 @@ def test_a_large_unit_list_is_slimmed_to_fit_rather_than_refused(spec):
         ({"side": "referee"}, "side must be one of"),
         ({"validator_key": ""}, "validator_key must be a non-empty string"),
         ({"units": [{"skill": "rt_stacking", "task": "t", "instance": 0}]}, "does not score"),
+        # Python's `$` matches before a final newline; the dashboard's regex does not.
+        ({"event_id": "deadbeef\n"}, "event_id must be 8-64 lowercase hex"),
+        # Units the dashboard would silently drop, leaving a progress bar with rows missing.
+        ({"units": [{"skill": "franka_stacking", "task": "t"}]}, "unit None: instance"),
+        ({"units": [{"skill": "franka_stacking", "task": "", "instance": 0}]}, "task"),
+        ({"units": [{"skill": "franka_stacking", "task": "t", "instance": True}]}, "instance"),
+        ({"current": {"skill": "rt_stacking", "task": "t", "instance": 0}}, "current: skill"),
+        ({"current": {"skill": "franka_stacking", "task": "t"}}, "current: instance"),
+        (
+            {"recent_media": {"unit": {"skill": "franka_stacking", "task": "t", "instance": 0}}},
+            "recent_media: side",
+        ),
+        ({"king": {"key": "k", "repo": "", "revision": "r"}}, "king: repo"),
     ],
 )
 def test_a_frame_the_dashboard_would_refuse_or_thin_out_is_not_built(spec, overrides, message):
@@ -228,6 +283,14 @@ def test_the_encoded_rules_do_refuse_what_the_dashboard_refuses(spec):
         assert not parse_live_frame({**good, key: value}, spec.tracks, skills, 4)["ok"], key
     unknown = {**good, "units": [{**good["units"][0], "skill": "rt_stacking"}]}
     assert parse_live_frame(unknown, spec.tracks, skills, 4)["frame"]["units"] == []
+    for part, broken in (
+        ("units", [{**good["units"][0], "task": ""}]),
+        ("current", {**good["current"], "instance": None}),
+        ("recent_media", {**good["recent_media"], "side": "referee"}),
+        ("king", {**good["king"], "repo": ""}),
+    ):
+        thinned = parse_live_frame({**good, part: broken}, spec.tracks, skills, 4)["frame"][part]
+        assert thinned in (None, []), part
 
 
 class _Sink(BaseHTTPRequestHandler):
