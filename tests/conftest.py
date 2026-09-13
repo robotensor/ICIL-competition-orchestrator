@@ -99,6 +99,15 @@ def fake_spec(spec_doc, write_spec):
     return write_spec(fake_spec_doc(spec_doc), name="fake-spec.json")
 
 
+@pytest.fixture
+def duel_spec(spec_doc, write_spec):
+    """`fake_spec` with a short `act_timeout_s`: a benchmark reaching for a policy that died waits
+    that long before it gives up, and a duel test kills policies on purpose."""
+    doc = fake_spec_doc(spec_doc)
+    doc["budgets"]["act_timeout_s"] = 2.0
+    return write_spec(doc, name="duel-spec.json")
+
+
 @pytest.fixture(autouse=True)
 def _forget_fake_modules():
     yield
