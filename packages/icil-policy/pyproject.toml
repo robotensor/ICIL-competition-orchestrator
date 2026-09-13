@@ -1,0 +1,28 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "icil-policy"
+version = "0.1.0.dev0"
+description = "The policy protocol of the RoboTensor ICIL competition: a policy served in its own process."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+# Installed into every competitor's image, next to whatever the competitor pins: keep it to these.
+dependencies = ["numpy>=1.23", "PyYAML>=6.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/icil_policy"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--import-mode=importlib"
+markers = [
+  "sim: needs a plugged benchmark's simulator (assets, GPU)",
+  "container: needs Docker and builds or runs a policy container",
+  "slow: takes minutes",
+]

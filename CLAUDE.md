@@ -21,7 +21,10 @@ runnable policy code and weights, run in a sandboxed container.
 
 ## Commands
 
-- Host env: `uv venv --python 3.10 .venv && uv pip install -e ".[dev]"`; `ruff check . && ruff format --check .`; `pytest -m "not sim and not container"`.
+- Host env: `uv venv --python 3.10 .venv && uv pip install -e ".[dev]" -e packages/icil-policy`; `ruff check . && ruff format --check .`; `pytest -m "not sim and not container"`.
+- `packages/icil-policy/` is the policy protocol, a distribution of its own installed into every
+  competitor's image: numpy and PyYAML only, never an import of `icil_orchestrator`. CI also tests
+  it alone, installed with nothing but pytest: `pytest packages/icil-policy`.
 
 ## Rules
 
