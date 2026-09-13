@@ -92,8 +92,8 @@ caller's mistake and raises `WireError` before anything is sent.
 {"protocol": 1, "op": "act", "fields": {}, "arrays": [{"name": "qpos", "dtype": "<f8", "shape": [16]}]}
 ```
 
-followed by one raw little-endian frame per array, in header order. Dtypes are bool, int8-64,
-uint8-64 and float16-64; object and every other dtype is refused on send and on receive. Client
-ops: `hello` (`client`), `reset` (`seed`), `prompt` (arrays; `info`), `act` (arrays), `close`.
-Replies: `ok` (after `hello`: `protocol`, `action_type`, `policy`), `action` (arrays with
-`action`), `error` (`type`, `message`, `log_tail`).
+followed by one raw little-endian frame per array, in header order; a message holds at most 1024
+arrays. Dtypes are bool, int8-64, uint8-64 and float16-64; object and every other dtype is refused
+on send and on receive. Client ops: `hello` (`client`), `reset` (`seed`), `prompt` (arrays;
+`info`), `act` (arrays), `close`. Replies: `ok` (after `hello`: `protocol`, `action_type`,
+`policy`), `action` (arrays with `action`), `error` (`type`, `message`, `log_tail`).

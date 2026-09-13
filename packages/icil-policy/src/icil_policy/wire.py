@@ -45,6 +45,7 @@ from .errors import WireError
 __all__ = [
     "CLIENT_OPS",
     "DTYPES",
+    "MAX_ARRAYS",
     "MAX_HEADER_BYTES",
     "MAX_MESSAGE_BYTES",
     "PROTOCOL_VERSION",
@@ -89,6 +90,9 @@ REPLY_OPS = ("ok", "action", "error")
 MAX_HEADER_BYTES = 4 << 20
 #: The most array bytes one message may carry, unless the receiver asks for less.
 MAX_MESSAGE_BYTES = 16 << 30
+#: The most arrays one message may hold. A demonstration holds one per camera and a few more; the
+#: bound keeps checking a header quick, since arrays of size zero cost no bytes at all.
+MAX_ARRAYS = 1024
 
 _HEADER_KEYS = frozenset({"protocol", "op", "fields", "arrays"})
 _ARRAY_KEYS = frozenset({"name", "dtype", "shape"})
@@ -129,6 +133,8 @@ def encode(
         arrays = {}
     if not isinstance(arrays, Mapping):
         raise WireError(f"{op}: arrays must be a mapping of names to arrays")
+    if len(arrays) > MAX_ARRAYS:
+        raise WireError(f"{op}: {len(arrays)} arrays; a message holds at most {MAX_ARRAYS}")
     described = []
     payloads = []
     for name in sorted(arrays, key=lambda n: (not isinstance(n, str), str(n))):
@@ -194,8 +200,11 @@ def recv(
         raise WireError("header fields is not an object")
     if not isinstance(described, list):
         raise WireError("header arrays is not a list")
+    if len(described) > MAX_ARRAYS:
+        raise WireError(f"header describes {len(described)} arrays; at most {MAX_ARRAYS}")
 
     specs: list[tuple[str, np.dtype, tuple[int, ...], int]] = []
+    seen: set[str] = set()
     total = 0
     for entry in described:
         if not isinstance(entry, dict) or set(entry) != _ARRAY_KEYS:
@@ -203,8 +212,9 @@ def recv(
         name, dtype, shape = entry["name"], entry["dtype"], entry["shape"]
         if not isinstance(name, str) or not name:
             raise WireError(f"array name {name!r} is not a non-empty string")
-        if any(name == seen for seen, *_ in specs):
+        if name in seen:
             raise WireError(f"array {name!r} is described twice")
+        seen.add(name)
         if not isinstance(dtype, str) or dtype not in DTYPES:
             raise WireError(f"array {name!r}: dtype {dtype!r} is not one this format carries")
         if not isinstance(shape, list) or not all(

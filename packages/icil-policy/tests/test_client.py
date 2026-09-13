@@ -347,6 +347,17 @@ def test_a_reply_claiming_more_than_a_reply_may_carry_raises_before_reading_it(f
         policy.act({"qpos": np.zeros(2)})
 
 
+def test_a_reply_describing_too_many_arrays_raises_within_the_timeout(fake_server):
+    head = {"protocol": 1, "op": "ok", "fields": {"protocol": 1, "action_type": "ee"}}
+    head["arrays"] = [{"name": f"a{i}", "dtype": "|u1", "shape": [0]} for i in range(80_000)]
+    address, key = fake_server(answering([json.dumps(head).encode()]))
+    policy = RemotePolicy(address, key, timeout_s=1)
+    started = time.monotonic()
+    with pytest.raises(PolicyUnavailable, match="malformed reply"):
+        policy.hello()
+    assert time.monotonic() - started < 5
+
+
 def test_the_context_manager_does_not_hide_the_exception_that_ended_the_block(fake_server):
     address, key = fake_server(answering(HELLO_OK))
     with pytest.raises(KeyError), RemotePolicy(address, key, timeout_s=1) as policy:

@@ -2,6 +2,7 @@ import contextlib
 import json
 import pickle
 import threading
+import time
 from multiprocessing import Pipe
 
 import numpy as np
@@ -191,6 +192,25 @@ def test_a_header_claiming_more_than_the_receiver_accepts_is_refused_before_any_
     small = FrameConn([header(arrays=[{"name": "x", "dtype": "<f8", "shape": [4]}]), b"\0" * 32])
     with pytest.raises(WireError, match="exceed"):
         wire.recv(small, max_bytes=16)
+
+
+def test_a_header_describing_more_arrays_than_a_message_may_hold_is_refused_at_once():
+    # Zero-size arrays cost no bytes, so only a count bounds how long checking the header takes.
+    many = [{"name": f"a{i}", "dtype": "|b1", "shape": [0]} for i in range(80_000)]
+    frame = header(arrays=many)
+    assert len(frame) < wire.MAX_HEADER_BYTES
+    started = time.monotonic()
+    with pytest.raises(WireError, match=f"at most {wire.MAX_ARRAYS}"):
+        wire.recv(FrameConn([frame]))
+    assert time.monotonic() - started < 2
+    most = [{"name": f"a{i}", "dtype": "|b1", "shape": [0]} for i in range(wire.MAX_ARRAYS)]
+    started = time.monotonic()
+    assert len(wire.recv(FrameConn([header(arrays=most), *[b""] * wire.MAX_ARRAYS]))[2]) == len(
+        most
+    )
+    assert time.monotonic() - started < 2
+    with pytest.raises(WireError, match=f"at most {wire.MAX_ARRAYS}"):
+        wire.encode("act", arrays={f"a{i}": np.zeros(0) for i in range(wire.MAX_ARRAYS + 1)})
 
 
 def test_a_frame_longer_than_its_description_is_refused_without_reading_it():
