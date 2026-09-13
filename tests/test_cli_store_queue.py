@@ -13,6 +13,7 @@ from icil_orchestrator.ids import SubmissionRef
 from icil_orchestrator.queue import Queue
 from icil_orchestrator.store.writer import Store
 from store_helpers import TRACK, make_record, publish
+from submission_helpers import SHA_A, FakeHub
 
 
 def cli(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
@@ -173,18 +174,48 @@ def test_queue_add_on_a_corrupt_queue_file_says_so(tmp_path, capsys):
     assert "is not a readable queue file" in capsys.readouterr().err
 
 
-def test_queue_add_refuses_what_it_cannot_queue(tmp_path, capsys):
+def test_queue_add_resolves_a_branch_or_tag_to_its_commit_once(tmp_path, capsys, monkeypatch):
+    hub = FakeHub()
+    hub.add("org/policy", SHA_A, {"icil.yaml": 80}, "main", "v1")
+    monkeypatch.setattr("huggingface_hub.HfApi", lambda: hub)
+    base = ["queue", "--queue", str(tmp_path / "queue")]
+    assert main([*base, "add", "org/policy", "main"]) == 0
+    out = capsys.readouterr()
+    assert out.err.strip() == f"resolved org/policy@main to {SHA_A}"
+    key = SubmissionRef.make("org/policy", SHA_A).key
+    assert out.out.strip() == f"org/policy@{SHA_A} key={key} track={TRACK} position=1"
+    (entry,) = Queue(tmp_path / "queue" / f"{TRACK}.json").entries()
+    assert entry.revision == SHA_A, "the queue holds the commit, not the name"
+    # The tag names the same commit: the same key, moved to the back, not queued twice.
+    assert main([*base, "add", "org/policy", "v1"]) == 0
+    assert [e.key for e in Queue(tmp_path / "queue" / f"{TRACK}.json").entries()] == [key]
+    # A sha is queued as given, without asking the Hub.
+    assert main([*base, "add", "org/other", "2" * 40]) == 0
+    assert hub.calls == [("org/policy", "main"), ("org/policy", "v1")]
+
+
+def test_queue_add_refuses_what_it_cannot_queue(tmp_path, capsys, monkeypatch):
+    hub = FakeHub()
+    hub.add("org/policy", SHA_A, {"icil.yaml": 80}, "main")
+    monkeypatch.setattr("huggingface_hub.HfApi", lambda: hub)
     base = ["queue", "--queue", str(tmp_path / "queue")]
     assert main([*base, "add", "not a repo", "1" * 40]) == 2
     assert main([*base, "add", "org/policy", "1" * 40, "--duel-size", "enormous"]) == 2
     assert main(["queue", "--queue", str(tmp_path / "queue"), "--track", "video_only", "list"]) == 2
-    # A branch or an abbreviation is code that can change, or another key for the same code.
-    assert main([*base, "add", "org/policy", "main"]) == 2
-    assert main([*base, "add", "org/policy", "1" * 7]) == 2
+    # A name the Hub does not know, an abbreviation (another key for the same code) and a
+    # repository that is not there are refused with the Hub's answer.
+    assert main([*base, "add", "org/policy", "no-such-branch"]) == 2
+    assert main([*base, "add", "org/policy", "a" * 7]) == 2
+    assert main([*base, "add", "org/missing", "main"]) == 2
     err = capsys.readouterr().err
     assert "is not a Hugging Face repo id" in err and "is not one of smoke, light" in err
     assert "unknown track 'video_only'; the tracks are franka_1arm" in err
-    assert err.count("is not a resolved commit sha (40 lowercase hex characters)") == 2
+    assert err.count("Revision Not Found") == 2 and "Repository Not Found" in err
+    assert hub.calls == [
+        ("org/policy", "no-such-branch"),
+        ("org/policy", "a" * 7),
+        ("org/missing", "main"),
+    ]
     assert (
         not list((tmp_path / "queue").glob("*.json"))
         or not Queue(tmp_path / "queue" / f"{TRACK}.json").entries()

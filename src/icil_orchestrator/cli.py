@@ -118,7 +118,7 @@ def cmd_store(args: argparse.Namespace) -> int:
 
 
 def cmd_queue(args: argparse.Namespace) -> int:
-    from .ids import SubmissionRef
+    from .ids import SubmissionRef, is_commit_sha, is_repo
     from .queue import Queues
 
     spec = _spec(args)
@@ -134,10 +134,20 @@ def cmd_queue(args: argparse.Namespace) -> int:
             sizes = ", ".join(spec.sizes(track))
             print(f"error: duel size {args.duel_size!r} is not one of {sizes}", file=sys.stderr)
             return 2
+        revision = args.revision
+        if not is_commit_sha(revision) and is_repo(args.repo):
+            # A branch or a tag is resolved once, here, and the queue holds the commit.
+            from .submissions import SubmissionError, SubmissionRejected
+            from .submissions.resolve import resolve
+
+            try:
+                revision = resolve(args.repo, revision).sha
+            except (SubmissionRejected, SubmissionError) as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 2
+            print(f"resolved {args.repo}@{args.revision} to {revision}", file=sys.stderr)
         try:
-            entry, position = queue.add(
-                args.repo, args.revision, duel_size=args.duel_size, source="cli"
-            )
+            entry, position = queue.add(args.repo, revision, duel_size=args.duel_size, source="cli")
         except ValueError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 2
