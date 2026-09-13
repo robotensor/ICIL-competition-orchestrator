@@ -135,8 +135,9 @@ def cmd_queue(args: argparse.Namespace) -> int:
             print(f"error: duel size {args.duel_size!r} is not one of {sizes}", file=sys.stderr)
             return 2
         revision = args.revision
-        if not is_commit_sha(revision) and is_repo(args.repo):
-            # A branch or a tag is resolved once, here, and the queue holds the commit.
+        if is_repo(args.repo):
+            # The Hub is asked once, here: a branch or a tag becomes the commit it names, a sha
+            # is confirmed to be a commit of the repository, and the queue holds the commit.
             from .submissions import SubmissionError, SubmissionRejected
             from .submissions.resolve import resolve
 
@@ -145,7 +146,8 @@ def cmd_queue(args: argparse.Namespace) -> int:
             except (SubmissionRejected, SubmissionError) as exc:
                 print(f"error: {exc}", file=sys.stderr)
                 return 2
-            print(f"resolved {args.repo}@{args.revision} to {revision}", file=sys.stderr)
+            if not is_commit_sha(args.revision):
+                print(f"resolved {args.repo}@{args.revision} to {revision}", file=sys.stderr)
         try:
             entry, position = queue.add(args.repo, revision, duel_size=args.duel_size, source="cli")
         except ValueError as exc:
@@ -293,7 +295,9 @@ def build_parser() -> argparse.ArgumentParser:
     q_sub = q.add_subparsers(dest="queue_cmd", required=True)
     q_add = q_sub.add_parser("add", help="queue repo@revision at the back")
     q_add.add_argument("repo")
-    q_add.add_argument("revision", help="a resolved commit sha (40 hex characters)")
+    q_add.add_argument(
+        "revision", help="a branch, a tag or a commit sha; the queue holds the Hub's commit"
+    )
     q_add.add_argument("--duel-size", default=None)
     q_sub.add_parser("list")
     q_rm = q_sub.add_parser("remove", help="drop an entry by its key")

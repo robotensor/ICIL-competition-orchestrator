@@ -7,6 +7,8 @@ import subprocess
 import sysconfig
 from pathlib import Path
 
+import pytest
+
 from icil_orchestrator.canon import Signer
 from icil_orchestrator.cli import main
 from icil_orchestrator.ids import SubmissionRef
@@ -14,6 +16,18 @@ from icil_orchestrator.queue import Queue
 from icil_orchestrator.store.writer import Store
 from store_helpers import TRACK, make_record, publish
 from submission_helpers import SHA_A, FakeHub
+
+SHA_1, SHA_2 = "1" * 40, "2" * 40
+
+
+@pytest.fixture
+def hub(monkeypatch):
+    """The Hub `queue add` asks, with org/policy at SHA_1 and org/other at SHA_2."""
+    fake = FakeHub()
+    fake.add("org/policy", SHA_1, {"icil.yaml": 80})
+    fake.add("org/other", SHA_2, {"icil.yaml": 80})
+    monkeypatch.setattr("huggingface_hub.HfApi", lambda: fake)
+    return fake
 
 
 def cli(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
@@ -121,7 +135,7 @@ def test_init_refuses_a_key_inside_the_store(tmp_path):
     assert not (root / "keys").exists()
 
 
-def test_queue_add_list_remove_and_publish_the_snapshot(spec, tmp_path, capsys):
+def test_queue_add_list_remove_and_publish_the_snapshot(spec, hub, tmp_path, capsys):
     queue, root = tmp_path / "queue", tmp_path / "store"
     assert main(["store", "init", str(root), "--key", str(tmp_path / "k")]) == 0
     capsys.readouterr()
@@ -150,7 +164,7 @@ def test_queue_add_list_remove_and_publish_the_snapshot(spec, tmp_path, capsys):
     assert main(["store", "verify", str(root)]) == 0
 
 
-def test_queue_add_waits_for_no_one_while_a_duel_holds_the_store(spec, tmp_path, capsys):
+def test_queue_add_waits_for_no_one_while_a_duel_holds_the_store(spec, hub, tmp_path, capsys):
     from icil_orchestrator.store.writer import store_lock
 
     queue, root = tmp_path / "queue", tmp_path / "store"
@@ -166,7 +180,7 @@ def test_queue_add_waits_for_no_one_while_a_duel_holds_the_store(spec, tmp_path,
     assert "org/policy" in capsys.readouterr().out, "the entry was still queued"
 
 
-def test_queue_add_on_a_corrupt_queue_file_says_so(tmp_path, capsys):
+def test_queue_add_on_a_corrupt_queue_file_says_so(hub, tmp_path, capsys):
     queue = tmp_path / "queue"
     queue.mkdir()
     (queue / f"{TRACK}.json").write_text('{"entries": [], "block": 3')
@@ -189,9 +203,12 @@ def test_queue_add_resolves_a_branch_or_tag_to_its_commit_once(tmp_path, capsys,
     # The tag names the same commit: the same key, moved to the back, not queued twice.
     assert main([*base, "add", "org/policy", "v1"]) == 0
     assert [e.key for e in Queue(tmp_path / "queue" / f"{TRACK}.json").entries()] == [key]
-    # A sha is queued as given, without asking the Hub.
+    # A sha is confirmed on the Hub and queued as given, with nothing to say about resolving it.
+    hub.add("org/other", "2" * 40, {"icil.yaml": 80})
+    capsys.readouterr()
     assert main([*base, "add", "org/other", "2" * 40]) == 0
-    assert hub.calls == [("org/policy", "main"), ("org/policy", "v1")]
+    assert capsys.readouterr().err == ""
+    assert hub.calls == [("org/policy", "main"), ("org/policy", "v1"), ("org/other", "2" * 40)]
 
 
 def test_queue_add_refuses_what_it_cannot_queue(tmp_path, capsys, monkeypatch):
@@ -207,15 +224,19 @@ def test_queue_add_refuses_what_it_cannot_queue(tmp_path, capsys, monkeypatch):
     assert main([*base, "add", "org/policy", "no-such-branch"]) == 2
     assert main([*base, "add", "org/policy", "a" * 7]) == 2
     assert main([*base, "add", "org/missing", "main"]) == 2
+    # A sha is a commit of the repository or it is refused now, not when its duel comes.
+    assert main([*base, "add", "org/policy", "0" * 40]) == 2
     err = capsys.readouterr().err
     assert "is not a Hugging Face repo id" in err and "is not one of smoke, light" in err
     assert "unknown track 'video_only'; the tracks are franka_1arm" in err
-    assert err.count("revision not found: Invalid rev id: ") == 2
+    assert err.count("revision not found: Invalid rev id: ") == 3
+    assert f"org/policy@{'0' * 40}: revision not found" in err
     assert "org/missing@main: repository not found" in err and "Request ID" not in err
     assert hub.calls == [
         ("org/policy", "no-such-branch"),
         ("org/policy", "a" * 7),
         ("org/missing", "main"),
+        ("org/policy", "0" * 40),
     ]
     assert (
         not list((tmp_path / "queue").glob("*.json"))
