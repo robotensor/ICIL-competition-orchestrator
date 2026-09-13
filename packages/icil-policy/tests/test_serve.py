@@ -106,6 +106,8 @@ def test_a_policy_exception_is_an_error_reply_and_the_server_keeps_serving(probe
         ("no_action", "ValueError", "no 'action'"),
         ("scalar", "ValueError", "shape ()"),
         ("object", "WireError", "cannot be sent"),
+        ("ragged", "WireError", "'aux'"),
+        ("tensor", "WireError", "'action' cannot be sent"),
     ],
 )
 def test_an_unusable_act_result_is_an_error_reply(probe_repo, serve, returns, kind, message):

@@ -139,6 +139,8 @@ def test_an_array_that_cannot_be_sent_is_the_callers_error_and_sends_nothing(pro
             policy.act({"qpos": np.array([object()], dtype=object)})
         with pytest.raises(WireError, match="cannot be sent"):
             policy.set_demonstration({"meta": np.array('{"scene_seed": 1}')}, {})
+        with pytest.raises(WireError, match="cannot be sent"):
+            policy.act({"qpos": [[1.0, 2.0], [3.0]]})
         with pytest.raises(TypeError):
             policy.reset(True)
         assert policy.act({"qpos": np.zeros(3)})["action"].shape == (7,)
