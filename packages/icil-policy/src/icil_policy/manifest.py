@@ -9,13 +9,15 @@
 The file lives at the root of the repository. It is read with PyYAML's safe loader, so a tag that
 would construct a Python object is refused rather than run. A key given twice and an unknown key
 are refused too: a typo in a submission should fail when it is checked, not be ignored until a
-duel. Every problem is reported at once, in one `ManifestError`.
+duel. Every problem is reported at once, in one `ManifestError`, which is the only exception
+`load` raises: the file is untrusted, and whoever checks it should need to catch nothing else.
 """
 
 from __future__ import annotations
 
 import os
 import re
+import reprlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -30,9 +32,21 @@ API_VERSION = 1
 #: The file name a competitor's repository holds its manifest under.
 FILENAME = "icil.yaml"
 
+#: The largest manifest read. One names a class and a few constructor arguments.
+MAX_BYTES = 1 << 20
+
 _IDENTIFIER = r"[A-Za-z_][A-Za-z0-9_]*"
 _POLICY = re.compile(rf"{_IDENTIFIER}(\.{_IDENTIFIER})*:{_IDENTIFIER}")
 _KEYS = ("api", "policy", "kwargs", "requirements", "benchmarks")
+
+#: What a problem quotes of a value: an excerpt, since YAML aliases let a small file hold a value
+#: whose full repr would not fit in memory.
+_EXCERPT = reprlib.Repr()
+_EXCERPT.maxlevel = 2
+_EXCERPT.maxstring = _EXCERPT.maxother = _EXCERPT.maxlong = 60
+_EXCERPT.maxlist = _EXCERPT.maxtuple = _EXCERPT.maxdict = _EXCERPT.maxset = 6
+#: The longest message of a parser error quoted in a problem.
+_PARSER_CHARS = 1000
 
 
 @dataclass(frozen=True)
@@ -67,13 +81,22 @@ def load(path: str | os.PathLike[str]) -> Manifest:
     """The manifest at `path`, validated; `ManifestError` listing every problem otherwise."""
     path = Path(path).absolute()
     try:
-        text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as exc:
+        with path.open("rb") as handle:
+            raw = handle.read(MAX_BYTES + 1)
+        text = raw.decode("utf-8")
+    except (OSError, ValueError) as exc:  # ValueError: not UTF-8, or a NUL in the path
         raise ManifestError(str(path), [f"cannot be read: {exc}"]) from None
+    if len(raw) > MAX_BYTES:
+        raise ManifestError(str(path), [f"is larger than {MAX_BYTES} bytes"])
     try:
         data = yaml.load(text, Loader=_SafeUniqueLoader)
-    except yaml.YAMLError as exc:
-        raise ManifestError(str(path), [f"is not valid YAML: {exc}"]) from None
+    except RecursionError:
+        raise ManifestError(str(path), ["is not valid YAML: nested too deeply"]) from None
+    except Exception as exc:  # YAMLError, and a value the safe loader cannot build: 2026-02-30
+        message = str(exc)
+        if len(message) > _PARSER_CHARS:
+            message = message[:_PARSER_CHARS] + " [...]"
+        raise ManifestError(str(path), [f"is not valid YAML: {message}"]) from None
     return validate(data, path)
 
 
@@ -87,21 +110,21 @@ def validate(data: Any, path: str | os.PathLike[str]) -> Manifest:
     unknown = [key for key in data if key not in _KEYS]
     if unknown:
         problems.append(
-            f"unknown key(s) {', '.join(repr(k) for k in unknown)}; allowed: {', '.join(_KEYS)}"
+            f"unknown key(s) {', '.join(map(_excerpt, unknown))}; allowed: {', '.join(_KEYS)}"
         )
 
     api = data.get("api")
     if "api" not in data:
         problems.append("api: required")
     elif type(api) is not int or api != API_VERSION:
-        problems.append(f"api: must be {API_VERSION}, not {api!r}")
+        problems.append(f"api: must be {API_VERSION}, not {_excerpt(api)}")
 
     policy = data.get("policy")
     if "policy" not in data:
         problems.append("policy: required, as module:Class")
     elif not isinstance(policy, str) or not _POLICY.fullmatch(policy):
         problems.append(
-            f"policy: must be module:Class, such as pkg.module:MyPolicy, not {policy!r}"
+            f"policy: must be module:Class, such as pkg.module:MyPolicy, not {_excerpt(policy)}"
         )
 
     kwargs = data.get("kwargs", {})
@@ -113,7 +136,9 @@ def validate(data: Any, path: str | os.PathLike[str]) -> Manifest:
     else:
         bad = [key for key in kwargs if not isinstance(key, str) or not key.isidentifier()]
         if bad:
-            problems.append(f"kwargs: keys must be identifiers, not {', '.join(map(repr, bad))}")
+            problems.append(
+                f"kwargs: keys must be identifiers, not {', '.join(map(_excerpt, bad))}"
+            )
 
     requirements = data.get("requirements")
     if requirements is not None:
@@ -123,7 +148,7 @@ def validate(data: Any, path: str | os.PathLike[str]) -> Manifest:
     if benchmarks is None:
         benchmarks = []
     if not isinstance(benchmarks, list) or not all(isinstance(b, str) and b for b in benchmarks):
-        problems.append(f"benchmarks: must be a list of names, not {benchmarks!r}")
+        problems.append(f"benchmarks: must be a list of names, not {_excerpt(benchmarks)}")
         benchmarks = []
 
     if problems:
@@ -168,13 +193,23 @@ class _SafeUniqueLoader(yaml.SafeLoader):
 
 def _requirements_problems(requirements: Any, root: Path) -> list[str]:
     if not isinstance(requirements, str) or not requirements:
-        return [f"requirements: must be a path, not {requirements!r}"]
+        return [f"requirements: must be a path, not {_excerpt(requirements)}"]
+    shown = _excerpt(requirements)
+    if "\0" in requirements:
+        return [f"requirements: {shown} holds a NUL character"]
     if os.path.isabs(requirements) or requirements.startswith("~"):
-        return [f"requirements: {requirements!r} must be relative to the repository root"]
-    real_root = root.resolve()
-    target = (root / requirements).resolve()
-    if target != real_root and real_root not in target.parents:
-        return [f"requirements: {requirements!r} leaves the repository"]
-    if not target.is_file():
-        return [f"requirements: {requirements!r} is not a file in the repository"]
+        return [f"requirements: {shown} must be relative to the repository root"]
+    try:
+        real_root = root.resolve()
+        target = (root / requirements).resolve()
+        if target != real_root and real_root not in target.parents:
+            return [f"requirements: {shown} leaves the repository"]
+        if not target.is_file():
+            return [f"requirements: {shown} is not a file in the repository"]
+    except (OSError, RuntimeError) as exc:  # RuntimeError: a symlink loop, before Python 3.13
+        return [f"requirements: {shown} cannot be resolved: {_excerpt(str(exc))}"]
     return []
+
+
+def _excerpt(value: Any) -> str:
+    return _EXCERPT.repr(value)
