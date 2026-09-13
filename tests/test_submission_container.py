@@ -12,6 +12,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -154,6 +155,52 @@ def test_submission_check_on_the_replay_example_resolves_builds_and_says_hello(
     assert not is_shared_mount(shared) and "listening on" in (shared / "policy.log").read_text()
     if os.geteuid() == 0:
         assert "(a tmpfs)" in report["steps"][4]["detail"]
+
+
+def test_a_container_whose_owner_was_killed_before_hello_is_reaped_by_the_next_start(
+    spec, docker, replay, tmp_path
+):
+    """kill -9 between `docker run` and `hello`: the server waits for a client that never comes,
+    and keeps its memory and GPU slot. The next start, from any process, removes it and releases
+    its shared tmpfs."""
+    _, _, image = replay
+    shared = tmp_path / "orphan"
+    child = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import sys, time\n"
+            "from pathlib import Path\n"
+            "from icil_orchestrator.spec import load_spec\n"
+            "from icil_orchestrator.submissions.container import PolicyContainer\n"
+            "from icil_orchestrator.submissions.docker import Docker\n"
+            "c = PolicyContainer(load_spec(), Docker(), sys.argv[1], name='icil-policy-test-orphan',"
+            " socket_dir=Path(sys.argv[2]), gpus=0)\n"
+            "c.start()\n"
+            "print('started', flush=True)\n"
+            "time.sleep(600)\n",
+            image.tag,
+            str(shared),
+        ],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert child.stdout.readline().strip() == "started"
+    finally:
+        child.kill()
+        child.wait()
+    assert "icil-policy-test-orphan" in containers(docker)
+    assert docker.state("icil-policy-test-orphan").running, "the server waits for ever"
+    if os.geteuid() == 0:
+        assert is_shared_mount(shared)
+    with PolicyContainer(
+        spec, docker, image.tag, name="icil-policy-test-next", socket_dir=tmp_path / "s", gpus=0
+    ) as container:
+        assert "icil-policy-test-orphan" in container.reaped
+        assert "icil-policy-test-orphan" not in containers(docker)
+        assert not is_shared_mount(shared), "its tmpfs went with it"
+        assert "icil-policy-test-next" in containers(docker), "not the one it started"
 
 
 # -- from inside --------------------------------------------------------------------------------

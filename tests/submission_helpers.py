@@ -13,7 +13,12 @@ from typing import Any
 import httpx
 from huggingface_hub.errors import RepositoryNotFoundError, RevisionNotFoundError
 
-from icil_orchestrator.submissions.docker import BuildFailed, BuildTimedOut, ContainerState
+from icil_orchestrator.submissions.docker import (
+    BuildFailed,
+    BuildTimedOut,
+    ContainerInfo,
+    ContainerState,
+)
 
 SHA_A = "a" * 40
 SHA_B = "b" * 40
@@ -121,6 +126,8 @@ class FakeDocker:
     run_envs: list[dict] = field(default_factory=list)
     removed: list[str] = field(default_factory=list)
     processes: dict[str, subprocess.Popen] = field(default_factory=dict)
+    #: Every container's labels, by name, until it is removed; a test may add one it never ran.
+    labels: dict[str, dict[str, str]] = field(default_factory=dict)
     #: When set, every build fails with this as its log.
     build_failure: str | None = None
     #: How long a build "takes": one over its timeout times out instead of building.
@@ -160,6 +167,9 @@ class FakeDocker:
         self.runs.append(args)
         self.run_envs.append(dict(env or {}))
         name = args[args.index("--name") + 1]
+        self.labels[name] = dict(
+            args[i + 1].partition("=")[::2] for i, a in enumerate(args) if a == "--label"
+        )
         mount = next(a for a in args if a.startswith("type=bind,src="))
         shared = mount.removeprefix("type=bind,src=").split(",")[0]
         image = args[args.index("--env") + 2]
@@ -187,6 +197,13 @@ class FakeDocker:
         code = process.poll()
         return ContainerState(code is None, code)
 
+    def policy_containers(self):
+        return [
+            ContainerInfo(name, self.state(name).running, dict(labels))
+            for name, labels in self.labels.items()
+            if labels.get("icil.orchestrator") == "policy"
+        ]
+
     def logs(self, name, *, tail_lines=40):
         return ""
 
@@ -195,6 +212,7 @@ class FakeDocker:
 
     def remove(self, name):
         self.removed.append(name)
+        self.labels.pop(name, None)
         process = self.processes.pop(name, None)
         if process is not None:
             process.kill()

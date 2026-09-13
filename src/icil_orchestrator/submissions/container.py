@@ -22,6 +22,13 @@ value from the docker client's environment, so it is never on a command line.
 The health check is `hello` through `icil_policy.client.RemotePolicy` within
 `budgets.policy_start_seconds`, which builds the policy inside the container. The container is
 removed (`docker rm -f`) when the host object closes, however things went.
+
+A process killed before it closes leaves its container behind, and one killed between `docker
+run` and `hello` leaves a server that waits for a client for ever. So every container is labelled
+with the process that started it (`Owner`: its pid, that process's start time, since a pid is
+reused, and the pid namespace both are in), and each start first reaps the containers whose owner
+is gone (`reap_orphans`), with their shared tmpfs. Whether a client ever connected is not asked:
+the socket's directory is the policy's to write in, so nothing there is evidence.
 """
 
 from __future__ import annotations
@@ -32,6 +39,8 @@ import shutil
 import stat
 import subprocess
 import time
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -61,6 +70,64 @@ SHARED_DIR_BYTES = 64 << 20
 SHARED_DIR_INODES = 64
 #: What the tmpfs is listed under in the host's mount table.
 SHARED_DIR_SOURCE = "icil-policy"
+#: Labels on every container: the process that started it (`Owner`) and its shared directory on
+#: the host, so a container whose owner is gone can be found and reaped with its tmpfs.
+OWNER_PID_LABEL = "icil.owner.pid"
+OWNER_START_LABEL = "icil.owner.start"
+OWNER_PIDNS_LABEL = "icil.owner.pidns"
+SHARED_DIR_LABEL = "icil.shared-dir"
+
+
+@dataclass(frozen=True)
+class Owner:
+    """A process as the kernel names it for as long as it lives: its pid, its start time in clock
+    ticks since boot (field 22 of /proc/<pid>/stat; a later process given the same pid starts
+    later) and its pid namespace (a pid means something only in its own)."""
+
+    pid: int
+    start: str
+    pidns: str
+
+    @classmethod
+    def current(cls) -> Owner | None:
+        """This process; None where /proc cannot say (not Linux), and then nothing is reaped."""
+        try:
+            return cls(os.getpid(), _start_ticks("self"), os.readlink("/proc/self/ns/pid"))
+        except (OSError, ValueError, IndexError):
+            return None
+
+    @classmethod
+    def from_labels(cls, labels: Mapping[str, str]) -> Owner | None:
+        try:
+            return cls(
+                int(labels[OWNER_PID_LABEL]), labels[OWNER_START_LABEL], labels[OWNER_PIDNS_LABEL]
+            )
+        except (KeyError, ValueError):
+            return None
+
+    def labels(self) -> dict[str, str]:
+        return {
+            OWNER_PID_LABEL: str(self.pid),
+            OWNER_START_LABEL: self.start,
+            OWNER_PIDNS_LABEL: self.pidns,
+        }
+
+    def gone(self) -> bool:
+        """Whether this process has ended, as seen from its own pid namespace. Anything /proc does
+        not answer plainly (no permission, an unreadable line) is taken as not gone."""
+        try:
+            return _start_ticks(str(self.pid)) != self.start
+        except FileNotFoundError:
+            return True
+        except (OSError, ValueError, IndexError):
+            return False
+
+
+def _start_ticks(pid: str) -> str:
+    stat_line = Path(f"/proc/{pid}/stat").read_text()
+    # The command name is in parentheses and may hold anything, spaces and parentheses included;
+    # the fields after its last ")" start at field 3, so field 22 is the 20th of them.
+    return stat_line.rpartition(")")[2].split()[19]
 
 
 def serve_argv(spec: Any) -> list[str]:
@@ -82,23 +149,26 @@ def serve_argv(spec: Any) -> list[str]:
 
 
 def run_argv(
-    spec: Any, *, image: str, name: str, socket_dir: Path, gpus: int | None = None
+    spec: Any,
+    *,
+    image: str,
+    name: str,
+    socket_dir: Path,
+    gpus: int | None = None,
+    owner: Owner | None = None,
 ) -> list[str]:
     """`docker run`'s arguments for `image` under the spec's sandbox, `run` itself excluded.
 
     `gpus` overrides `sandbox.gpus` for a policy that needs none (the examples, the tests); the
-    spec's count is the default.
+    spec's count is the default. `owner`, the process that will close the container, is put on it
+    as labels, with the shared directory, for `reap_orphans`.
     """
     sandbox = spec.submission["sandbox"]
-    args = [
-        "--detach",
-        "--name",
-        name,
-        "--label",
-        CONTAINER_LABEL,
-        "--network",
-        str(sandbox["network"]),
-    ]
+    args = ["--detach", "--name", name, "--label", CONTAINER_LABEL]
+    labels = {**(owner.labels() if owner is not None else {}), SHARED_DIR_LABEL: str(socket_dir)}
+    for key, value in labels.items():
+        args += ["--label", f"{key}={value}"]
+    args += ["--network", str(sandbox["network"])]
     if sandbox["read_only_root"]:
         args.append("--read-only")
     for path in sandbox["tmpfs"]:
@@ -245,6 +315,34 @@ def _read_plain_file(path: Path, limit: int) -> bytes | None:
         os.close(fd)
 
 
+def reap_orphans(docker: Docker, *, current: Owner | None = None) -> list[str]:
+    """Remove every policy container whose owner is gone, and release its shared tmpfs; the names
+    removed. A container with no owner labels, or one started from another pid namespace, is left
+    alone: whether its owner lives cannot be told from here. Best effort: a docker that cannot
+    list its containers reaps nothing, and says nothing, since the start that follows will."""
+    me = Owner.current() if current is None else current
+    if me is None:
+        return []
+    try:
+        listed = docker.policy_containers()
+    except SubmissionError:
+        return []
+    reaped = []
+    for found in listed:
+        owner = Owner.from_labels(found.labels)
+        if owner is None or owner.pidns != me.pidns or owner == me or not owner.gone():
+            continue
+        docker.remove(found.name)
+        shared = found.labels.get(SHARED_DIR_LABEL)
+        if shared and is_shared_mount(Path(shared)):
+            try:
+                release_socket_dir(Path(shared))
+            except SubmissionError:
+                pass  # the next start at that directory unmounts it
+        reaped.append(found.name)
+    return reaped
+
+
 class PolicyContainer:
     """One served policy in one container. `with PolicyContainer(...) as c: c.hello(60)`."""
 
@@ -272,6 +370,8 @@ class PolicyContainer:
         self.session: RemotePolicy | None = None
         self.started_at: float | None = None
         self.listening_after_s: float | None = None
+        #: The containers of processes that are gone, removed by `start` before this one ran.
+        self.reaped: list[str] = []
         self._closed = False
         self._ran = False
 
@@ -284,9 +384,16 @@ class PolicyContainer:
         return self.socket_dir / LOG_FILE
 
     def start(self) -> None:
+        owner = Owner.current()
+        self.reaped = reap_orphans(self.docker, current=owner)
         self.bounded = prepare_socket_dir(self.socket_dir, self.spec, bounded=self.bounded)
         args = run_argv(
-            self.spec, image=self.image, name=self.name, socket_dir=self.socket_dir, gpus=self.gpus
+            self.spec,
+            image=self.image,
+            name=self.name,
+            socket_dir=self.socket_dir.absolute(),
+            gpus=self.gpus,
+            owner=owner,
         )
         self._ran = True
         self.started_at = time.monotonic()

@@ -195,6 +195,8 @@ def check_submission(
             container.start()
             shared = "a tmpfs" if container.bounded else "a plain directory, unbounded (not root)"
             s.detail = f"container {name}, socket directory {container.socket_dir} ({shared})"
+            if container.reaped:
+                s.detail += f"; removed {len(container.reaped)} left by ended processes"
             s.status = "ok"
         with step("hello") as s:
             budget = float(spec.budgets["policy_start_seconds"])

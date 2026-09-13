@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import os
 import socket
+import subprocess
+import sys
 import time
 
 import pytest
@@ -22,13 +24,16 @@ from icil_orchestrator.submissions.container import (
     HARDENING,
     SHARED_DIR_BYTES,
     SHARED_DIR_INODES,
+    Owner,
     PolicyContainer,
     can_bound_shared_dir,
     is_socket,
     prepare_socket_dir,
+    reap_orphans,
     run_argv,
     serve_argv,
 )
+from icil_orchestrator.submissions.docker import DockerError
 from icil_orchestrator.submissions.image import (
     base_image,
     build_submission_image,
@@ -54,18 +59,41 @@ def ref():
     return SubmissionRef.resolved("org/policy", SHA_A)
 
 
+def ended_process_owner() -> Owner:
+    """The `Owner` of a process that has come and gone."""
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        stat_line = open(f"/proc/{child.pid}/stat").read()
+        start = stat_line.rpartition(")")[2].split()[19]
+    finally:
+        child.kill()
+        child.wait()
+    return Owner(child.pid, start, os.readlink("/proc/self/ns/pid"))
+
+
 # -- the container ------------------------------------------------------------------------------
 
 
 def test_run_argv_is_exactly_the_specs_sandbox_and_one_shared_directory(spec, tmp_path):
     sandbox = spec.submission["sandbox"]
-    args = run_argv(spec, image="icil-submission:k-s", name="icil-policy-x", socket_dir=tmp_path)
+    owner = Owner(pid=4321, start="98765", pidns="pid:[4026531836]")
+    args = run_argv(
+        spec, image="icil-submission:k-s", name="icil-policy-x", socket_dir=tmp_path, owner=owner
+    )
     assert args == [
         "--detach",
         "--name",
         "icil-policy-x",
         "--label",
         "icil.orchestrator=policy",
+        "--label",
+        "icil.owner.pid=4321",
+        "--label",
+        "icil.owner.start=98765",
+        "--label",
+        "icil.owner.pidns=pid:[4026531836]",
+        "--label",
+        f"icil.shared-dir={tmp_path}",
         "--network",
         sandbox["network"],
         "--read-only",
@@ -206,6 +234,69 @@ def test_hello_through_the_container_keeps_the_session_and_removal_follows(
     assert docker.removed == ["icil-policy-test"] and not docker.state("icil-policy-test").running
     container.close()
     assert docker.removed == ["icil-policy-test"], "removed once"
+
+
+def test_an_owner_is_gone_when_its_process_is_and_not_while_it_runs():
+    me = Owner.current()
+    assert me is not None and me.pid == os.getpid() and me.pidns.startswith("pid:[")
+    assert not me.gone()
+    assert Owner.from_labels(me.labels()) == me and Owner.from_labels({}) is None
+    ended = ended_process_owner()
+    assert ended.gone(), "the process has exited"
+    # A later process given the same pid started later: the owner is still gone.
+    assert Owner(me.pid, str(int(me.start) + 1), me.pidns).gone()
+
+
+def test_start_reaps_the_containers_of_processes_that_are_gone_and_nothing_else(
+    sandbox_spec, docker, base, ref, tmp_path
+):
+    """A process killed between `docker run` and `hello` leaves a server waiting for a client
+    for ever. Each start removes the containers whose owner has ended; one whose owner lives,
+    one from another pid namespace and one with no owner labels are not this process's to judge."""
+    ended = ended_process_owner()
+    elsewhere = Owner(ended.pid, ended.start, "pid:[1]")
+    policy = {"icil.orchestrator": "policy"}
+    docker.labels["icil-policy-orphan"] = {
+        **policy,
+        **ended.labels(),
+        "icil.shared-dir": str(tmp_path / "gone"),
+    }
+    docker.labels["icil-policy-alive"] = {**policy, **Owner.current().labels()}
+    docker.labels["icil-policy-elsewhere"] = {**policy, **elsewhere.labels()}
+    docker.labels["icil-policy-unlabelled"] = dict(policy)
+    root = write_policy_repo(tmp_path / "repo")
+    docker.images["x:y"] = FAKE_BASE_DIGEST
+    built = build_submission_image(
+        docker, sandbox_spec, root, check_repository(root, sandbox_spec), ref, base
+    )
+    with PolicyContainer(
+        sandbox_spec, docker, built.tag, name="icil-policy-new", socket_dir=tmp_path / "s", gpus=0
+    ) as container:
+        assert container.reaped == ["icil-policy-orphan"]
+        assert docker.removed == ["icil-policy-orphan"]
+        # The new container names its owner - this process - and its shared directory.
+        labels = docker.labels["icil-policy-new"]
+        assert Owner.from_labels(labels) == Owner.current()
+        assert labels["icil.shared-dir"] == str((tmp_path / "s").absolute())
+    assert sorted(docker.labels) == [
+        "icil-policy-alive",
+        "icil-policy-elsewhere",
+        "icil-policy-unlabelled",
+    ]
+    # Where /proc cannot say who this process is, or docker cannot list, nothing is reaped.
+    docker.labels["icil-policy-orphan"] = {**policy, **ended.labels()}
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(docker, "policy_containers", lambda: raise_(DockerError("refused")))
+        assert reap_orphans(docker) == []
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(Owner, "current", classmethod(lambda cls: None))
+        assert reap_orphans(docker) == []
+    assert "icil-policy-orphan" in docker.labels
+    assert reap_orphans(docker) == ["icil-policy-orphan"], "and once it can, it is"
+
+
+def raise_(exc: Exception):
+    raise exc
 
 
 def test_a_manifest_naming_a_missing_class_is_rejected_at_hello_and_the_container_removed(
