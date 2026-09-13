@@ -203,6 +203,36 @@ def test_an_object_array_announced_to_the_server_is_refused(probe_repo, serve):
     assert server.wait() == 1
 
 
+@pytest.mark.parametrize(
+    "frames",
+    [
+        [
+            json.dumps(
+                {
+                    "protocol": 1,
+                    "op": "act",
+                    "fields": {},
+                    "arrays": [{"name": "qpos", "dtype": "<f8", "shape": [1] * 70}],
+                }
+            ).encode(),
+            b"\0" * 8,
+        ],
+        [b"[" * 200_000],
+    ],
+    ids=["ndim-70", "nested-json"],
+)
+def test_a_header_numpy_or_json_cannot_build_gets_an_error_reply(probe_repo, serve, frames):
+    server = serve(probe_repo())
+    conn = server.connect()
+    call(conn, "hello")
+    conn.send_bytes(frames[0])
+    assert conn.poll(20)
+    op, fields, _ = wire.recv(conn)
+    assert (op, fields["type"]) == ("error", "WireError")
+    assert server.wait() == 1
+    assert "Traceback" not in server.log()
+
+
 def test_a_client_that_hangs_up_during_a_call_that_never_returns_takes_the_server_with_it(
     probe_repo, serve
 ):

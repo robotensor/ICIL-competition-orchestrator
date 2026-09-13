@@ -36,6 +36,13 @@ class FrameConn:
         raise AssertionError("recv unpickles")
 
 
+def nested(depth):
+    value = []
+    for _ in range(depth):
+        value = [value]
+    return value
+
+
 def header(**overrides):
     base = {"protocol": 1, "op": "act", "fields": {}, "arrays": []}
     base.update(overrides)
@@ -176,11 +183,45 @@ def test_a_pickle_frame_is_refused_and_never_unpickled(tmp_path):
             "twice",
         ),
         ([header(arrays=[{"name": "x", "dtype": "<f8", "shape": [2]}]), b"\0" * 8], "8 bytes"),
+        ([b"[" * 200_000], "malformed header"),
+        ([b'{"protocol": 1, "fields": ' + b'{"a": ' * 100_000], "malformed header"),
+        ([header(arrays=[{"name": "x", "dtype": "<f8", "shape": [1] * 70}]), b"\0" * 8], "70 dim"),
+        ([header(arrays=[{"name": "x", "dtype": "<f8", "shape": [1] * 33}]), b"\0" * 8], "33 dim"),
+        ([header(arrays=[{"name": "x", "dtype": "<f8", "shape": [0, 2**64]}]), b""], "exceeds"),
+        ([header(arrays=[{"name": "x", "dtype": "<f8", "shape": [0, 2**63]}]), b""], "exceeds"),
+        (
+            [header(arrays=[{"name": "x", "dtype": "<f8", "shape": [0, 1 << 40, 1 << 40]}])],
+            "exceeds",
+        ),
     ],
 )
 def test_a_malformed_message_is_refused(frames, match):
     with pytest.raises(WireError, match=match):
         wire.recv(FrameConn(frames))
+
+
+def test_the_most_dimensions_any_numpy_allows_are_carried():
+    shape = [1] * wire.MAX_NDIM
+    frames = [header(arrays=[{"name": "x", "dtype": "<f8", "shape": shape}]), b"\0" * 8]
+    assert wire.recv(FrameConn(frames))[2]["x"].shape == tuple(shape)
+
+
+@pytest.mark.parametrize(
+    "frame",
+    [
+        header(protocol="p" * 1_000_000),
+        header(op=["o"] * 500_000),
+        header(arrays=[["e" * 1_000_000]]),
+        header(arrays=[{"name": ["n"] * 500_000, "dtype": "<f8", "shape": [1]}]),
+        header(arrays=[{"name": "x", "dtype": "d" * 1_000_000, "shape": [1]}]),
+        header(arrays=[{"name": "x", "dtype": "<f8", "shape": [[[[[[[[1]]]]]]]] * 100_000}]),
+    ],
+    ids=["protocol", "op", "entry", "name", "dtype", "shape"],
+)
+def test_a_refusal_quotes_no_more_than_an_excerpt_of_what_it_refuses(frame):
+    with pytest.raises(WireError) as caught:
+        wire.recv(FrameConn([frame]))
+    assert len(str(caught.value)) < 500
 
 
 def test_a_header_claiming_more_than_the_receiver_accepts_is_refused_before_any_frame():
@@ -245,11 +286,18 @@ def test_a_frame_longer_than_its_description_is_refused_without_reading_it():
         ({"op": "act", "arrays": [np.zeros(1)]}, "mapping"),
         ({"op": "act", "arrays": {"": np.zeros(1)}}, "name"),
         ({"op": "act", "arrays": {3: np.zeros(1)}}, "name"),
+        ({"op": "ok", "fields": {"x": nested(100_000)}}, "plain JSON"),
     ],
 )
 def test_a_message_that_cannot_be_encoded_is_refused(kwargs, match):
     with pytest.raises(WireError, match=match):
         wire.encode(**kwargs)
+
+
+@pytest.mark.skipif(np.lib.NumpyVersion(np.__version__) < "2.0.0", reason="numpy 1 stops at 32")
+def test_an_array_with_more_dimensions_than_numpy_1_allows_is_refused_on_send():
+    with pytest.raises(WireError, match="33 dimensions"):
+        wire.encode("act", arrays={"x": np.zeros((1,) * 33)})
 
 
 def test_the_eof_of_a_closed_connection_is_not_a_wire_error():

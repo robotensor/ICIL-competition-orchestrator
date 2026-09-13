@@ -206,6 +206,8 @@ class RemotePolicy:
                     failure = f"the policy went away: {_describe(exc)}"
                 except WireError as exc:
                     failure = f"malformed reply: {exc}"
+                except Exception as exc:  # whatever else a hostile reply makes reading raise
+                    failure = f"malformed reply: {_describe(exc)}"
             if expired.is_set():
                 failure = f"no answer within {self.timeout_s:g}s"
             if failure is not None:
