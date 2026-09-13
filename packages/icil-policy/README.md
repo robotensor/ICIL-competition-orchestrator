@@ -59,7 +59,8 @@ python -m icil_policy.serve --manifest examples/replay_policy/icil.yaml \
 `--address` is a Unix socket path or `host:port`. The key, at least 16 bytes, is read from the
 environment as hex and removed from it before competitor code runs. The server accepts one client, builds the policy on
 its first `hello` (repository root first on `sys.path` and as the working directory), and exits 0
-after `close` or when the client hangs up - even in the middle of a call that never returns. A
+after `close` or when the client hangs up - even in the middle of a call that never returns - or
+says nothing for `--idle-timeout-s` (30 minutes by default; a call in progress is not idle). A
 policy exception becomes an error reply and serving goes on; a malformed message gets an error
 reply and ends the session (exit 1), as does a policy that cannot be built. Exit 2 means serving
 never started.

@@ -259,6 +259,17 @@ def test_a_client_that_hangs_up_between_calls_ends_the_server(probe_repo, serve)
     assert server.wait() == 0
 
 
+def test_a_client_that_says_nothing_for_the_idle_timeout_ends_the_server(probe_repo, serve):
+    server = serve(probe_repo(kwargs={"act_sleep_s": 1.5}), args=("--idle-timeout-s", "1"))
+    conn = server.connect()
+    call(conn, "hello")
+    assert call(conn, "act", {}, {"qpos": np.zeros(2)})[0] == "action"  # a long call is not idle
+    started = time.monotonic()
+    assert server.wait(timeout=10) == 0
+    assert 0.5 < time.monotonic() - started < 5
+    assert "said nothing for 1s" in server.log()
+
+
 def test_close_calls_the_policy_close_and_exits(probe_repo, serve, tmp_path):
     closed = tmp_path / "closed"
     server = serve(probe_repo(kwargs={"close_marker": str(closed)}))
@@ -289,9 +300,17 @@ def test_the_server_exits_even_if_the_policy_left_a_thread_and_an_exception_esca
     assert "KeyboardInterrupt" in server.log()
 
 
-def test_arguments_the_server_cannot_parse_exit_2():
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["--manifest"],
+        ["--manifest", "m", "--address", "a", "--authkey-env", "K", "--idle-timeout-s", "0"],
+    ],
+    ids=["missing", "idle-timeout-0"],
+)
+def test_arguments_the_server_cannot_parse_exit_2(args):
     process = subprocess.run(
-        [sys.executable, "-m", "icil_policy.serve", "--manifest"], capture_output=True, timeout=60
+        [sys.executable, "-m", "icil_policy.serve", *args], capture_output=True, timeout=60
     )
     assert process.returncode == 2
     assert b"usage:" in process.stderr

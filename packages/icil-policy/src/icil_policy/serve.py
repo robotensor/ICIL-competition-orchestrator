@@ -1,6 +1,7 @@
 """`python -m icil_policy.serve`: one competitor's policy, served to one client.
 
     python -m icil_policy.serve --manifest PATH --address ADDR --authkey-env NAME [--log-file PATH]
+                                [--idle-timeout-s SECONDS]
 
 `ADDR` is a Unix socket path or `host:port`. The environment variable `NAME` holds the
 authentication key as hex, at least 16 bytes of it; it is read once and removed from the
@@ -19,11 +20,13 @@ then on each `reset`, `prompt` and `act` calls the policy once and answers `ok` 
 that is malformed - not a JSON header, a refused dtype, a pickle - is answered with an error and
 ends the session, because nothing after it can be trusted to line up. No server outlives its
 client: when the client hangs up, even in the middle of a policy call that never returns, the
-process exits. (A call stuck in native code that holds the GIL cannot be interrupted from Python;
+process exits, and a client that holds the connection with nothing to say for `--idle-timeout-s`
+(30 minutes by default; a policy call in progress is not idle) is taken to have gone. (A call stuck in native code that holds the GIL cannot be interrupted from Python;
 the container around the server is the last resort.)
 
 **Exit status.** The process exits as soon as the session ends, however it ends, without waiting
-for threads the policy started. 0 after `close` or when the client hangs up; 1 when the policy
+for threads the policy started. 0 after `close`, when the client hangs up or when it was idle too
+long; 1 when the policy
 could not be built, a malformed message ended the session or anything else went wrong (such as a
 `KeyboardInterrupt`, which is not answered); 2 when serving never started (arguments, key,
 manifest or address).
@@ -65,6 +68,9 @@ EXIT_USAGE = 2
 MESSAGE_CHARS = 4000
 #: How often the hang-up watch looks at the connection while a policy call runs.
 WATCH_SLICE_S = 0.1
+#: How long a client may hold the connection with nothing to say before it is taken to have gone.
+#: Generous: a benchmark building a scene or writing a video between calls is working, not idle.
+IDLE_TIMEOUT_S = 1800.0
 
 
 class _HungUp(Exception):
@@ -176,8 +182,15 @@ class _HangupWatch:
 class Session:
     """One client, from `hello` to `close` or hang-up."""
 
-    def __init__(self, conn: Any, manifest: Manifest, log_file: Path | None) -> None:
+    def __init__(
+        self,
+        conn: Any,
+        manifest: Manifest,
+        log_file: Path | None,
+        idle_timeout_s: float = IDLE_TIMEOUT_S,
+    ) -> None:
         self.conn = conn
+        self.idle_timeout_s = idle_timeout_s
         self.manifest = manifest
         self.log_file = log_file
         self.policy: Any = None
@@ -188,6 +201,12 @@ class Session:
         try:
             while True:
                 try:
+                    if not self.conn.poll(self.idle_timeout_s):
+                        log.warning(
+                            "the client said nothing for %gs; ending the session",
+                            self.idle_timeout_s,
+                        )
+                        return EXIT_OK
                     op, fields, arrays = wire.recv(self.conn)
                 except (EOFError, OSError):
                     log.info("the client hung up")
@@ -363,7 +382,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="the environment variable holding the key as hex; removed once read",
     )
     parser.add_argument("--log-file", help="append the log and the policy's output to this file")
+    parser.add_argument(
+        "--idle-timeout-s",
+        type=_positive_seconds,
+        default=IDLE_TIMEOUT_S,
+        metavar="SECONDS",
+        help=f"end the session after a client says nothing this long (default {IDLE_TIMEOUT_S:g})",
+    )
     return parser
+
+
+def _positive_seconds(text: str) -> float:
+    try:
+        seconds = float(text)
+    except ValueError:
+        seconds = float("nan")
+    if not seconds > 0 or seconds == float("inf"):
+        raise argparse.ArgumentTypeError(f"{text!r} is not a positive number of seconds")
+    return seconds
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -411,7 +447,7 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         listener.close()
     try:
-        return Session(conn, manifest, log_file).run()
+        return Session(conn, manifest, log_file, args.idle_timeout_s).run()
     finally:
         _flush()
         with contextlib.suppress(OSError):
