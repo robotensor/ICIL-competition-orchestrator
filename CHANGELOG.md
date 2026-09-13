@@ -15,6 +15,23 @@
 - (feat): the signed store (writer, verify, Hugging Face mirror), the per-track challenger queue
   and live frames, in the layout and live schema 4 the dashboard already reads.
 - (feat): `icil-orchestrator store init|verify|mirror` and `queue add|list|remove`.
+- (feat): every index record signs the sha256 of its event file (`event_sha256`, an optional
+  `IndexRecord` property of schema 4), so a published event's units, prompt hashes and clip hashes
+  cannot be edited unnoticed. `store verify` checks it, re-hashes every clip against its content
+  address, rebuilds `head.json` and the track list from the signed records rather than the
+  unsigned manifest, names the line any bad byte broke, and takes `--validator-key` to be told
+  which key must have signed; it prints the key it trusted.
+- (feat): `run_units` takes the side's wall clock (`budgets.side_wall_seconds`): units not started
+  by then are void as timed out.
+- (fix): a benchmark subprocess gets an allow-listed environment (never `HF_TOKEN` or the live
+  token) and its process group is killed however its unit ends; a stale `result.json` or
+  `evaluation.mp4` in its directory is cleared before it runs.
+- (fix): a benchmark module must resolve to a file of its pinned distribution, and with a wheel
+  pin the installed files must still match their RECORD hashes.
+- (fix): `queue add` takes a resolved 40-hex commit sha only; queue files are locked and a queue
+  file that cannot be read is refused instead of being taken for an empty queue.
+- (fix): `store mirror` uploads the store's layout and nothing beside it (never a signing key),
+  refuses a root that is not a store, and drops the `--all` flag, which did nothing.
 - (test): a fake benchmark distribution under `tests/fake_benchmark` and a reproducible fixture
   store under `tests/fixtures/store`.
 - (chore): scaffold the orchestrator: package, pure test suite, CI and the repository's rules.

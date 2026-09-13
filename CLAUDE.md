@@ -51,6 +51,10 @@ runnable policy code and weights, run in a sandboxed container.
   unit lists, seeds, ids. No clocks and no global RNG in anything that is published.
 - A unit that fails for a harness reason is void, not a loss; `max_void_fraction` decides whether
   the duel stands.
+- The index is the store's truth: a record's seq comes from the index's last signed line, and the
+  record signs its event's bytes (`event_sha256`), so everything published hangs off one signature.
+  The signing key lives outside the store and outside the checkout (`/keys/` is git-ignored), and
+  the mirror uploads the store's layout and nothing else.
 - `spec.json` and `store-schema.json` are the contract. Read numbers through the spec module; never
   repeat one as a literal. Stored scores are fractions in `[0, 1]`.
 

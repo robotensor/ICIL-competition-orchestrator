@@ -21,7 +21,7 @@ icil-orchestrator benchmarks list              # declared and installed benchmar
 icil-orchestrator benchmarks check robotwin    # pin, ABI, catalogue, derivation, command builders
 
 icil-orchestrator store init store/            # signing key in keys/ (generated if absent)
-icil-orchestrator store verify store/          # signatures, sequence, events, media, schema
+icil-orchestrator store verify store/ --validator-key <hex>   # signatures, events, media, schema
 icil-orchestrator store mirror store/ --repo owner/dataset
 
 icil-orchestrator queue --store store/ add owner/policy <commit-sha> --duel-size smoke
