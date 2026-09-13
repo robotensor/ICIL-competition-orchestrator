@@ -342,6 +342,10 @@ def _accept(listener: Listener) -> Any:
             log.warning("refused a client: %s", exc)
         except (EOFError, ConnectionError) as exc:
             log.warning("a client left during authentication: %s", exc)
+        except OSError as exc:
+            if exc.errno is not None:
+                raise  # the listener itself failed
+            log.warning("a client sent nonsense during authentication: %s", exc)
 
 
 def build_parser() -> argparse.ArgumentParser:
