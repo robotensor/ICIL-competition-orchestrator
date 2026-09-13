@@ -8,14 +8,11 @@ kernel's isolation, which the container tests check for real.
 
 from __future__ import annotations
 
-import json
-import os
 import time
 
 import pytest
 
 from icil_orchestrator.ids import SubmissionRef
-from icil_orchestrator.spec import load_spec_file
 from icil_orchestrator.submissions import SubmissionRejected
 from icil_orchestrator.submissions.checks import check_repository
 from icil_orchestrator.submissions.container import (
@@ -39,18 +36,6 @@ def docker():
     fake = FakeDocker()
     yield fake
     fake.kill_all()
-
-
-@pytest.fixture
-def sandbox_spec(spec, tmp_path):
-    """The contract, with the sandbox user this process can hand a directory to: root can give
-    it to the spec's user, anyone else only to themselves. The limits are the spec's own."""
-    if os.getuid() == 0:
-        return spec
-    doc = json.loads(spec.path.read_text())
-    doc["submission"]["sandbox"]["user"] = f"{os.getuid()}:{os.getgid()}"
-    (tmp_path / "sandbox-spec.json").write_text(json.dumps(doc))
-    return load_spec_file(tmp_path / "sandbox-spec.json")
 
 
 @pytest.fixture

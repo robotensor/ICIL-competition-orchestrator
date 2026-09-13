@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
+import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -168,6 +170,63 @@ def cmd_queue(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_submission(args: argparse.Namespace) -> int:
+    from .submissions.docker import Docker
+
+    spec = _spec(args)
+    docker = Docker()
+    if args.submission_cmd == "build-base":
+        from .submissions import SubmissionError
+        from .submissions.image import build_base_image
+
+        try:
+            built = build_base_image(docker, spec, Path(args.context).resolve())
+        except SubmissionError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        if args.json:
+            print(json.dumps(built.__dict__ | {"base": built.base.__dict__}, indent=2))
+        else:
+            print(f"built {built.tag} in {built.seconds:g}s", file=sys.stderr)
+            print(built.image_id)
+        return 0
+
+    from .submissions.check import check_submission
+    from .submissions.fetch import HubFetcher, LocalFetcher, RepoCache
+
+    repo, _, revision = args.ref.partition("@")
+    if not repo or not revision:
+        print(f"error: {args.ref!r} is not owner/name@revision", file=sys.stderr)
+        return 2
+    cache = RepoCache(args.cache, int(spec.submission["max_repo_bytes"]))
+    fetcher = LocalFetcher(cache, args.local) if args.local else HubFetcher(cache)
+    work = Path(args.work) if args.work else Path(tempfile.mkdtemp(prefix="icil-check-"))
+    try:
+        report = check_submission(
+            spec,
+            repo,
+            revision,
+            fetcher=fetcher,
+            docker=docker,
+            work_dir=work,
+            base_digest=args.base_image,
+            gpus=args.gpus,
+        )
+    finally:
+        if not args.work:
+            shutil.rmtree(work, ignore_errors=True)
+    if args.json:
+        print(json.dumps(report.as_dict(), indent=2, sort_keys=True))
+    else:
+        for step in report.steps:
+            detail = step.detail.replace("\n", "\n" + " " * 22)
+            print(f"{step.name:<9} {step.status:<9} {step.seconds:7.1f}s  {detail}".rstrip())
+        failed = report.failed_step
+        where = f" at {failed.name}" if failed else ""
+        print(f"{repo}@{report.sha or revision}: {report.verdict.upper()}{where}")
+    return {"accepted": 0, "rejected": 1}.get(report.verdict, 2)
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="icil-orchestrator", description="ICIL competition orchestrator"
@@ -229,6 +288,38 @@ def build_parser() -> argparse.ArgumentParser:
     q_rm = q_sub.add_parser("remove", help="drop an entry by its key")
     q_rm.add_argument("key")
     q.set_defaults(func=cmd_queue)
+
+    sm = sub.add_parser("submission", help="a submission's image and sandbox")
+    sm_sub = sm.add_subparsers(dest="submission_cmd", required=True)
+    sm_check = sm_sub.add_parser(
+        "check", help="resolve, fetch, check, build and run repo@revision, and say hello"
+    )
+    sm_check.add_argument("ref", help="owner/name@revision (a branch, a tag or a commit sha)")
+    sm_check.add_argument(
+        "--local", default=None, metavar="DIR", help="this directory in place of the Hub"
+    )
+    sm_check.add_argument(
+        "--cache", default="cache", help="where checkouts are kept, by commit (default: cache)"
+    )
+    sm_check.add_argument(
+        "--base-image",
+        default=None,
+        metavar="DIGEST",
+        help="the base image digest while spec.json's is null (see `submission build-base`)",
+    )
+    sm_check.add_argument(
+        "--work", default=None, metavar="DIR", help="keep the socket directory and log here"
+    )
+    sm_check.add_argument(
+        "--gpus", type=int, default=None, help="GPUs for the container (default: the spec's)"
+    )
+    sm_check.add_argument("--json", action="store_true")
+    sm_base = sm_sub.add_parser("build-base", help="build docker/policy-base and print its digest")
+    sm_base.add_argument(
+        "--context", default=".", help="the repository root (default: the current directory)"
+    )
+    sm_base.add_argument("--json", action="store_true")
+    sm.set_defaults(func=cmd_submission)
 
     return p
 
