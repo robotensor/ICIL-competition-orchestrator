@@ -77,3 +77,11 @@ def test_an_empty_store_never_empties_the_repository(tmp_path, api):
     (tmp_path / "empty").mkdir()
     with pytest.raises(ValueError, match="refusing to empty"):
         mirror.mirror_store(tmp_path / "empty", "org/store", prune=True)
+
+
+def test_the_cli_mirrors_a_store(store, api, capsys):
+    from icil_orchestrator.cli import main
+
+    assert main(["store", "mirror", str(store.root), "--repo", "org/store", "--prune"]) == 0
+    assert capsys.readouterr().out.strip() == "mirrored 2 files to org/store"
+    assert len(api.commits) == 1
