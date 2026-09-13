@@ -91,6 +91,29 @@ def test_crash_timeout_and_no_result_are_void_with_the_reason_and_the_rest_still
     assert (fine.success, fine.void) == (True, False)
 
 
+def test_the_side_wall_clock_voids_the_units_left_when_it_runs_out(fake, tmp_path):
+    """`budgets.side_wall_seconds` bounds a side: once it is spent, the units not yet started are
+    void as timed out rather than run, and the loop still reports every one of them."""
+    seen = []
+    outcomes = runner.run_units(
+        fake,
+        [unit(0, "hang"), unit(1), unit(2)],
+        work_root=tmp_path / "units",
+        policy_address="/tmp/icil-test-policy.sock",
+        authkey_env=AUTHKEY_ENV,
+        timeout_s=1.0,
+        env={"PATH": "/usr/bin:/bin", AUTHKEY_ENV: AUTHKEY},
+        deadline=time.monotonic() + 0.5,
+        on_outcome=lambda u, o: seen.append(u["unit_id"]),
+    )
+    assert seen == ["fp-000", "fp-001", "fp-002"]
+    first, *rest = outcomes
+    assert first.error == "fake: unit exceeded its 1s budget"
+    for outcome in rest:
+        assert outcome.void and outcome.error == "fake: the side ran out of its wall-clock budget"
+    assert not (tmp_path / "units" / "fp-001").exists(), "a unit past the deadline was run"
+
+
 def test_a_silent_run_is_void_even_where_an_earlier_command_left_a_result(fake, tmp_path):
     """The directory a unit ran in before - an earlier attempt, or the materialize command, which
     writes result.json too - must not lend its result or clip to a run that wrote neither."""

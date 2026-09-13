@@ -331,21 +331,30 @@ def run_units(
     env: Mapping[str, str] | None = None,
     prompt_of: Callable[[Mapping[str, Any]], str | None] = lambda unit: unit.get("prompt"),
     on_outcome: Callable[[Mapping[str, Any], Outcome], None] | None = None,
+    deadline: float | None = None,
 ) -> list[Outcome]:
     """Every unit in order, each in `work_root/<unit_id>`. A void unit is recorded and the next one
-    runs; `on_outcome` sees each as it finishes, so progress can be reported and persisted."""
+    runs; `on_outcome` sees each as it finishes, so progress can be reported and persisted.
+
+    `deadline` is the side's wall clock (a `time.monotonic()` value, from
+    `budgets.side_wall_seconds`): a unit not started by then is void as timed out, not run.
+    """
+    name = str(getattr(benchmark, "id", "benchmark"))
     outcomes: list[Outcome] = []
     for unit in units:
-        outcome = run_unit(
-            benchmark,
-            unit,
-            prompt=prompt_of(unit),
-            out_dir=Path(work_root) / str(unit["unit_id"]),
-            policy_address=policy_address,
-            authkey_env=authkey_env,
-            timeout_s=timeout_s,
-            env=env,
-        )
+        if deadline is not None and time.monotonic() >= deadline:
+            outcome = voided(f"{name}: the side ran out of its wall-clock budget")
+        else:
+            outcome = run_unit(
+                benchmark,
+                unit,
+                prompt=prompt_of(unit),
+                out_dir=Path(work_root) / str(unit["unit_id"]),
+                policy_address=policy_address,
+                authkey_env=authkey_env,
+                timeout_s=timeout_s,
+                env=env,
+            )
         if outcome.void:
             log.warning("unit %s void: %s", unit["unit_id"], outcome.error)
         if on_outcome is not None:
