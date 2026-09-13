@@ -80,8 +80,10 @@ with RemotePolicy(address, authkey, timeout_s=60.0, log_file=server_log) as poli
 Every failure raises `PolicyUnavailable` - an error reply, a call past `timeout_s`, a hang-up, a
 refused key, a malformed reply - with the tail of `log_file` (or of the log the server sent) in its
 message. Each call's timeout covers sending the request and receiving the whole reply; when it runs
-out the connection is shut down and the server exits. An array the wire cannot carry is the
-caller's mistake and raises `WireError` before anything is sent.
+out the connection is shut down and the server exits. After an error reply to `reset`, `prompt` or
+`act` the policy can still be used; after any other failure, a failed `hello` included, the
+connection is closed. `close` is best effort and raises nothing. An array the wire cannot carry is
+the caller's mistake and raises `WireError` before anything is sent.
 
 ## The wire
 

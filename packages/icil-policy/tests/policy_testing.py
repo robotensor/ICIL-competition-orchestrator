@@ -69,7 +69,9 @@ import sibling  # beside the policy: importable only with the repository root on
 class Probe:
     action_type = "ee"
 
-    def __init__(self, act_sleep_s=0.0, close_marker=None, broken_init=False, linger=False):
+    def __init__(
+        self, act_sleep_s=0.0, close_marker=None, broken_init=False, linger=False, broken_close=False
+    ):
         if broken_init:
             raise RuntimeError("the probe refuses to be built")
         if linger:  # a thread that would keep a politely exiting interpreter alive forever
@@ -78,6 +80,7 @@ class Probe:
         print("probe: built", flush=True)
         self.act_sleep_s = act_sleep_s
         self.close_marker = close_marker
+        self.broken_close = broken_close
         self.seed = None
         self.demo = None
         self.info = None
@@ -138,6 +141,8 @@ class Probe:
         return {"action": np.zeros(7), "state": np.frombuffer(json.dumps(state).encode(), np.uint8)}
 
     def close(self):
+        if self.broken_close:
+            raise RuntimeError("the probe fails to close")
         if self.close_marker:
             Path(self.close_marker).write_text("closed")
 """
