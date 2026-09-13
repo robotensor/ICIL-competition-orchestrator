@@ -142,6 +142,25 @@ def test_a_file_that_is_not_a_manifest_is_refused(tmp_path, text, problem):
         manifest.load(write(tmp_path, text))
 
 
+def test_merge_keys_share_kwargs_and_a_key_given_beside_a_merge_overrides_it(tmp_path):
+    text = """
+    api: 1
+    policy: a:B
+    kwargs:
+      base: &base {lr: 1, horizon: 8}
+      extra: &extra {seed: 3}
+      one: {<<: *base, horizon: 16}
+      both:
+        <<: [*base, *extra]
+        lr: 2
+    """
+    loaded = manifest.load(write(tmp_path, text))
+    assert loaded.kwargs["one"] == {"lr": 1, "horizon": 16}
+    assert loaded.kwargs["both"] == {"lr": 2, "horizon": 8, "seed": 3}
+    with pytest.raises(ManifestError, match="'lr' is given twice"):
+        manifest.load(write(tmp_path, text.replace("lr: 2", "lr: 2\n        lr: 3")))
+
+
 def test_a_python_tag_is_refused_and_never_run(tmp_path):
     marker = tmp_path / "ran"
     text = f"api: 1\npolicy: a:B\nkwargs: {{x: !!python/object/apply:os.mkdir ['{marker}']}}\n"
