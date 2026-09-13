@@ -348,6 +348,7 @@ def test_a_client_with_the_wrong_key_is_refused_and_the_right_one_is_still_serve
     [
         ({AUTHKEY_ENV: ""}, None, "does not hold a hex authkey"),
         ({AUTHKEY_ENV: "not hex"}, None, "does not hold a hex authkey"),
+        ({AUTHKEY_ENV: "00" * 15}, None, "at least 16 bytes"),
         ({}, "api: 2\npolicy: probe:Probe\n", "api: must be 1"),
     ],
 )

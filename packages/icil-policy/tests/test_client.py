@@ -30,6 +30,10 @@ class Boom:
         return (open, (self.path, "w"))
 
 
+#: A key for servers that never check it.
+KEY = bytes(range(32))
+
+
 def remote(server, **kwargs):
     kwargs.setdefault("timeout_s", 30.0)
     kwargs.setdefault("log_file", server.log_file)
@@ -150,7 +154,7 @@ def test_an_array_that_cannot_be_sent_is_the_callers_error_and_sends_nothing(pro
 def test_a_wrong_key_raises(probe_repo, serve):
     server = serve(probe_repo())
     with pytest.raises(PolicyUnavailable, match="refused this key"):
-        RemotePolicy(server.address, b"wrong key", timeout_s=10)
+        RemotePolicy(server.address, secrets.token_bytes(32), timeout_s=10)
 
 
 def test_nothing_listening_raises_once_the_timeout_has_passed(tmp_path):
@@ -161,7 +165,7 @@ def test_nothing_listening_raises_once_the_timeout_has_passed(tmp_path):
     try:
         with pytest.raises(PolicyUnavailable) as caught:
             RemotePolicy(
-                os.path.join(directory, "nobody.sock"), b"key", timeout_s=0.5, log_file=log_file
+                os.path.join(directory, "nobody.sock"), KEY, timeout_s=0.5, log_file=log_file
             )
     finally:
         shutil.rmtree(directory, ignore_errors=True)
@@ -204,7 +208,7 @@ def test_a_listener_that_never_authenticates_raises_within_the_timeout(tmp_path)
         address = f"127.0.0.1:{silent.getsockname()[1]}"
         started = time.monotonic()
         with pytest.raises(PolicyUnavailable, match="authentication did not finish within 0.5s"):
-            RemotePolicy(address, b"key", timeout_s=0.5)
+            RemotePolicy(address, KEY, timeout_s=0.5)
         assert time.monotonic() - started < 5
 
 
@@ -243,9 +247,11 @@ def test_arguments_are_checked_before_connecting():
     with pytest.raises(TypeError):
         RemotePolicy("/tmp/x.sock", "not bytes")
     with pytest.raises(ValueError):
-        RemotePolicy("/tmp/x.sock", b"key", timeout_s=0)
+        RemotePolicy("/tmp/x.sock", KEY, timeout_s=0)
     with pytest.raises(PolicyUnavailable, match="neither"):
-        RemotePolicy("", b"key")
+        RemotePolicy("", KEY)
+    with pytest.raises(ValueError, match="at least 16 bytes"):
+        RemotePolicy("/tmp/x.sock", b"\x00" * 15)
 
 
 # -- against servers that misbehave ---------------------------------------------------------

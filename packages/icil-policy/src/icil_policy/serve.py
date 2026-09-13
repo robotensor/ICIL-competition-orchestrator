@@ -3,10 +3,10 @@
     python -m icil_policy.serve --manifest PATH --address ADDR --authkey-env NAME [--log-file PATH]
 
 `ADDR` is a Unix socket path or `host:port`. The environment variable `NAME` holds the
-authentication key as hex; it is read once and removed from the environment before any competitor
-code runs, so nothing the policy starts inherits it. With `--log-file`, the server's log and
-everything the policy prints (standard output and error, native libraries included) are appended
-to that file, and its tail travels with every error reply.
+authentication key as hex, at least 16 bytes of it; it is read once and removed from the
+environment before any competitor code runs, so nothing the policy starts inherits it. With
+`--log-file`, the server's log and everything the policy prints (standard output and error, native
+libraries included) are appended to that file, and its tail travels with every error reply.
 
 **Lifecycle.** The manifest is checked, the server listens, and it accepts exactly one
 authenticated client. The policy is built on the first `hello` - imported with the manifest's
@@ -384,6 +384,11 @@ def main(argv: list[str] | None = None) -> int:
         authkey = b""
     if not authkey:
         log.error("environment variable %s does not hold a hex authkey", args.authkey_env)
+        return EXIT_USAGE
+    if len(authkey) < wire.MIN_AUTHKEY_BYTES:
+        log.error(
+            "the authkey must be at least %d bytes, not %d", wire.MIN_AUTHKEY_BYTES, len(authkey)
+        )
         return EXIT_USAGE
 
     try:
