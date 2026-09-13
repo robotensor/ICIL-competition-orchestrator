@@ -27,8 +27,8 @@ the demonstration; fields: `info`), `act` (arrays: the observation) and `close`.
 each with `ok` (the reply to `hello` carries `protocol`, `action_type` and `policy`), `action`
 (arrays, `action` among them) or `error` (fields: `type`, `message`, `log_tail`).
 
-**Addresses** are a Unix socket path or `host:port`, both authenticated with a shared key by
-`multiprocessing.connection`.
+**Addresses** are a Unix socket path or `host:port`, both authenticated with a shared key of at
+least `MIN_AUTHKEY_BYTES` by `multiprocessing.connection`.
 """
 
 from __future__ import annotations
@@ -46,6 +46,7 @@ from .errors import WireError
 __all__ = [
     "CLIENT_OPS",
     "DTYPES",
+    "MIN_AUTHKEY_BYTES",
     "MAX_ARRAYS",
     "MAX_HEADER_BYTES",
     "MAX_MESSAGE_BYTES",
@@ -97,6 +98,11 @@ MAX_MESSAGE_BYTES = 16 << 30
 MAX_ARRAYS = 1024
 #: The most dimensions an array may have: the lowest limit of any numpy this runs with (numpy 1).
 MAX_NDIM = 32
+
+#: The shortest key either end accepts. The server lets a client that fails authentication be
+#: followed by another, so a short key on a TCP address could be guessed; generate one with
+#: `secrets.token_bytes(32)`.
+MIN_AUTHKEY_BYTES = 16
 
 _HEADER_KEYS = frozenset({"protocol", "op", "fields", "arrays"})
 _ARRAY_KEYS = frozenset({"name", "dtype", "shape"})

@@ -63,8 +63,10 @@ class RemotePolicy:
         timeout_s: float = 60.0,
         log_file: str | os.PathLike[str] | None = None,
     ) -> None:
-        if not isinstance(authkey, (bytes, bytearray)) or not authkey:
-            raise TypeError("authkey must be non-empty bytes")
+        if not isinstance(authkey, (bytes, bytearray)):
+            raise TypeError("authkey must be bytes")
+        if len(authkey) < wire.MIN_AUTHKEY_BYTES:
+            raise ValueError(f"authkey must be at least {wire.MIN_AUTHKEY_BYTES} bytes")
         if not timeout_s > 0:
             raise ValueError(f"timeout_s must be positive, not {timeout_s!r}")
         self.address = address
