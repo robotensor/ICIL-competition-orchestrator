@@ -50,6 +50,26 @@ BUDGETS = (
 )
 
 
+def _non_root(value: Any) -> bool:
+    """A container user that is neither uid 0 nor gid 0, however it is spelled.
+
+    Docker takes `user[:group]`, numeric or by name, and `00` is uid 0 as surely as `0` is; a
+    submission running as root inside the sandbox is the one thing the sandbox is for.
+    """
+    if not isinstance(value, str) or not value:
+        return False
+    parts = value.split(":")
+    if len(parts) > 2:
+        return False
+    for part in parts:
+        name = part.strip()
+        if not name or name == "root":
+            return False
+        if name.isdigit() and int(name) == 0:
+            return False
+    return True
+
+
 def _repo_root() -> Path | None:
     here = Path(__file__).resolve()
     for parent in here.parents:
@@ -279,8 +299,7 @@ def validate_spec(doc: dict[str, Any]) -> list[str]:
     need("submission.sandbox.network == none", sandbox.get("network") == "none")
     need("submission.sandbox.read_only_root", sandbox.get("read_only_root") is True)
     need("submission.sandbox.tmpfs", isinstance(sandbox.get("tmpfs"), list))
-    user = str(sandbox.get("user", ""))
-    need("submission.sandbox.user non-root", bool(user) and user.split(":")[0] not in ("0", "root"))
+    need("submission.sandbox.user non-root", _non_root(sandbox.get("user")))
     for key in ("gpus", "memory_bytes", "cpus", "pids"):
         need(f"submission.sandbox.{key}>0", _positive_number(sandbox.get(key)))
 

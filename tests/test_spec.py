@@ -126,6 +126,11 @@ def test_the_sandbox_cannot_be_loosened(spec_doc):
         ("read_only_root", False, "submission.sandbox.read_only_root"),
         ("user", "0:0", "submission.sandbox.user non-root"),
         ("user", "root", "submission.sandbox.user non-root"),
+        # uid 0 spelled another way, and a root group.
+        ("user", "00", "submission.sandbox.user non-root"),
+        ("user", "0000:0000", "submission.sandbox.user non-root"),
+        ("user", "1000:0", "submission.sandbox.user non-root"),
+        ("user", "1000:root", "submission.sandbox.user non-root"),
         ("pids", 0, "submission.sandbox.pids>0"),
     ):
         doc = copy.deepcopy(spec_doc)
