@@ -1,0 +1,465 @@
+{
+  "block": 2,
+  "challenger": {
+    "key": "c1a90bff152ab2ae",
+    "repo": "robotensor/icil-replay-policy",
+    "revision": "0000000000000000000000000000000000000002"
+  },
+  "challenger_scores": {
+    "average": 0.611111111111111,
+    "franka_pick_and_place": 0.6666666666666666,
+    "franka_press_push": 0.6666666666666666,
+    "franka_stacking": 0.5
+  },
+  "decided": 5,
+  "demonstration": {
+    "modalities": [
+      "video",
+      "actions",
+      "proprio"
+    ],
+    "view": "sensorimotor",
+    "withheld": []
+  },
+  "dethroned": true,
+  "duel_id": "8b9422026187f6b87956c200acf87d9bb70c78d18c984fd3d8c64cecd9d10e7f",
+  "duel_size": "light",
+  "event_id": "f59b8a268c627a97fb31e5d902c295f84951317c7ffaccb3b8aa3cc2d6b0c78a",
+  "finished_at": "2026-09-13T11:30:00Z",
+  "kind": "duel",
+  "king": {
+    "key": "1cae8a350e3f919b",
+    "repo": "robotensor/icil-zero-policy",
+    "revision": "0000000000000000000000000000000000000001"
+  },
+  "king_scores": {
+    "average": 0.0,
+    "franka_pick_and_place": 0.0,
+    "franka_press_push": 0.0,
+    "franka_stacking": 0.0
+  },
+  "losses": 0,
+  "media_count": 0,
+  "new_king": {
+    "key": "c1a90bff152ab2ae",
+    "repo": "robotensor/icil-replay-policy",
+    "revision": "0000000000000000000000000000000000000002"
+  },
+  "notes": [
+    "Fixture store written by tests/fixtures/make_store.py; not a competition result."
+  ],
+  "prompts": [
+    {
+      "sha256": "1622e782e0df9d6f60fef0aec8da29796bf6a8837a77f23398cbe9eed2b59641",
+      "unit_id": "fp-000"
+    },
+    {
+      "sha256": "021771492f82689572bc614b67ece9214ae1c3ac68c220e113e9825bae2f350a",
+      "unit_id": "fp-001"
+    },
+    {
+      "sha256": "116411dec7a1224da9c001af6085379fa40927eb28469e9c80d0f5cd596f8fa1",
+      "unit_id": "fp-002"
+    },
+    {
+      "sha256": "6f5d1c9d43203c8cb673b3704720f22c93968bddf4441e4fa2f55de1071236f4",
+      "unit_id": "fs-003"
+    },
+    {
+      "sha256": "dcbc4d0d1167bf7c2d579881e3c13cdcad838b1aa65b6abcfb6f569d7fd9ccd2",
+      "unit_id": "fs-004"
+    },
+    {
+      "sha256": "2a8e8ced7c86fdcc2e33f95bff615439b85dc6b074217f984a046dd4c33fb0ec",
+      "unit_id": "fs-005"
+    },
+    {
+      "sha256": "248402c6c08f449eae9f43852481927fed9582bbce0529d2a5abb9e6d1332b7c",
+      "unit_id": "fu-006"
+    },
+    {
+      "sha256": "2b7eda62616d63b032898f07ed7923f0bdc51871600bdf181467bd40420114ae",
+      "unit_id": "fu-007"
+    },
+    {
+      "sha256": "ef5349d923895510da9a4e0e7c13fa0589a7bfe14793db35e5114d389be22379",
+      "unit_id": "fu-008"
+    }
+  ],
+  "schema": 4,
+  "score_margin": 3.0,
+  "sides": {
+    "challenger": {
+      "base_image_digest": null,
+      "commit": "0000000000000000000000000000000000000002",
+      "wall_seconds": 1800.0
+    },
+    "king": {
+      "base_image_digest": null,
+      "commit": "0000000000000000000000000000000000000001",
+      "wall_seconds": 1800.0
+    }
+  },
+  "spec_fingerprint": "355708b30e6192af36a5b20af6f16b9bb4c85dd505657123ea9bf551ef9ff415",
+  "spec_version": 7,
+  "started_at": "2026-09-13T10:00:00Z",
+  "ties": 3,
+  "track": "franka_1arm",
+  "units": [
+    {
+      "challenger_error": null,
+      "challenger_metric": null,
+      "challenger_progress": 1.0,
+      "challenger_steps": 120,
+      "challenger_success": true,
+      "challenger_video": null,
+      "demo_video": null,
+      "index": 0,
+      "instance": 0,
+      "instance_params": {
+        "embodiment": [
+          "franka-panda",
+          "franka-panda",
+          0.6
+        ],
+        "scene_seed": 3433650216
+      },
+      "king_error": null,
+      "king_metric": null,
+      "king_progress": 0.0,
+      "king_steps": 316,
+      "king_success": false,
+      "king_video": null,
+      "outcome": "challenger",
+      "prompt": {
+        "chunks": 0,
+        "demo_id": "fp-000",
+        "sha256": "1622e782e0df9d6f60fef0aec8da29796bf6a8837a77f23398cbe9eed2b59641",
+        "steps": 0,
+        "view": "sensorimotor"
+      },
+      "seed": 2820746043,
+      "skill": "franka_pick_and_place",
+      "task": "place_cup_coaster",
+      "task_label": "Place cup coaster",
+      "unit_id": "fp-000",
+      "void": false
+    },
+    {
+      "challenger_error": null,
+      "challenger_metric": null,
+      "challenger_progress": 1.0,
+      "challenger_steps": 121,
+      "challenger_success": true,
+      "challenger_video": null,
+      "demo_video": null,
+      "index": 1,
+      "instance": 0,
+      "instance_params": {
+        "embodiment": [
+          "franka-panda",
+          "franka-panda",
+          0.6
+        ],
+        "scene_seed": 170667512
+      },
+      "king_error": null,
+      "king_metric": null,
+      "king_progress": 0.0,
+      "king_steps": 312,
+      "king_success": false,
+      "king_video": null,
+      "outcome": "challenger",
+      "prompt": {
+        "chunks": 0,
+        "demo_id": "fp-001",
+        "sha256": "021771492f82689572bc614b67ece9214ae1c3ac68c220e113e9825bae2f350a",
+        "steps": 0,
+        "view": "sensorimotor"
+      },
+      "seed": 1557828967,
+      "skill": "franka_pick_and_place",
+      "task": "place_cup_coaster",
+      "task_label": "Place cup coaster",
+      "unit_id": "fp-001",
+      "void": false
+    },
+    {
+      "challenger_error": null,
+      "challenger_metric": null,
+      "challenger_progress": 0.5,
+      "challenger_steps": 122,
+      "challenger_success": false,
+      "challenger_video": null,
+      "demo_video": null,
+      "index": 2,
+      "instance": 0,
+      "instance_params": {
+        "embodiment": [
+          "franka-panda",
+          "franka-panda",
+          0.6
+        ],
+        "scene_seed": 2735914539
+      },
+      "king_error": null,
+      "king_metric": null,
+      "king_progress": 0.0,
+      "king_steps": 139,
+      "king_success": false,
+      "king_video": null,
+      "outcome": "tie",
+      "prompt": {
+        "chunks": 0,
+        "demo_id": "fp-002",
+        "sha256": "116411dec7a1224da9c001af6085379fa40927eb28469e9c80d0f5cd596f8fa1",
+        "steps": 0,
+        "view": "sensorimotor"
+      },
+      "seed": 166772170,
+      "skill": "franka_pick_and_place",
+      "task": "place_cube_plate",
+      "task_label": "Place cube plate",
+      "unit_id": "fp-002",
+      "void": false
+    },
+    {
+      "challenger_error": null,
+      "challenger_metric": null,
+      "challenger_progress": 1.0,
+      "challenger_steps": 123,
+      "challenger_success": true,
+      "challenger_video": null,
+      "demo_video": null,
+      "index": 0,
+      "instance": 0,
+      "instance_params": {
+        "embodiment": [
+          "franka-panda",
+          "franka-panda",
+          0.6
+        ],
+        "scene_seed": 3435483136
+      },
+      "king_error": null,
+      "king_metric": null,
+      "king_progress": 0.0,
+      "king_steps": 236,
+      "king_success": false,
+      "king_video": null,
+      "outcome": "challenger",
+      "prompt": {
+        "chunks": 0,
+        "demo_id": "fs-003",
+        "sha256": "6f5d1c9d43203c8cb673b3704720f22c93968bddf4441e4fa2f55de1071236f4",
+        "steps": 0,
+        "view": "sensorimotor"
+      },
+      "seed": 749232052,
+      "skill": "franka_stacking",
+      "task": "stack_two_blocks",
+      "task_label": "Stack two blocks",
+      "unit_id": "fs-003",
+      "void": false
+    },
+    {
+      "challenger_error": "fake: unit exceeded its 600s budget",
+      "challenger_metric": null,
+      "challenger_progress": null,
+      "challenger_steps": null,
+      "challenger_success": null,
+      "challenger_video": null,
+      "demo_video": null,
+      "index": 1,
+      "instance": 0,
+      "instance_params": {
+        "embodiment": [
+          "franka-panda",
+          "franka-panda",
+          0.6
+        ],
+        "scene_seed": 3239819551
+      },
+      "king_error": null,
+      "king_metric": null,
+      "king_progress": null,
+      "king_steps": null,
+      "king_success": null,
+      "king_video": null,
+      "outcome": "tie",
+      "prompt": {
+        "chunks": 0,
+        "demo_id": "fs-004",
+        "sha256": "dcbc4d0d1167bf7c2d579881e3c13cdcad838b1aa65b6abcfb6f569d7fd9ccd2",
+        "steps": 0,
+        "view": "sensorimotor"
+      },
+      "seed": 750276457,
+      "skill": "franka_stacking",
+      "task": "stack_two_blocks",
+      "task_label": "Stack two blocks",
+      "unit_id": "fs-004",
+      "void": true
+    },
+    {
+      "challenger_error": null,
+      "challenger_metric": null,
+      "challenger_progress": 0.5,
+      "challenger_steps": 125,
+      "challenger_success": false,
+      "challenger_video": null,
+      "demo_video": null,
+      "index": 2,
+      "instance": 0,
+      "instance_params": {
+        "embodiment": [
+          "franka-panda",
+          "franka-panda",
+          0.6
+        ],
+        "scene_seed": 3890816643
+      },
+      "king_error": null,
+      "king_metric": null,
+      "king_progress": 0.0,
+      "king_steps": 343,
+      "king_success": false,
+      "king_video": null,
+      "outcome": "tie",
+      "prompt": {
+        "chunks": 0,
+        "demo_id": "fs-005",
+        "sha256": "2a8e8ced7c86fdcc2e33f95bff615439b85dc6b074217f984a046dd4c33fb0ec",
+        "steps": 0,
+        "view": "sensorimotor"
+      },
+      "seed": 2229112402,
+      "skill": "franka_stacking",
+      "task": "stack_two_blocks",
+      "task_label": "Stack two blocks",
+      "unit_id": "fs-005",
+      "void": false
+    },
+    {
+      "challenger_error": null,
+      "challenger_metric": null,
+      "challenger_progress": 1.0,
+      "challenger_steps": 126,
+      "challenger_success": true,
+      "challenger_video": null,
+      "demo_video": null,
+      "index": 0,
+      "instance": 0,
+      "instance_params": {
+        "embodiment": [
+          "franka-panda",
+          "franka-panda",
+          0.6
+        ],
+        "scene_seed": 588908228
+      },
+      "king_error": null,
+      "king_metric": null,
+      "king_progress": 0.0,
+      "king_steps": 228,
+      "king_success": false,
+      "king_video": null,
+      "outcome": "challenger",
+      "prompt": {
+        "chunks": 0,
+        "demo_id": "fu-006",
+        "sha256": "248402c6c08f449eae9f43852481927fed9582bbce0529d2a5abb9e6d1332b7c",
+        "steps": 0,
+        "view": "sensorimotor"
+      },
+      "seed": 4158397391,
+      "skill": "franka_press_push",
+      "task": "press_button",
+      "task_label": "Press button",
+      "unit_id": "fu-006",
+      "void": false
+    },
+    {
+      "challenger_error": null,
+      "challenger_metric": null,
+      "challenger_progress": 1.0,
+      "challenger_steps": 127,
+      "challenger_success": true,
+      "challenger_video": null,
+      "demo_video": null,
+      "index": 1,
+      "instance": 0,
+      "instance_params": {
+        "embodiment": [
+          "franka-panda",
+          "franka-panda",
+          0.6
+        ],
+        "scene_seed": 710707530
+      },
+      "king_error": null,
+      "king_metric": null,
+      "king_progress": 0.0,
+      "king_steps": 130,
+      "king_success": false,
+      "king_video": null,
+      "outcome": "challenger",
+      "prompt": {
+        "chunks": 0,
+        "demo_id": "fu-007",
+        "sha256": "2b7eda62616d63b032898f07ed7923f0bdc51871600bdf181467bd40420114ae",
+        "steps": 0,
+        "view": "sensorimotor"
+      },
+      "seed": 4043967884,
+      "skill": "franka_press_push",
+      "task": "press_button",
+      "task_label": "Press button",
+      "unit_id": "fu-007",
+      "void": false
+    },
+    {
+      "challenger_error": null,
+      "challenger_metric": null,
+      "challenger_progress": 0.5,
+      "challenger_steps": 128,
+      "challenger_success": false,
+      "challenger_video": null,
+      "demo_video": null,
+      "index": 2,
+      "instance": 0,
+      "instance_params": {
+        "embodiment": [
+          "franka-panda",
+          "franka-panda",
+          0.6
+        ],
+        "scene_seed": 1243368450
+      },
+      "king_error": null,
+      "king_metric": null,
+      "king_progress": 0.0,
+      "king_steps": 250,
+      "king_success": false,
+      "king_video": null,
+      "outcome": "tie",
+      "prompt": {
+        "chunks": 0,
+        "demo_id": "fu-008",
+        "sha256": "ef5349d923895510da9a4e0e7c13fa0589a7bfe14793db35e5114d389be22379",
+        "steps": 0,
+        "view": "sensorimotor"
+      },
+      "seed": 1982363512,
+      "skill": "franka_press_push",
+      "task": "press_button",
+      "task_label": "Press button",
+      "unit_id": "fu-008",
+      "void": false
+    }
+  ],
+  "units_per_skill": 3,
+  "void": 1,
+  "wall_seconds": 5400.0,
+  "wins": 5
+}
