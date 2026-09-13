@@ -142,21 +142,24 @@ def _check_skill(
         return
 
     sample = {**units[0], "unit_id": f"{spec.skill_code(skill)}-000", "skill": skill}
-    out_dir = f"{CHECK_ROOT}/{sample['unit_id']}"
+    # The layout a duel uses: the prompt is materialized into its own directory, and each side runs
+    # in another, so neither command's result.json can be taken for the other's.
+    unit_dir = f"{CHECK_ROOT}/{sample['unit_id']}"
+    prompt_dir = f"{unit_dir}/prompt"
     _check_argv(
         report,
         f"{skill}: materialize_command",
         benchmark.materialize_command,
         unit=sample,
-        out_dir=out_dir,
+        out_dir=prompt_dir,
     )
     _check_argv(
         report,
         f"{skill}: run_command",
         benchmark.run_command,
         unit=sample,
-        prompt=f"{out_dir}/{PROMPT_FILE}",
-        out_dir=out_dir,
+        prompt=f"{prompt_dir}/{PROMPT_FILE}",
+        out_dir=f"{unit_dir}/challenger",
         policy_address=f"unix://{CHECK_ROOT}/policy.sock",
         authkey_env=CHECK_AUTHKEY_ENV,
     )

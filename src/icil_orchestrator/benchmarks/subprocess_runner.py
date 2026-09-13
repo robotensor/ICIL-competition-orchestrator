@@ -221,6 +221,13 @@ def run_unit(
     # Any process on the host can read another's command line; the key travels by variable name.
     if any(key in arg for arg in argv):
         return void("run_command put the policy authkey on the command line; refusing to run it")
+    # What an earlier command left here - a previous attempt, or a materialize command pointed at
+    # the same directory - must not be read as this run's result or clip.
+    for stale in (RESULT_FILE, EVALUATION_CLIP):
+        try:
+            (out / stale).unlink(missing_ok=True)
+        except OSError as exc:
+            return void(f"could not clear a stale {stale}: {exc}")
 
     done = run_argv(argv, env=environ, timeout_s=timeout_s, log_path=out / LOG_FILE)
     if done.start_error is not None:

@@ -120,7 +120,7 @@ class Benchmark(Protocol):
 
     def materialize_command(self, *, unit: Mapping[str, Any], out_dir: str) -> Sequence[str]:
         """The argv that writes `PROMPT_FILE`, `DEMONSTRATION_CLIP` and `RESULT_FILE` for one
-        unit into `out_dir`."""
+        unit into `out_dir`. The orchestrator gives it a directory of its own, never a side's."""
 
     def run_command(
         self,

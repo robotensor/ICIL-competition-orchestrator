@@ -89,6 +89,29 @@ def test_crash_timeout_and_no_result_are_void_with_the_reason_and_the_rest_still
     assert (fine.success, fine.void) == (True, False)
 
 
+def test_a_silent_run_is_void_even_where_an_earlier_command_left_a_result(fake, tmp_path):
+    """The directory a unit ran in before - an earlier attempt, or the materialize command, which
+    writes result.json too - must not lend its result or clip to a run that wrote neither."""
+    out = tmp_path / "units" / "fp-000"
+    materialize = fake.materialize_command(
+        unit={"task": "place_cube_plate", "instance_params": {"scene_seed": 7}}, out_dir=str(out)
+    )
+    assert (
+        runner.run_argv(
+            materialize, env={"PATH": "/usr/bin:/bin"}, timeout_s=30, log_path=tmp_path / "m.log"
+        ).returncode
+        == 0
+    )
+    assert (out / "result.json").is_file()
+    (silent,) = run(fake, [unit(0, "silent")], tmp_path)
+    assert silent.void and silent.error.startswith("fake: exited 0 but wrote no result.json")
+
+    (first,) = run(fake, [unit(0, "succeed")], tmp_path)
+    assert first.success and first.clip
+    (again,) = run(fake, [unit(0, "silent")], tmp_path)
+    assert again.void and again.success is None and again.clip is None
+
+
 def test_a_hung_unit_is_killed_with_its_children(tmp_path):
     """The whole process group goes, so a forked renderer cannot keep the GPU."""
     pid_file = tmp_path / "child.pid"
