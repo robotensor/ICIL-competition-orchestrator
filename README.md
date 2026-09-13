@@ -10,5 +10,9 @@ It contains no benchmark. Benchmarks are separate repositories plugged in throug
 HuggingFace repository with runnable policy code and weights, run in a sandboxed container with no
 network.
 
-**Status:** scaffold. The first milestone plugs RoboTwin and launches a 1-arm Franka competition
-with one sensorimotor demonstration per episode.
+The policy protocol lives in [`packages/icil-policy`](packages/icil-policy), a distribution of its
+own: a competitor's policy is served in its own process and a benchmark drives it over named
+arrays.
+
+**Status:** scaffold and policy protocol. The first milestone plugs RoboTwin and launches a 1-arm
+Franka competition with one sensorimotor demonstration per episode.
