@@ -17,6 +17,11 @@ dev = ["pytest>=8", "ruff==0.16.7"]
 [tool.hatch.build.targets.wheel]
 packages = ["src/icil_orchestrator"]
 
+# The contract travels with the wheel, so an installed orchestrator reads the spec it was built with.
+[tool.hatch.build.targets.wheel.force-include]
+"spec.json" = "icil_orchestrator/data/spec.json"
+"store-schema.json" = "icil_orchestrator/data/store-schema.json"
+
 [tool.ruff]
 line-length = 100
 target-version = "py310"
