@@ -107,9 +107,10 @@ class Benchmark(Protocol):
     def verify_prompt(self, *, path: str, unit: Mapping[str, Any]) -> dict[str, Any]:
         """Check a materialized prompt is the one `unit` asked for, without a simulator.
 
-        Returns at least `{"ok": bool, "sha256": str, "problems": [str, ...]}`. This is what lets
-        anyone holding the published prompt confirm it, so it must read the file rather than trust
-        a manifest.
+        Returns at least `{"ok": bool, "sha256": str, "problems": [str, ...]}`, where `sha256` is
+        the sha256 of the file's bytes: a duel publishes it as the unit's `prompt_sha256` and voids
+        the unit when the two disagree. This is what lets anyone holding the published prompt
+        confirm it, so it must read the file rather than trust a manifest.
         """
 
     def read_result(self, *, out_dir: str) -> dict[str, Any]:
