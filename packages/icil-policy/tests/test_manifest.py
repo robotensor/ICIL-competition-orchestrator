@@ -35,14 +35,14 @@ def test_every_key_is_read(tmp_path):
             policy: pkg.sub.module:MyPolicy
             kwargs: {checkpoint: weights/model.pt, horizon: 8, gains: [1.0, 2.0]}
             requirements: env/requirements.txt
-            benchmarks: [robotwin, libero]
+            benchmarks: [robotwin, other-benchmark]
             """,
         )
     )
     assert loaded.policy == "pkg.sub.module:MyPolicy"
     assert loaded.kwargs == {"checkpoint": "weights/model.pt", "horizon": 8, "gains": [1.0, 2.0]}
     assert loaded.requirements_path == tmp_path / "env" / "requirements.txt"
-    assert loaded.benchmarks == ("robotwin", "libero")
+    assert loaded.benchmarks == ("robotwin", "other-benchmark")
 
 
 def test_a_relative_path_is_made_absolute(tmp_path, monkeypatch):
