@@ -185,7 +185,8 @@ def check_submission(
                 spec, docker, built.tag, name=name, socket_dir=work_dir / "policy", gpus=gpus
             )
             container.start()
-            s.detail = f"container {name}, socket directory {container.socket_dir}"
+            shared = "a tmpfs" if container.bounded else "a plain directory, unbounded (not root)"
+            s.detail = f"container {name}, socket directory {container.socket_dir} ({shared})"
             s.status = "ok"
         with step("hello") as s:
             budget = float(spec.budgets["policy_start_seconds"])

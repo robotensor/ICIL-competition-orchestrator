@@ -9,6 +9,7 @@ needs the nvidia runtime and one GPU.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -19,7 +20,12 @@ from icil_orchestrator.cli import main
 from icil_orchestrator.ids import is_commit_sha
 from icil_orchestrator.submissions.check import check_submission
 from icil_orchestrator.submissions.checks import check_repository
-from icil_orchestrator.submissions.container import PolicyContainer
+from icil_orchestrator.submissions.container import (
+    SHARED_DIR_BYTES,
+    SHARED_DIR_INODES,
+    PolicyContainer,
+    is_shared_mount,
+)
 from icil_orchestrator.submissions.docker import CONTAINER_LABEL, Docker, DockerError
 from icil_orchestrator.submissions.fetch import LocalFetcher, RepoCache
 from icil_orchestrator.submissions.image import build_base_image, build_submission_image
@@ -142,6 +148,11 @@ def test_submission_check_on_the_replay_example_resolves_builds_and_says_hello(
     assert report["side"]["image"].startswith("sha256:")
     assert report["listening_after_s"] < spec.budgets["policy_start_seconds"]
     assert "icil-policy-" not in " ".join(containers(docker)), "the container is gone"
+    # --work keeps the log after the shared directory's tmpfs is released.
+    shared = tmp_path / "work" / "policy"
+    assert not is_shared_mount(shared) and "listening on" in (shared / "policy.log").read_text()
+    if os.geteuid() == 0:
+        assert "(a tmpfs)" in report["steps"][4]["detail"]
 
 
 # -- from inside --------------------------------------------------------------------------------
@@ -170,6 +181,31 @@ def test_writing_outside_tmp_fails_and_inside_it_works(running):
     # /run/icil is the socket directory: writable on purpose, and this container's alone.
     done = inside(running, "import os\nprint(sorted(os.listdir('/run/icil')))")
     assert done.stdout.strip() == "['policy.log']", done.stdout
+
+
+def test_the_shared_directory_is_a_tmpfs_the_policy_can_fill_and_nothing_else(running):
+    """The one writable place shared with the host is bounded: past SHARED_DIR_BYTES or
+    SHARED_DIR_INODES a write is ENOSPC, and the host's directory holds no more than that."""
+    if not running.bounded:
+        pytest.skip("not root: the shared directory is a plain directory here")
+    mounts = inside(running, "print(open('/proc/mounts').read())").stdout
+    (ours,) = [line for line in mounts.splitlines() if " /run/icil " in line]
+    assert ours.split()[2] == "tmpfs" and f"size={SHARED_DIR_BYTES >> 10}k" in ours, ours
+    filled = inside(
+        running,
+        "with open('/run/icil/big', 'wb') as f:\n"
+        f"    for _ in range({(SHARED_DIR_BYTES >> 20) + 8}): f.write(b'x' * (1 << 20))",
+    )
+    assert filled.returncode != 0 and "No space left on device" in filled.stderr, filled.stderr
+    many = inside(
+        running,
+        f"for i in range({SHARED_DIR_INODES + 8}):\n    open(f'/run/icil/f{{i}}', 'w').close()",
+    )
+    assert many.returncode != 0 and "No space left on device" in many.stderr, many.stderr
+    entries = list(running.socket_dir.iterdir())
+    assert sum(p.stat().st_size for p in entries if p.is_file()) <= SHARED_DIR_BYTES
+    assert len(entries) <= SHARED_DIR_INODES
+    assert is_shared_mount(running.socket_dir), "on the host, it is our tmpfs"
 
 
 def test_neither_the_store_nor_another_socket_directory_is_visible(

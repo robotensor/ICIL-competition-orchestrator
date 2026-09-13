@@ -54,6 +54,24 @@ def sandbox_spec(spec, tmp_path):
     return load_spec_file(tmp_path / "sandbox-spec.json")
 
 
+@pytest.fixture(autouse=True)
+def shared_mounts(request, monkeypatch):
+    """The pure suite mounts no filesystem: the shared directory's tmpfs is recorded here, as
+    `("mount", directory, uid, gid)` and `("umount", directory)`, instead of mounted. A container
+    test mounts it for real."""
+    calls: list[tuple] = []
+    if request.node.get_closest_marker("container") is None:
+        monkeypatch.setattr(
+            "icil_orchestrator.submissions.container.mount_shared_dir",
+            lambda directory, uid, gid: calls.append(("mount", Path(directory), uid, gid)),
+        )
+        monkeypatch.setattr(
+            "icil_orchestrator.submissions.container.unmount_shared_dir",
+            lambda directory: calls.append(("umount", Path(directory))),
+        )
+    return calls
+
+
 @pytest.fixture
 def write_spec(tmp_path):
     """Save a (modified) contract and load it through the validator."""

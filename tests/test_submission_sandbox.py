@@ -20,7 +20,10 @@ from icil_orchestrator.submissions.checks import check_repository
 from icil_orchestrator.submissions.container import (
     AUTHKEY_ENV,
     HARDENING,
+    SHARED_DIR_BYTES,
+    SHARED_DIR_INODES,
     PolicyContainer,
+    can_bound_shared_dir,
     is_socket,
     prepare_socket_dir,
     run_argv,
@@ -107,15 +110,50 @@ def test_run_argv_is_exactly_the_specs_sandbox_and_one_shared_directory(spec, tm
     assert "--gpus" not in without and without.count("--memory") == 1
 
 
-def test_the_shared_directory_is_private_to_the_sandbox_user(sandbox_spec, tmp_path):
+def test_the_shared_directory_is_private_to_the_sandbox_user(sandbox_spec, tmp_path, shared_mounts):
     shared = tmp_path / "shared"
     (shared / "sub").mkdir(parents=True)
     (shared / "policy.sock").write_text("stale")
-    prepare_socket_dir(shared, sandbox_spec)
+    assert prepare_socket_dir(shared, sandbox_spec, bounded=False) is False
     info = shared.stat()
     uid, gid = sandbox_user(sandbox_spec)
     assert (info.st_mode & 0o777, info.st_uid, info.st_gid) == (0o700, uid, gid)
     assert not (shared / "policy.sock").exists(), "a stale socket would be connected to"
+    assert shared_mounts == [], "unbounded: a plain directory, nothing mounted"
+
+
+def test_the_shared_directory_is_a_bounded_tmpfs_for_the_containers_lifetime(
+    sandbox_spec, docker, base, ref, tmp_path, shared_mounts
+):
+    """The policy can write to the one directory it shares with the host, so that directory is
+    a tmpfs of SHARED_DIR_BYTES owned by the sandbox user, mounted at start and released at
+    close, after the container is gone, with the log kept. (The mount itself is recorded here
+    and made for real in the container tests.)"""
+    root = write_policy_repo(tmp_path / "repo")
+    docker.images["x:y"] = FAKE_BASE_DIGEST
+    built = build_submission_image(
+        docker, sandbox_spec, root, check_repository(root, sandbox_spec), ref, base
+    )
+    shared = tmp_path / "s"
+    uid, gid = sandbox_user(sandbox_spec)
+    container = PolicyContainer(
+        sandbox_spec, docker, built.tag, name="icil-policy-bounded", socket_dir=shared, bounded=True
+    )
+    assert container.bounded is True and shared_mounts == []
+    container.hello(sandbox_spec.budgets["policy_start_seconds"])
+    assert shared_mounts == [("mount", shared, uid, gid)]
+    assert SHARED_DIR_BYTES >= 8 << 20 and SHARED_DIR_INODES >= 8, "the socket and the log fit"
+    container.close()
+    assert shared_mounts == [("mount", shared, uid, gid), ("umount", shared)]
+    assert docker.removed == ["icil-policy-bounded"]
+    assert (shared / "policy.log").is_file(), "the log outlives the tmpfs"
+    assert "listening on" in (shared / "policy.log").read_text()
+    # By default a container is bounded exactly when this process can mount a tmpfs: root.
+    assert (
+        PolicyContainer(sandbox_spec, docker, built.tag, name="n", socket_dir=shared).bounded
+        is None
+    )
+    assert can_bound_shared_dir() == (os.geteuid() == 0)
 
 
 def test_only_a_socket_itself_counts_as_listening(tmp_path):

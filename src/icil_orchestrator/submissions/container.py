@@ -10,12 +10,14 @@
 
 Every limit is the spec's, read here and nowhere else. `--memory-swap` equal to `--memory` means
 no swap at all: the spec's bytes are the container's total, where Docker's default would allow as
-much again in swap. What the container can reach is its own
-image and one directory, shared for the Unix socket and the server's log: mode 0700 on the host
-and owned by the sandbox user, so the policy can create the socket and nobody else on the host
-can open it. Nothing of the store, the queue, the prompts or the other side is mounted, and the
-only variable that crosses is the authkey, by name: `docker run --env NAME` takes the value from
-the docker client's environment, so it is never on a command line.
+much again in swap. What the container can reach is its own image and one directory, shared for
+the Unix socket and the server's log: mode 0700 on the host and owned by the sandbox user, so the
+policy can create the socket and nobody else on the host can open it. The policy can write there,
+so the directory is a tmpfs of `SHARED_DIR_BYTES` mounted on the host by the orchestrator (root)
+for the container's lifetime: a policy that fills it fills nothing else, and the log is copied out
+before the tmpfs goes. Nothing of the store, the queue, the prompts or the other side is mounted,
+and the only variable that crosses is the authkey, by name: `docker run --env NAME` takes the
+value from the docker client's environment, so it is never on a command line.
 
 The health check is `hello` through `icil_policy.client.RemotePolicy` within
 `budgets.policy_start_seconds`, which builds the policy inside the container. The container is
@@ -26,7 +28,9 @@ from __future__ import annotations
 
 import os
 import secrets
+import shutil
 import stat
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -50,6 +54,13 @@ POLL_S = 0.1
 #: Not in the spec because they are not limits a competitor sees: a non-root user with no
 #: capabilities at all, and no way to gain any through a setuid binary in its own image.
 HARDENING = ("--cap-drop", "ALL", "--security-opt", "no-new-privileges")
+#: The shared directory's tmpfs: its size and how many entries it takes. The socket and the log
+#: fit; a policy that writes more gets ENOSPC, and the host's disk sees none of it. What a
+#: competitor sees is a log that stops growing, so this is not a spec limit either.
+SHARED_DIR_BYTES = 64 << 20
+SHARED_DIR_INODES = 64
+#: What the tmpfs is listed under in the host's mount table.
+SHARED_DIR_SOURCE = "icil-policy"
 
 
 def serve_argv(spec: Any) -> list[str]:
@@ -127,10 +138,72 @@ def is_socket(path: Path) -> bool:
         return False
 
 
-def prepare_socket_dir(directory: Path, spec: Any) -> Path:
-    """The shared directory: created, mode 0700, owned by the sandbox user."""
+def can_bound_shared_dir() -> bool:
+    """Whether this process can mount the shared directory's tmpfs: root, with `mount` at hand."""
+    return (
+        os.geteuid() == 0
+        and shutil.which("mount") is not None
+        and shutil.which("umount") is not None
+    )
+
+
+def mount_shared_dir(directory: Path, uid: int, gid: int) -> None:
+    """A tmpfs of `SHARED_DIR_BYTES` at `directory`, owned by the sandbox user, mode 0700."""
+    options = f"size={SHARED_DIR_BYTES},nr_inodes={SHARED_DIR_INODES},uid={uid},gid={gid},mode=0700"
+    _mount_command(["mount", "-t", "tmpfs", "-o", options, SHARED_DIR_SOURCE, str(directory)])
+
+
+def unmount_shared_dir(directory: Path) -> None:
+    """The tmpfs off `directory`; lazily when something still holds it, so it goes when that
+    ends."""
+    try:
+        _mount_command(["umount", str(directory)])
+    except SubmissionError:
+        _mount_command(["umount", "--lazy", str(directory)])
+
+
+def _mount_command(argv: list[str]) -> None:
+    try:
+        done = subprocess.run(
+            argv, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=60
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise SubmissionError(f"{' '.join(argv)} failed: {exc}") from None
+    if done.returncode != 0:
+        raise SubmissionError(f"{' '.join(argv)} failed ({done.returncode}): {done.stderr.strip()}")
+
+
+def is_shared_mount(directory: Path) -> bool:
+    """Whether the host's mount table lists our tmpfs at `directory` - a run that never got to
+    release it, or one still running."""
+    try:
+        table = Path("/proc/self/mounts").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    wanted = os.path.realpath(directory)
+    for line in table.splitlines():
+        fields = line.split()
+        if len(fields) >= 3 and fields[0] == SHARED_DIR_SOURCE and fields[2] == "tmpfs":
+            # The kernel escapes a space in a path as \040 and so on.
+            mounted = fields[1].encode("utf-8").decode("unicode_escape")
+            if mounted == wanted:
+                return True
+    return False
+
+
+def prepare_socket_dir(directory: Path, spec: Any, *, bounded: bool | None = None) -> bool:
+    """The shared directory: created, mode 0700, owned by the sandbox user, and a tmpfs of
+    `SHARED_DIR_BYTES` when `bounded` (by default, when this process can mount one). Whether
+    it is bounded is returned; a plain directory has no cap on what the policy writes there.
+    """
     uid, gid = sandbox_user(spec)
+    if bounded is None:
+        bounded = can_bound_shared_dir()
     directory.mkdir(parents=True, exist_ok=True)
+    if is_shared_mount(directory):
+        unmount_shared_dir(directory)  # left by a run that did not get to release it
+    if bounded:
+        mount_shared_dir(directory, uid, gid)
     os.chmod(directory, 0o700)
     try:
         os.chown(directory, uid, gid)
@@ -141,7 +214,35 @@ def prepare_socket_dir(directory: Path, spec: Any) -> Path:
         ) from None
     for stale in (SOCKET_FILE, LOG_FILE):
         (directory / stale).unlink(missing_ok=True)
-    return directory
+    return bounded
+
+
+def release_socket_dir(directory: Path) -> None:
+    """The tmpfs off the shared directory, with the log kept: it is read out first and written
+    to the plain directory underneath, so `--work` keeps what the server said."""
+    kept = _read_plain_file(directory / LOG_FILE, SHARED_DIR_BYTES)
+    unmount_shared_dir(directory)
+    if kept is not None:
+        (directory / LOG_FILE).write_bytes(kept)
+
+
+def _read_plain_file(path: Path, limit: int) -> bytes | None:
+    """Up to `limit` bytes of the regular file at `path`; None for anything else there. The policy
+    could have replaced the log with a link or a pipe, and neither is followed or waited on."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        with open(fd, "rb", closefd=False) as handle:
+            return handle.read(limit)
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
 
 
 class PolicyContainer:
@@ -156,6 +257,7 @@ class PolicyContainer:
         name: str,
         socket_dir: Path,
         gpus: int | None = None,
+        bounded: bool | None = None,
     ) -> None:
         self.spec = spec
         self.docker = docker
@@ -163,6 +265,9 @@ class PolicyContainer:
         self.name = name
         self.socket_dir = Path(socket_dir)
         self.gpus = gpus
+        #: Whether the shared directory is a bounded tmpfs; None until started, and by default
+        #: whatever this process can do (`can_bound_shared_dir`).
+        self.bounded: bool | None = bounded
         self.authkey = secrets.token_bytes(AUTHKEY_BYTES)
         self.session: RemotePolicy | None = None
         self.started_at: float | None = None
@@ -179,7 +284,7 @@ class PolicyContainer:
         return self.socket_dir / LOG_FILE
 
     def start(self) -> None:
-        prepare_socket_dir(self.socket_dir, self.spec)
+        self.bounded = prepare_socket_dir(self.socket_dir, self.spec, bounded=self.bounded)
         args = run_argv(
             self.spec, image=self.image, name=self.name, socket_dir=self.socket_dir, gpus=self.gpus
         )
@@ -249,6 +354,11 @@ class PolicyContainer:
             self.session = None
         if self._ran:
             self.docker.remove(self.name)
+        if self.bounded:
+            try:
+                release_socket_dir(self.socket_dir)
+            except SubmissionError:
+                pass  # at most SHARED_DIR_BYTES stay mounted; the next start unmounts them
 
     def __enter__(self) -> PolicyContainer:
         self.start()
