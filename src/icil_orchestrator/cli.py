@@ -106,9 +106,11 @@ def cmd_store(args: argparse.Namespace) -> int:
 
     from .store.mirror import mirror_store
 
-    n = mirror_store(
-        args.root, args.repo, message=args.message, all_files=args.all, prune=args.prune
-    )
+    try:
+        n = mirror_store(args.root, args.repo, message=args.message, prune=args.prune)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     print(f"mirrored {n} files to {args.repo}")
     return 0
 
@@ -205,7 +207,6 @@ def build_parser() -> argparse.ArgumentParser:
     st_mirror.add_argument("root")
     st_mirror.add_argument("--repo", required=True, help="Hugging Face dataset repo owner/name")
     st_mirror.add_argument("--message", default="publish")
-    st_mirror.add_argument("--all", action="store_true", help="upload every file")
     st_mirror.add_argument(
         "--prune",
         action="store_true",

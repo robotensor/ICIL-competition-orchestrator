@@ -48,9 +48,29 @@ def store(spec, tmp_path):
 
 
 def test_mirror_lists_only_the_store_files(store):
+    # Everything a wrong root might hold beside a store, all of it published if it were uploaded.
+    (store.root / "keys").mkdir()
+    (store.root / "keys" / "orchestrator.ed25519").write_text("00" * 32 + "\n")
+    (store.root / "notes.md").write_text("scratch")
+    (store.root / "events" / "franka_1arm").mkdir(parents=True)
+    (store.root / "events" / "franka_1arm" / "abc123ff.json").write_text("{}")
+    (store.root / "events" / "franka_1arm" / "draft.txt").write_text("no")
+
     files = mirror.store_files(store.root)
-    assert files == ["manifest.json", "tracks/franka_1arm/head.json"]
+    assert files == [
+        "events/franka_1arm/abc123ff.json",
+        "manifest.json",
+        "tracks/franka_1arm/head.json",
+    ]
     assert (store.root / ".orchestrator.lock").exists()
+
+
+def test_a_root_that_is_not_a_store_is_refused(tmp_path, api):
+    (tmp_path / "keys").mkdir()
+    (tmp_path / "keys" / "orchestrator.ed25519").write_text("00" * 32 + "\n")
+    with pytest.raises(ValueError, match="holds no manifest.json"):
+        mirror.mirror_store(tmp_path, "org/store")
+    assert api.commits == []
 
 
 def test_prune_deletes_stale_paths_but_keeps_the_repository_own_files(store, api):
@@ -64,6 +84,17 @@ def test_prune_deletes_stale_paths_but_keeps_the_repository_own_files(store, api
     assert added == ["manifest.json", "tracks/franka_1arm/head.json"]
 
 
+def test_a_full_mirror_uploads_the_store_and_nothing_beside_it(store, api):
+    (store.root / "keys").mkdir()
+    (store.root / "keys" / "orchestrator.ed25519").write_text("00" * 32 + "\n")
+    assert mirror.mirror_store(store.root, "org/store") == 2
+    ((_, ops),) = api.commits
+    assert sorted(op.path_in_repo for op in ops) == [
+        "manifest.json",
+        "tracks/franka_1arm/head.json",
+    ]
+
+
 def test_push_adds_exactly_what_a_publish_touched(store, api):
     assert mirror.mirror_store(store.root, "org/store", files=store.drain_touched()) == 2
     ((_, ops),) = api.commits
@@ -73,10 +104,13 @@ def test_push_adds_exactly_what_a_publish_touched(store, api):
     ]
 
 
-def test_an_empty_store_never_empties_the_repository(tmp_path, api):
-    (tmp_path / "empty").mkdir()
-    with pytest.raises(ValueError, match="refusing to empty"):
-        mirror.mirror_store(tmp_path / "empty", "org/store", prune=True)
+def test_an_empty_directory_never_empties_the_repository(tmp_path, api):
+    """--prune deletes every remote path the local store lacks; a wrong root must not reach it."""
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    with pytest.raises(ValueError, match="holds no manifest.json"):
+        mirror.mirror_store(empty, "org/store", prune=True)
+    assert api.commits == []
 
 
 def test_the_cli_mirrors_a_store(store, api, capsys):
