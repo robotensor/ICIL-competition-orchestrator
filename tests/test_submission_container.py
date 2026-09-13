@@ -210,13 +210,14 @@ def test_the_user_and_the_limits_are_the_specs(spec, running):
     assert "CapEff:\t0000000000000000" in caps and "NoNewPrivs:\t1" in caps
     limits = inside(
         running,
-        "for f in ('pids.max', 'memory.max', 'cpu.max'):\n"
+        "for f in ('pids.max', 'memory.max', 'memory.swap.max', 'cpu.max'):\n"
         "    print(f, open('/sys/fs/cgroup/' + f).read().strip())",
     )
     if limits.returncode == 0:  # cgroup v2; the host's driver says
         lines = dict(line.split(" ", 1) for line in limits.stdout.strip().splitlines())
         assert lines["pids.max"] == str(sandbox["pids"])
         assert lines["memory.max"] == str(sandbox["memory_bytes"])
+        assert lines["memory.swap.max"] == "0", "the spec's bytes are the total: no swap"
         quota, period = lines["cpu.max"].split()
         assert int(quota) / int(period) == sandbox["cpus"]
 

@@ -70,6 +70,8 @@ def test_run_argv_is_exactly_the_specs_sandbox_and_one_shared_directory(spec, tm
         str(sandbox["gpus"]),
         "--memory",
         str(sandbox["memory_bytes"]),
+        "--memory-swap",
+        str(sandbox["memory_bytes"]),  # equal: no swap, the spec's bytes are the total
         "--cpus",
         str(sandbox["cpus"]),
         "--pids-limit",

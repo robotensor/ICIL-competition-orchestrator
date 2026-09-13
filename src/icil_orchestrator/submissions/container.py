@@ -1,14 +1,16 @@
 """A submission's policy, served inside `spec.submission.sandbox`.
 
     docker run --detach --network none --read-only --tmpfs /tmp --user 1000:1000 --gpus 1
-               --memory ... --cpus ... --pids-limit ... --cap-drop ALL
+               --memory N --memory-swap N --cpus ... --pids-limit ... --cap-drop ALL
                --security-opt no-new-privileges --mount type=bind,src=<dir>,dst=/run/icil
                --env ICIL_POLICY_AUTHKEY <image>
                python -m icil_policy.serve --manifest /submission/icil.yaml
                       --address /run/icil/policy.sock --authkey-env ICIL_POLICY_AUTHKEY
                       --log-file /run/icil/policy.log
 
-Every limit is the spec's, read here and nowhere else. What the container can reach is its own
+Every limit is the spec's, read here and nowhere else. `--memory-swap` equal to `--memory` means
+no swap at all: the spec's bytes are the container's total, where Docker's default would allow as
+much again in swap. What the container can reach is its own
 image and one directory, shared for the Unix socket and the server's log: mode 0700 on the host
 and owned by the sandbox user, so the policy can create the socket and nobody else on the host
 can open it. Nothing of the store, the queue, the prompts or the other side is mounted, and the
@@ -93,9 +95,12 @@ def run_argv(
     count = int(sandbox["gpus"]) if gpus is None else int(gpus)
     if count > 0:
         args += ["--gpus", str(count)]
+    memory = str(int(sandbox["memory_bytes"]))
     args += [
         "--memory",
-        str(int(sandbox["memory_bytes"])),
+        memory,
+        "--memory-swap",
+        memory,
         "--cpus",
         str(sandbox["cpus"]),
         "--pids-limit",
