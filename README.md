@@ -10,12 +10,17 @@ It contains no benchmark. Benchmarks are separate repositories plugged in throug
 HuggingFace repository with runnable policy code and weights, run in a sandboxed container with no
 network.
 
+The policy protocol lives in [`packages/icil-policy`](packages/icil-policy), a distribution of its
+own: a competitor's policy is served in its own process and a benchmark drives it over named
+arrays.
+
 **Status:** in progress. The first milestone plugs RoboTwin and launches a 1-arm Franka competition
 with one sensorimotor demonstration per episode. The contract, benchmark discovery, the signed
-store, the queue and live frames are in place; duels and the policy sandbox are not yet.
+store, the queue, live frames and the policy protocol are in place; duels and the policy sandbox
+are not yet.
 
 ```bash
-uv venv --python 3.10 .venv && uv pip install -e ".[dev]"
+uv venv --python 3.10 .venv && uv pip install -e ".[dev]" -e packages/icil-policy
 
 icil-orchestrator benchmarks list              # declared and installed benchmarks, no import
 icil-orchestrator benchmarks check robotwin    # pin, ABI, catalogue, derivation, command builders
