@@ -2,6 +2,8 @@
 
 import json
 import pickle
+import socket
+import struct
 import time
 from multiprocessing import AuthenticationError
 
@@ -239,6 +241,19 @@ def test_the_server_exits_after_close_even_if_the_policy_left_a_thread_running(p
     call(conn, "hello")
     assert call(conn, "close")[0] == "ok"
     assert server.wait(timeout=10) == 0
+
+
+def test_a_client_speaking_nonsense_during_authentication_does_not_stop_the_server(
+    probe_repo, serve
+):
+    server = serve(probe_repo())
+    family, target = wire.parse_address(server.address)
+    with socket.socket(getattr(socket, family)) as rogue:
+        rogue.connect(target)
+        rogue.recv(4096)  # the challenge
+        rogue.sendall(struct.pack("!i", 1 << 20) + b"x" * 64)  # a frame far past the limit
+    conn = server.connect()
+    assert call(conn, "hello")[0] == "ok"
 
 
 @pytest.mark.parametrize(
