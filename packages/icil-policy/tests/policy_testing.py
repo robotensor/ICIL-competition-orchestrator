@@ -101,6 +101,8 @@ class Probe:
         mode = bytes(observation["returns"]).decode() if "returns" in observation else "state"
         if mode == "none":
             return None
+        if mode == "interrupt":
+            raise KeyboardInterrupt("not an Exception: it escapes what catches the policy's errors")
         if mode == "no_action":
             return {"x": np.zeros(1)}
         if mode == "object":

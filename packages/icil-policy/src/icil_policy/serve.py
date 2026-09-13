@@ -22,10 +22,11 @@ client: when the client hangs up, even in the middle of a policy call that never
 process exits. (A call stuck in native code that holds the GIL cannot be interrupted from Python;
 the container around the server is the last resort.)
 
-**Exit status.** The process exits as soon as the session ends, without waiting for threads the
-policy started. 0 after `close` or when the client hangs up; 1 when the policy could not be built
-or a malformed message ended the session; 2 when serving never started (arguments, key, manifest
-or address).
+**Exit status.** The process exits as soon as the session ends, however it ends, without waiting
+for threads the policy started. 0 after `close` or when the client hangs up; 1 when the policy
+could not be built, a malformed message ended the session or anything else went wrong (such as a
+`KeyboardInterrupt`, which is not answered); 2 when serving never started (arguments, key,
+manifest or address).
 """
 
 from __future__ import annotations
@@ -418,5 +419,19 @@ def _exit(status: int) -> None:
     os._exit(status)
 
 
+def _serve_and_exit() -> None:
+    """`main`, then `_exit` however it ended, an escaping exception included."""
+    status = EXIT_FAILED
+    try:
+        status = main()
+    except SystemExit as exc:  # argparse, for --help and for arguments it refuses
+        code = EXIT_OK if exc.code is None else exc.code
+        status = code if isinstance(code, int) else EXIT_FAILED
+    except BaseException:
+        log.exception("serving failed")
+    finally:
+        _exit(status)
+
+
 if __name__ == "__main__":
-    _exit(main())
+    _serve_and_exit()
