@@ -8,7 +8,13 @@ from pathlib import Path
 
 from icil_orchestrator.ids import SubmissionRef, event_id
 from icil_orchestrator.spec import load_spec_file
-from icil_orchestrator.store.records import duel_event, empty_skill_scores, index_record
+from icil_orchestrator.store.records import (
+    duel_event,
+    empty_skill_scores,
+    index_record,
+    media_shas,
+    unit_tally,
+)
 from icil_orchestrator.store.writer import Store
 
 TRACK = "franka_1arm"
@@ -62,11 +68,13 @@ def make_record(
 def publish(
     store: Store, spec, record: dict, units=None, track: str = TRACK, started_at: str = STARTED
 ) -> int:
+    units = units or []
+    record.update(unit_tally(units), media_count=len(media_shas(units)))
     event = duel_event(
         record,
         spec_version=spec.version,
         spec_fingerprint=spec.fingerprint,
-        units=units or [],
+        units=units,
         units_per_skill=spec.units_per_skill(track, "smoke"),
         started_at=started_at,
         wall_seconds=1.5,

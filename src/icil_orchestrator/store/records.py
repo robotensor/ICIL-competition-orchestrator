@@ -138,6 +138,23 @@ def unit_verdict_from_unit(unit: dict[str, Any], view: str | None = None) -> dic
     }
 
 
+def unit_tally(units: list[dict[str, Any]]) -> dict[str, int]:
+    """What a record's `wins`, `losses`, `ties`, `decided` and `void` count, from the challenger's
+    side: a void unit counts only as void, and a non-void unit by its published `outcome`."""
+    t = {"wins": 0, "losses": 0, "ties": 0, "decided": 0, "void": 0}
+    for u in units:
+        if u.get("void"):
+            t["void"] += 1
+        elif u.get("outcome") == "challenger":
+            t["wins"] += 1
+        elif u.get("outcome") == "king":
+            t["losses"] += 1
+        else:
+            t["ties"] += 1
+    t["decided"] = t["wins"] + t["losses"]
+    return t
+
+
 def media_shas(units: list[dict[str, Any]]) -> list[str]:
     out: list[str] = []
     for u in units:

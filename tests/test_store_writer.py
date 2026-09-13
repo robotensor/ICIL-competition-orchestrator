@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from icil_orchestrator.canon import Signer, canonical_json, verify_signature
+from icil_orchestrator.canon import Signer, canonical_json, sha256_file, verify_signature
 from icil_orchestrator.ids import SubmissionRef
 from icil_orchestrator.store.records import unit_verdict_from_unit
 from icil_orchestrator.store.writer import Store, store_lock
@@ -39,9 +39,17 @@ def test_the_layout_the_dashboard_reads(spec, tmp_path):
     publish(store, spec, record)
     line = (tmp_path / "store" / "tracks" / TRACK / "index-0000.jsonl").read_text()
     body, signature = line.rstrip("\n").split("\t")
-    assert body == canonical_json({**record, "seq": 1})
+    event = tmp_path / "store" / "events" / TRACK / f"{record['event_id']}.json"
+    assert body == canonical_json({**record, "seq": 1, "event_sha256": sha256_file(event)})
     assert verify_signature(signer.verify_key_hex, body, signature)
-    assert (tmp_path / "store" / "events" / TRACK / f"{record['event_id']}.json").exists()
+
+
+def test_a_record_without_its_event_is_not_appended(spec, tmp_path):
+    store = Store(tmp_path / "store", spec, Signer.generate())
+    store.init(store.signer.verify_key_hex)
+    with pytest.raises(RuntimeError, match="write the event before its record"):
+        store.append(TRACK, make_record(spec, "genesis", 0, KING, None))
+    assert not store.index_part_path(TRACK, 0).exists()
 
 
 def test_append_rotates_parts_and_moves_the_head(spec, tmp_path):
@@ -84,7 +92,7 @@ def test_a_foreign_kind_carrying_a_king_does_not_take_the_crown(spec, tmp_path):
     usurper = SubmissionRef.make("org/usurper", "c" * 40)
     foreign = make_record(spec, "duel", 1, KING, usurper, dethroned=True)
     foreign["kind"] = "something_else"
-    store.append(TRACK, foreign)
+    publish(store, spec, foreign)
     head = store.head(TRACK)
     assert head["king"]["key"] == KING.key, "a non-crowning kind moved the crown"
     assert head["seq"] == 2

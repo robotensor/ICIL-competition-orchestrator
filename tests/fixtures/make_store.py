@@ -37,6 +37,7 @@ from icil_orchestrator.store.records import (  # noqa: E402
     duel_event,
     empty_skill_scores,
     index_record,
+    unit_tally,
     unit_verdict_from_unit,
 )
 from icil_orchestrator.store.writer import Store  # noqa: E402
@@ -106,13 +107,7 @@ def build(out: Path) -> Path:
         units.append(verdict)
 
     king_scores, challenger_scores = _scores(spec, units)
-    tally = {
-        "wins": sum(u["outcome"] == "challenger" and not u["void"] for u in units),
-        "losses": sum(u["outcome"] == "king" and not u["void"] for u in units),
-        "ties": sum(u["outcome"] == "tie" and not u["void"] for u in units),
-        "void": sum(u["void"] for u in units),
-    }
-    tally["decided"] = tally["wins"] + tally["losses"]
+    tally = unit_tally(units)
     dethroned = challenger_scores["average"] >= king_scores["average"] + margin / 100
     duel = index_record(
         schema=schema,

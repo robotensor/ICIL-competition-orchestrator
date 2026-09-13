@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
-from icil_orchestrator.canon import Signer
+from icil_orchestrator.canon import Signer, canonical_json
 from icil_orchestrator.ids import SubmissionRef
-from icil_orchestrator.store.records import unit_verdict_from_unit
+from icil_orchestrator.store.records import duel_event, unit_verdict_from_unit
 from icil_orchestrator.store.verify import verify_store
 from icil_orchestrator.store.writer import Store
 from store_helpers import TRACK, make_record, publish, small_spec
@@ -159,8 +161,6 @@ def test_an_event_file_that_is_not_json_is_unreadable_not_missing(history):
 
 def test_a_manifest_that_hides_a_track_hides_nothing(history):
     """manifest.json is unsigned; the tracks verified are the spec's, whatever it lists."""
-    import json
-
     store, sp, _ = history
     _flip_one_byte(store, 2, b"1", b"7")
     manifest = json.loads((store.root / "manifest.json").read_text())
@@ -194,6 +194,76 @@ def test_missing_media_and_a_stale_head_are_errors(history):
     errors = verify_store(store.root, sp).errors
     assert f"{INDEX}:2: media {sha[:12]} missing" in errors
     assert f"tracks/{TRACK}/head.json does not point at the last record" in errors
+
+
+def _event(store, seq):
+    (record,) = [r for r in store.iter_index(TRACK) if r["seq"] == seq]
+    path = store.event_path(TRACK, record["event_id"])
+    return record, path, json.loads(path.read_text())
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        lambda e: e.update(notes=["tampered"]),
+        lambda e: e["units"][0].update(king_success=False, challenger_success=True),
+        lambda e: e["units"][0]["prompt"].update(sha256="0" * 64),
+        lambda e: e.update(finished_at="2026-09-14T00:00:00Z"),
+    ],
+)
+def test_an_event_edited_after_its_record_was_signed_is_found(history, tamper):
+    """The signed record carries the sha256 of its event's bytes, so nothing in an event - unit
+    outcomes, prompt hashes, notes - can change unnoticed."""
+    store, sp, _ = history
+    record, path, event = _event(store, 2)
+    assert record["event_sha256"]
+    tamper(event)
+    path.write_text(json.dumps(event, indent=2, sort_keys=True) + "\n")
+    assert f"{INDEX}:2: event file does not match the event_sha256 its record signs" in (
+        verify_store(store.root, sp).errors
+    )
+
+
+def test_a_record_must_agree_with_the_event_it_signs(spec, tmp_path):
+    """What the index duplicates from the event, the event must say too - every field of it,
+    including the tally and media count its units add up to."""
+    store = Store(tmp_path / "store", spec, Signer.generate())
+    store.init(store.signer.verify_key_hex)
+    record = make_record(spec, "duel", 1, KING, CHALLENGER)
+    event = duel_event(
+        record,
+        spec_version=spec.version,
+        spec_fingerprint=spec.fingerprint,
+        units=[],
+        units_per_skill=1,
+        started_at="2026-09-13T11:00:00Z",
+        wall_seconds=1.0,
+    )
+    store.write_event(TRACK, event)
+    signed = {**record, "finished_at": "2026-09-14T00:00:00Z", "wins": 3, "decided": 3}
+    store.append(TRACK, signed)
+    errors = verify_store(store.root, spec).errors
+    assert f"{INDEX}:1: event.finished_at differs from the index record" in errors
+    assert f"{INDEX}:1: record wins 3, but the event's units tally 0" in errors
+    assert f"{INDEX}:1: record decided 3, but the event's units tally 0" in errors
+
+
+def test_a_record_that_predates_event_hashes_is_a_warning(history):
+    store, sp, _ = history
+    signer = store.signer
+    path = store.root / INDEX
+    lines = []
+    for raw in path.read_text().splitlines():
+        record = json.loads(raw.split("\t")[0])
+        record.pop("event_sha256")
+        body = canonical_json(record)
+        lines.append(f"{body}\t{signer.sign(body)}\n")
+    path.write_text("".join(lines))
+    report = verify_store(store.root, sp)
+    assert report.ok, report.errors
+    assert f"{INDEX}:1: the record does not sign its event's bytes (no event_sha256)" in (
+        report.warnings
+    )
 
 
 def test_a_clip_swapped_under_its_name_is_found(history):

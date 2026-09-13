@@ -431,6 +431,10 @@
       "seq": {
        "type": "integer",
        "minimum": 1
+      },
+      "event_sha256": {
+       "$ref": "#/$defs/sha256",
+       "description": "The sha256 of the bytes of events/{track}/{event_id}.json, so the record's signature covers the whole event: its units, prompt hashes and clip hashes, not only the fields the index repeats. Optional: records written before it was added carry none."
       }
      }
     }

@@ -12,9 +12,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ..canon import canonical_json, sha256_file, verify_signature
+from ..canon import canonical_json, sha256_file, sha256_hex, verify_signature
 from ..spec import Spec, load_schema
-from .records import media_shas
+from .records import media_shas, unit_tally
 from .writer import Store
 
 
@@ -30,6 +30,9 @@ class Report:
     def ok(self) -> bool:
         return not self.errors
 
+
+#: Fields of an index record that its event does not repeat: the store assigns them on append.
+RECORD_ONLY = frozenset({"seq", "event_sha256"})
 
 #: The one form a signature takes in an index line: an ed25519 signature is 64 bytes.
 SIGNATURE_RE = re.compile(r"[0-9a-f]{128}")
@@ -177,12 +180,20 @@ def verify_store(root: str | Path, spec: Spec, schema: dict[str, Any] | None = N
                 last = record
 
                 event_where = f"events/{track}/{record.get('event_id')}.json"
-                event, problem = read_json_file(
-                    store.event_path(track, str(record.get("event_id", "")))
-                )
-                if problem == "missing":
+                event_path = store.event_path(track, str(record.get("event_id", "")))
+                if not event_path.is_file():
                     report.errors.append(f"{where}: event file missing")
                     continue
+                event_bytes = event_path.read_bytes()
+                if "event_sha256" not in record:
+                    report.warnings.append(
+                        f"{where}: the record does not sign its event's bytes (no event_sha256)"
+                    )
+                elif record["event_sha256"] != sha256_hex(event_bytes):
+                    report.errors.append(
+                        f"{where}: event file does not match the event_sha256 its record signs"
+                    )
+                event, problem = parse_json_bytes(event_bytes)
                 if not isinstance(event, dict):
                     report.errors.append(
                         f"{where}: event file unreadable ({problem or 'not an object'})"
@@ -190,10 +201,23 @@ def verify_store(root: str | Path, spec: Spec, schema: dict[str, Any] | None = N
                     continue
                 report.events += 1
                 validator.check("DuelEvent", event, event_where, report)
-                for k in ("event_id", "kind", "block", "dethroned", "king", "challenger"):
+                # Everything the index repeats from its event, the event must say too.
+                for k in sorted(set(record) - RECORD_ONLY):
                     if event.get(k) != record.get(k):
                         report.errors.append(f"{where}: event.{k} differs from the index record")
-                for sha in media_shas(event.get("units", [])):
+                units = event.get("units") if isinstance(event.get("units"), list) else []
+                units = [u for u in units if isinstance(u, dict)]
+                for k, n in unit_tally(units).items():
+                    if record.get(k) != n:
+                        report.errors.append(
+                            f"{where}: record {k} {record.get(k)}, but the event's units tally {n}"
+                        )
+                if record.get("media_count") != len(media_shas(units)):
+                    report.errors.append(
+                        f"{where}: record media_count {record.get('media_count')}, but the "
+                        f"event's units name {len(media_shas(units))} clips"
+                    )
+                for sha in media_shas(units):
                     if not store.has_media(sha, video_ext):
                         report.errors.append(f"{where}: media {sha[:12]} missing")
                         continue

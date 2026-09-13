@@ -158,11 +158,20 @@ class Store:
         return (seq - 1) // per
 
     def append(self, track: str, record: dict[str, Any]) -> int:
-        """Assign the next seq, sign, append to the index and advance the head."""
+        """Assign the next seq, sign, append to the index and advance the head.
+
+        The event is written first (`write_event`) and its file's sha256 goes into the signed
+        record as `event_sha256`, so the signature covers the event's bytes - unit outcomes,
+        prompt hashes, clip hashes - and not only the fields the index repeats.
+        """
         if self.signer is None:
             raise RuntimeError("store has no signer")
-        seq = self.next_seq(track)
+        event_path = self.event_path(track, str(record["event_id"]))
+        if not event_path.is_file():
+            raise RuntimeError(f"write the event before its record: {event_path} does not exist")
         record = dict(record)
+        record["event_sha256"] = sha256_file(event_path)
+        seq = self.next_seq(track)
         record["seq"] = seq
         canonical = canonical_json(record)
         line = canonical + "\t" + self.signer.sign(canonical) + "\n"
