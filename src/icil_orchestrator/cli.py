@@ -61,14 +61,24 @@ def cmd_store(args: argparse.Namespace) -> int:
         if key.resolve().is_relative_to(root):
             print(f"error: the signing key must live outside the store ({root})", file=sys.stderr)
             return 2
+        store = Store(root, spec)
+        existing = store.manifest()
         if key.exists():
             signer = Signer.from_file(key)
+        elif existing:
+            # Generating one here would leave an unrelated seed behind for a later run to pick up
+            # as the store's key.
+            print(
+                f"error: {root} is signed by {existing.get('validator_key')} and {key} does not "
+                "exist, so it cannot be re-initialised; point --key at its signing key",
+                file=sys.stderr,
+            )
+            return 1
         else:
             signer = Signer.generate()
             signer.save(key)
             print(f"generated signing key {key} (mode 0600)", file=sys.stderr)
-        store = Store(root, spec, signer)
-        existing = store.manifest()
+        store.signer = signer
         if existing and existing.get("validator_key") != signer.verify_key_hex:
             print(
                 f"error: {root} is signed by {existing.get('validator_key')}, not by {key}; "

@@ -93,8 +93,24 @@ def test_init_refuses_to_resign_a_store_with_another_key(tmp_path):
     assert cli("store", "init", str(root), "--key", str(tmp_path / "a")).returncode == 0
     again = cli("store", "init", str(root), "--key", str(tmp_path / "a"))
     assert again.returncode == 0, "re-initialising with the same key is idempotent"
+    assert (
+        cli("store", "init", str(tmp_path / "other"), "--key", str(tmp_path / "b")).returncode == 0
+    )
     other = cli("store", "init", str(root), "--key", str(tmp_path / "b"))
     assert other.returncode == 1 and "would invalidate every record" in other.stderr
+
+
+def test_init_on_a_store_whose_key_is_missing_generates_nothing(tmp_path):
+    """A key generated before the store was looked at is left lying in keys/, where the next run
+    picks it up as the store's key."""
+    root = tmp_path / "store"
+    assert cli("store", "init", str(root), "--key", str(tmp_path / "a")).returncode == 0
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    done = cli("store", "init", str(root), cwd=elsewhere)
+    assert done.returncode == 1 and "generated signing key" not in done.stderr
+    assert "cannot be re-initialised" in done.stderr
+    assert not (elsewhere / "keys").exists()
 
 
 def test_init_refuses_a_key_inside_the_store(tmp_path):
