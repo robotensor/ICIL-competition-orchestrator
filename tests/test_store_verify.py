@@ -99,6 +99,64 @@ def test_every_kind_of_one_byte_damage_is_named(history, line_no, old, new, erro
     assert f"{INDEX}:{line_no}: {error}" in report.errors, report.errors
 
 
+@pytest.mark.parametrize(
+    "damage, error",
+    [
+        # One byte that is not UTF-8 at all.
+        (lambda line: line.replace(b'"block":1', b'"block":\xff', 1), "not UTF-8"),
+        # JSON parsers accept NaN; a signed record cannot hold it.
+        (lambda line: line.replace(b'"block":1', b'"block":NaN', 1), "unparsable record"),
+        # Deep enough to exhaust the parser's recursion.
+        (lambda line: b"[" * 200_000 + line, "unparsable record"),
+    ],
+)
+def test_bytes_no_parser_expects_are_named_not_raised(history, damage, error):
+    store, sp, _ = history
+    path = store.root / INDEX
+    lines = path.read_bytes().split(b"\n")
+    lines[1] = damage(lines[1])
+    path.write_bytes(b"\n".join(lines))
+    report = verify_store(store.root, sp)
+    assert f"{INDEX}:2: {error}" in report.errors, report.errors
+
+
+@pytest.mark.parametrize(
+    "damage, error",
+    [
+        # Upper-casing a hex digit leaves the signature bytes the same, but not the line.
+        (
+            lambda data: data.replace(
+                data.split(b"\t", 1)[1][:128], data.split(b"\t", 1)[1][:128].upper(), 1
+            ),
+            f"{INDEX}:1: signature is not 128 lowercase hex characters",
+        ),
+        (
+            lambda data: data[:-1] + b" ",
+            f"{INDEX}:3: signature is not 128 lowercase hex characters",
+        ),
+        (
+            lambda data: data[:-1] + b"\r",
+            f"{INDEX}:3: signature is not 128 lowercase hex characters",
+        ),
+        (lambda data: data[:-1], f"{INDEX}:3: no newline at the end of the line"),
+        (lambda data: data.replace(b"\n", b"\n\n", 1), f"{INDEX}:2: blank line"),
+    ],
+)
+def test_a_byte_that_leaves_the_signed_content_alone_still_fails(history, damage, error):
+    """Every byte of an index line is held to the one form the writer produces."""
+    store, sp, _ = history
+    path = store.root / INDEX
+    path.write_bytes(damage(path.read_bytes()))
+    assert error in verify_store(store.root, sp).errors
+
+
+def test_an_event_file_that_is_not_json_is_unreadable_not_missing(history):
+    store, sp, _ = history
+    (record,) = [r for r in store.iter_index(TRACK) if r["seq"] == 2]
+    store.event_path(TRACK, record["event_id"]).write_bytes(b"\xff{")
+    assert f"{INDEX}:2: event file unreadable (not UTF-8)" in verify_store(store.root, sp).errors
+
+
 def test_a_flipped_signature_byte_is_named(history):
     store, sp, _ = history
     path = store.root / INDEX

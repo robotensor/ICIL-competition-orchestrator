@@ -56,6 +56,13 @@ def test_verify_names_the_index_line_a_changed_byte_broke(spec, tmp_path):
     assert f"error: tracks/{TRACK}/index-0000.jsonl:2: bad signature" in verify.stdout
     assert verify.stdout.strip().endswith("FAILED")
 
+    # A byte that is not UTF-8 is named the same way, not raised as a traceback.
+    data[at] = 0xFF
+    index.write_bytes(bytes(data))
+    verify = cli("store", "verify", str(root))
+    assert verify.returncode == 1 and "Traceback" not in verify.stderr, verify.stderr
+    assert f"error: tracks/{TRACK}/index-0000.jsonl:2: not UTF-8" in verify.stdout
+
 
 def test_init_refuses_to_resign_a_store_with_another_key(tmp_path):
     root = tmp_path / "store"

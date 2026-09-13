@@ -7,6 +7,7 @@ for an index line its line number, so a tampered or corrupted record is found, n
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,37 @@ class Report:
     @property
     def ok(self) -> bool:
         return not self.errors
+
+
+#: The one form a signature takes in an index line: an ed25519 signature is 64 bytes.
+SIGNATURE_RE = re.compile(r"[0-9a-f]{128}")
+
+
+def _refuse_constant(name: str) -> Any:
+    raise ValueError(f"{name} is not JSON a signed record can hold")
+
+
+def parse_json_bytes(data: bytes) -> tuple[Any, str | None]:
+    """`(document, None)`, or `(None, why)` for bytes that are not strict UTF-8 JSON - never an
+    exception, whatever the bytes: a verifier names damage, it does not crash on it."""
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return None, "not UTF-8"
+    try:
+        return json.loads(text, parse_constant=_refuse_constant), None
+    except (ValueError, RecursionError):
+        return None, "unparsable"
+
+
+def read_json_file(path: Path) -> tuple[Any, str | None]:
+    try:
+        data = path.read_bytes()
+    except FileNotFoundError:
+        return None, "missing"
+    except OSError as exc:
+        return None, f"unreadable ({exc.strerror or exc})"
+    return parse_json_bytes(data)
 
 
 class SchemaCheck:
@@ -55,8 +87,8 @@ def verify_store(root: str | Path, spec: Spec, schema: dict[str, Any] | None = N
     store = Store(root, spec)
     validator = SchemaCheck(schema if schema is not None else load_schema())
 
-    manifest = store.manifest()
-    if manifest is None:
+    manifest, _ = read_json_file(store.root / "manifest.json")
+    if not isinstance(manifest, dict):
         report.errors.append("manifest.json missing or unreadable")
         return report
     validator.check("Manifest", manifest, "manifest.json", report)
@@ -73,26 +105,46 @@ def verify_store(root: str | Path, spec: Spec, schema: dict[str, Any] | None = N
             path = store.index_part_path(track, part)
             if not path.exists():
                 break
-            lines = path.read_text(encoding="utf-8").split("\n")
-            for n, raw in enumerate(lines, start=1):
-                if not raw.strip():
-                    continue
+            # Bytes, split on the newline the writer ends every line with, and each line decoded
+            # on its own: one bad byte is that line's error, never the whole part's exception.
+            lines = path.read_bytes().split(b"\n")
+            for n, raw_bytes in enumerate(lines, start=1):
                 where = f"{path.relative_to(store.root)}:{n}"
+                if n == len(lines):
+                    if not raw_bytes:
+                        break
+                    report.errors.append(f"{where}: no newline at the end of the line")
+                if not raw_bytes:
+                    report.errors.append(f"{where}: blank line")
+                    continue
+                try:
+                    raw = raw_bytes.decode("utf-8")
+                except UnicodeDecodeError:
+                    report.errors.append(f"{where}: not UTF-8")
+                    continue
                 if "\t" not in raw:
                     report.errors.append(f"{where}: no signature")
                     continue
                 body, sig = raw.split("\t", 1)
-                try:
-                    record = json.loads(body)
-                except ValueError:
+                record, _ = parse_json_bytes(body.encode("utf-8"))
+                if record is None:
                     report.errors.append(f"{where}: unparsable record")
                     continue
                 if not isinstance(record, dict):
                     report.errors.append(f"{where}: record is not an object")
                     continue
-                if canonical_json(record) != body:
+                try:
+                    canonical = canonical_json(record) == body
+                except (ValueError, RecursionError):
+                    canonical = False
+                if not canonical:
                     report.errors.append(f"{where}: record is not canonical JSON")
-                if not verify_signature(key, body, sig.strip()):
+                # The signature is held to its one encoding as strictly as the body is: upper-case
+                # hex or trailing whitespace verify the same bytes, but they are not the line the
+                # writer signed.
+                if not SIGNATURE_RE.fullmatch(sig):
+                    report.errors.append(f"{where}: signature is not 128 lowercase hex characters")
+                elif not verify_signature(key, body, sig):
                     report.errors.append(f"{where}: bad signature")
                 if record.get("seq") != expected_seq:
                     report.errors.append(
@@ -111,9 +163,16 @@ def verify_store(root: str | Path, spec: Spec, schema: dict[str, Any] | None = N
                 last = record
 
                 event_where = f"events/{track}/{record.get('event_id')}.json"
-                event = store.event(track, str(record.get("event_id", "")))
-                if event is None:
+                event, problem = read_json_file(
+                    store.event_path(track, str(record.get("event_id", "")))
+                )
+                if problem == "missing":
                     report.errors.append(f"{where}: event file missing")
+                    continue
+                if not isinstance(event, dict):
+                    report.errors.append(
+                        f"{where}: event file unreadable ({problem or 'not an object'})"
+                    )
                     continue
                 report.events += 1
                 validator.check("DuelEvent", event, event_where, report)
@@ -127,9 +186,9 @@ def verify_store(root: str | Path, spec: Spec, schema: dict[str, Any] | None = N
                         report.errors.append(f"{where}: media {sha[:12]} missing")
             part += 1
 
-        head = store.head(track)
-        if head is None:
-            report.errors.append(f"tracks/{track}/head.json missing")
+        head, _ = read_json_file(store.head_path(track))
+        if not isinstance(head, dict):
+            report.errors.append(f"tracks/{track}/head.json missing or unreadable")
         else:
             validator.check("Head", head, f"tracks/{track}/head.json", report)
             if last is not None and (
@@ -140,9 +199,8 @@ def verify_store(root: str | Path, spec: Spec, schema: dict[str, Any] | None = N
                 report.errors.append(f"tracks/{track}/head.json claims records that do not exist")
         queue = store.queue_path(track)
         if queue.exists():
-            try:
-                snapshot = json.loads(queue.read_text(encoding="utf-8"))
-            except ValueError:
+            snapshot, problem = read_json_file(queue)
+            if problem is not None:
                 report.warnings.append(
                     f"tracks/{track}/queue.json unreadable (rewritten every cycle; may be mid-write)"
                 )
