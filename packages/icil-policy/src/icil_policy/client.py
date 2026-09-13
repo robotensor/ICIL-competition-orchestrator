@@ -174,6 +174,8 @@ class RemotePolicy:
                 failure = f"the server at {self.address} refused this key: {exc}"
             except (EOFError, OSError) as exc:
                 failure = f"the server hung up while authenticating: {_describe(exc)}"
+            except Exception as exc:  # Python 3.10 asserts on a challenge it cannot parse
+                failure = f"the server answered the handshake with nonsense: {_describe(exc)}"
         if expired.is_set():
             failure = f"authentication did not finish within {self.timeout_s:g}s"
         if failure is not None:

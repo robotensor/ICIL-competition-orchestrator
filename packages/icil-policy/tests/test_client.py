@@ -6,6 +6,7 @@ import pickle
 import secrets
 import shutil
 import socket
+import struct
 import tempfile
 import threading
 import time
@@ -205,6 +206,37 @@ def test_a_listener_that_never_authenticates_raises_within_the_timeout(tmp_path)
         with pytest.raises(PolicyUnavailable, match="authentication did not finish within 0.5s"):
             RemotePolicy(address, b"key", timeout_s=0.5)
         assert time.monotonic() - started < 5
+
+
+@pytest.mark.parametrize("challenge", [b"not a challenge", b""], ids=["garbage", "empty"])
+def test_a_server_that_sends_a_garbage_challenge_raises_and_is_hung_up_on(challenge):
+    directory = tempfile.mkdtemp(prefix="icilp-")
+    address = os.path.join(directory, "garbage.sock")
+    caught = {}
+
+    def connect():
+        try:
+            RemotePolicy(address, secrets.token_bytes(32), timeout_s=5)
+        except Exception as exc:  # which one is what the test checks
+            caught["error"] = exc
+
+    try:
+        with socket.socket(socket.AF_UNIX) as listener:
+            listener.bind(address)
+            listener.listen(1)
+            thread = threading.Thread(target=connect)
+            thread.start()
+            conn, _ = listener.accept()
+            with conn:
+                conn.sendall(struct.pack("!i", len(challenge)) + challenge)
+                thread.join(timeout=10)
+                assert isinstance(caught.get("error"), PolicyUnavailable), caught
+                assert caught["error"].op == "connect"
+                conn.settimeout(5)
+                while conn.recv(4096):  # times out if the client kept its end open
+                    pass
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
 
 
 def test_arguments_are_checked_before_connecting():
