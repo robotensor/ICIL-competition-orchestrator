@@ -181,11 +181,16 @@ def _kill_group(proc: subprocess.Popen) -> None:
 
 
 def _tail(path: Path, limit: int = TAIL_CHARS) -> str:
+    """The end of a log of any size: nothing bounds what a benchmark prints, so only the last few
+    kilobytes are ever read."""
     try:
-        text = path.read_bytes()[-4 * limit :].decode("utf-8", errors="replace").strip()
+        with open(path, "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            fh.seek(max(0, fh.tell() - 4 * limit))
+            data = fh.read(4 * limit)
     except OSError:
         return ""
-    return text[-limit:]
+    return data.decode("utf-8", errors="replace").strip()[-limit:]
 
 
 def run_unit(

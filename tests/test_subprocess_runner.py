@@ -6,6 +6,7 @@ real result file, so the path under test is the one a duel takes - not a mock of
 
 from __future__ import annotations
 
+import subprocess
 import sys
 import time
 
@@ -303,6 +304,26 @@ def test_a_result_that_cannot_be_read_into_an_outcome_is_void(fake, tmp_path):
 
     (outcome,) = run(Weird(), [unit(0)], tmp_path)
     assert outcome.void and outcome.error.startswith("fake: unusable result: RuntimeError")
+
+
+def test_the_log_tail_reads_only_the_end_of_a_huge_log(tmp_path):
+    """Nothing bounds what a benchmark prints; a unit's reason must not need the whole log in RAM.
+    Run under a 1 GiB address-space limit against a 4 GiB (sparse) log."""
+    log = tmp_path / "benchmark.log"
+    with open(log, "wb") as fh:
+        fh.truncate(4 << 30)
+        fh.seek(0, 2)
+        fh.write(b"\nthe simulator lost the GPU\n")
+    code = (
+        "import resource, sys\n"
+        "resource.setrlimit(resource.RLIMIT_AS, (1 << 30, 1 << 30))\n"
+        "from pathlib import Path\n"
+        "from icil_orchestrator.benchmarks.subprocess_runner import _tail\n"
+        f"print(_tail(Path({str(log)!r})))\n"
+    )
+    done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0, done.stderr[-500:]
+    assert done.stdout.strip().endswith("the simulator lost the GPU")
 
 
 def test_read_result_file_never_raises(tmp_path):
