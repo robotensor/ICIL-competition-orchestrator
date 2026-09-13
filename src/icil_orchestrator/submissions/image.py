@@ -37,6 +37,17 @@ SUBMISSION_DIR = "/submission"
 SUBMISSION_IMAGE = "icil-submission"
 #: Build arguments the base Dockerfile takes, from the spec's sandbox user.
 UID_ARG, GID_ARG = "POLICY_UID", "POLICY_GID"
+#: What pip prints when it cannot reach an index. A build that failed this way failed for the
+#: harness's reason - the network, PyPI - and is an error to try again, not the submission's
+#: rejection to publish. A package that does not exist ends in the same final ERROR lines; what
+#: tells the two apart is the retrying on a broken connection before them.
+PIP_TRANSPORT_FAILURES = (
+    "after connection broken by",
+    "Temporary failure in name resolution",
+    "NewConnectionError",
+    "ReadTimeoutError",
+    "Max retries exceeded with url",
+)
 
 
 @dataclass(frozen=True)
@@ -129,6 +140,11 @@ def submission_tag(ref: SubmissionRef) -> str:
     return f"{SUBMISSION_IMAGE}:{ref.key}-{ref.revision}"
 
 
+def transport_failed(log: str) -> bool:
+    """Whether a failed build's log says pip could not reach an index (`PIP_TRANSPORT_FAILURES`)."""
+    return any(marker in log for marker in PIP_TRANSPORT_FAILURES)
+
+
 def submission_dockerfile(base: BaseImage, manifest: Manifest, spec: Any) -> str:
     """The whole of a submission's Dockerfile: the base, the checkout, its requirements."""
     uid, gid = sandbox_user(spec)
@@ -157,7 +173,7 @@ def build_submission_image(
     """`checkout` as an image FROM `base`, tagged by `ref`. A build that fails - the requirements
     do not install - or is not done within `timeout_s` is a rejection with the reason: what the
     requirements do at install time is the submission's, like what its policy does at start. A
-    base that is not there is not."""
+    base that is not there, or an index pip could not reach, is not."""
     ensure_base(docker, base)
     dockerfile = submission_dockerfile(base, manifest, spec)
     tag = submission_tag(ref)
@@ -170,6 +186,11 @@ def build_submission_image(
     try:
         image_id = docker.build(checkout, dockerfile, tag=tag, timeout_s=timeout_s)
     except BuildFailed as exc:
+        if transport_failed(exc.log):
+            raise SubmissionError(
+                f"{installing} could not reach its index, which is not the submission's doing; "
+                f"try again later:\n{exc.log}"
+            ) from None
         raise SubmissionRejected("build", f"{installing} failed:\n{exc.log}") from None
     except BuildTimedOut as exc:
         raise SubmissionRejected(

@@ -19,6 +19,7 @@ from icil_orchestrator.submissions.image import (
     sandbox_user,
     submission_dockerfile,
     submission_tag,
+    transport_failed,
 )
 from submission_helpers import FAKE_BASE_DIGEST, SHA_A, FakeDocker, write_policy_repo
 
@@ -126,6 +127,29 @@ def test_requirements_that_do_not_install_reject_the_submission_with_the_reason(
     assert info.value.reason.startswith("installing requirements.txt failed:")
     assert "No matching distribution found for icil-no-such-package" in info.value.reason
     assert docker.runs == [], "nothing ran"
+
+
+def test_an_index_pip_could_not_reach_is_the_harness_problem_not_a_rejection(
+    spec, docker, base, ref, tmp_path
+):
+    """PyPI down or the build's network gone ends in the same final ERROR lines as a package that
+    does not exist; the retrying before them says which, and only the second is published."""
+    root = write_policy_repo(tmp_path / "repo", requirements="requirements.txt")
+    (root / "requirements.txt").write_text("numpy\n")
+    docker.images["x:y"] = FAKE_BASE_DIGEST
+    docker.build_failure = (
+        "WARNING: Retrying (Retry(total=0, connect=None, read=None, redirect=None, status=None))"
+        " after connection broken by 'NewConnectionError('<pip._vendor.urllib3.connection."
+        "HTTPSConnection object at 0x7f>: Failed to establish a new connection: [Errno -3] "
+        "Temporary failure in name resolution')': /simple/numpy/\n"
+        "ERROR: Could not find a version that satisfies the requirement numpy (from versions: "
+        "none)\nERROR: No matching distribution found for numpy"
+    )
+    with pytest.raises(SubmissionError, match="could not reach its index.*try again later") as e:
+        build_submission_image(docker, spec, root, check_repository(root, spec), ref, base)
+    assert not isinstance(e.value, SubmissionRejected) and "name resolution" in str(e.value)
+    assert transport_failed(docker.build_failure)
+    assert not transport_failed("ERROR: No matching distribution found for icil-no-such-package")
 
 
 def test_requirements_that_never_finish_installing_reject_the_submission_at_build(
