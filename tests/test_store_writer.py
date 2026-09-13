@@ -7,6 +7,7 @@ import pytest
 from icil_orchestrator.canon import Signer, canonical_json, sha256_file, verify_signature
 from icil_orchestrator.ids import SubmissionRef
 from icil_orchestrator.store.records import unit_verdict_from_unit
+from icil_orchestrator.store.verify import verify_store
 from icil_orchestrator.store.writer import Store, store_lock
 from store_helpers import TRACK, make_record, publish, small_spec
 
@@ -65,6 +66,53 @@ def test_append_rotates_parts_and_moves_the_head(spec, tmp_path):
     assert store.index_part_path(TRACK, 1).exists()
     assert len(store.index_part_path(TRACK, 0).read_text().strip().split("\n")) == 2
     assert [r["seq"] for r in store.iter_index(TRACK)] == [1, 2, 3]
+
+
+def test_a_crash_between_the_index_and_the_head_does_not_duplicate_a_seq(
+    spec, tmp_path, monkeypatch
+):
+    """The next seq comes from the signed index, not from head.json: a crash after the line was
+    appended and before the head was written must not publish two records under one seq."""
+    store = Store(tmp_path / "store", spec, Signer.generate())
+    store.init(store.signer.verify_key_hex)
+    publish(store, spec, make_record(spec, "genesis", 0, KING, None))
+
+    def crash(*a, **kw):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(Store, "write_head", crash)
+    with pytest.raises(KeyboardInterrupt):
+        publish(store, spec, make_record(spec, "duel", 1, KING, CHALLENGER))
+    monkeypatch.undo()
+    assert store.head(TRACK)["seq"] == 1, "the head did not survive the crash as it was"
+
+    again = Store(store.root, spec, store.signer)
+    assert publish(again, spec, make_record(again.spec, "duel", 2, KING, CHALLENGER)) == 3
+    assert [r["seq"] for r in again.iter_index(TRACK)] == [1, 2, 3]
+    report = verify_store(store.root, spec)
+    assert report.ok, report.errors
+
+
+def test_a_torn_final_line_is_repaired_before_the_next_append(spec, tmp_path):
+    """A half-written line is not a record: it is dropped, and the log stays verifiable."""
+    store = Store(tmp_path / "store", spec, Signer.generate())
+    store.init(store.signer.verify_key_hex)
+    publish(store, spec, make_record(spec, "genesis", 0, KING, None))
+    with open(store.index_part_path(TRACK, 0), "a") as fh:
+        fh.write('{"seq":2,"event_id":"ab')
+    assert publish(store, spec, make_record(spec, "duel", 1, KING, CHALLENGER)) == 2
+    assert verify_store(store.root, spec).ok
+
+
+def test_a_complete_line_that_lost_its_newline_is_kept(spec, tmp_path):
+    store = Store(tmp_path / "store", spec, Signer.generate())
+    store.init(store.signer.verify_key_hex)
+    publish(store, spec, make_record(spec, "genesis", 0, KING, None))
+    path = store.index_part_path(TRACK, 0)
+    path.write_bytes(path.read_bytes().rstrip(b"\n"))
+    assert publish(store, spec, make_record(spec, "duel", 1, KING, CHALLENGER)) == 2
+    report = verify_store(store.root, spec)
+    assert report.ok and report.records == 2, report.errors
 
 
 def test_a_torn_final_line_is_skipped_by_readers(spec, tmp_path):

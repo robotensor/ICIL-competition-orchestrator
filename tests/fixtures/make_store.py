@@ -151,7 +151,10 @@ def build(out: Path) -> Path:
     snapshot = queue.snapshot(TRACK, king, schema, now="2026-09-13T12:00:00Z")
     store.write_queue(TRACK, snapshot)
     queue.path.unlink()
-    (out / ".orchestrator.lock").unlink(missing_ok=True)
+    # The store's own bookkeeping (locks) is never published and never part of the fixture.
+    for dotfile in out.rglob(".*"):
+        if dotfile.is_file():
+            dotfile.unlink()
     return out
 
 

@@ -11,26 +11,38 @@ Layout (spec.store; unchanged from the validator the dashboard was built against
 Every write is atomic (tmp + rename) except the index append, which is a single O_APPEND write
 followed by fsync, so a concurrent reader sees at most one torn final line, which the dashboard
 tolerates.
+
+The index is the store's truth. A record's sequence number comes from the last signed line of the
+index, not from `head.json`, which is a cache the append rewrites: a crash between the two would
+otherwise publish two records under one seq and leave the store failing verify for good.
 """
 
 from __future__ import annotations
 
 import fcntl
 import json
+import logging
 import os
 import shutil
+import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from ..canon import Signer, canonical_json, sha256_file
+from ..canon import Signer, canonical_json, sha256_file, verify_signature
 from ..spec import Spec
 
 #: The event kinds that may move the crown. Everything else is published and rendered but never
-#: enters a lineage - see `Store.current_king`. Matches `CROWNING` in the dashboard's store reader.
+#: enters a lineage - see `king_after`. Matches `CROWNING` in the dashboard's store reader.
 CROWNING = frozenset({"duel", "genesis", "succession"})
 
 LOCK_FILE = ".orchestrator.lock"
+
+#: Serialises appends to one track's index, inside that track's directory. Separate from
+#: `store_lock`, which is the operator's one-writer lock over a whole store.
+INDEX_LOCK_FILE = ".index.lock"
+
+log = logging.getLogger(__name__)
 
 
 def king_after(record: dict[str, Any], previous: dict | None) -> dict | None:
@@ -72,13 +84,19 @@ def store_lock(root: str | Path):
 
 
 def atomic_write_text(path: Path, text: str) -> None:
+    """Write `path` in one step. The temporary name is unique, so two writers of the same file
+    cannot truncate each other's half-written copy."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    with open(tmp, "w", encoding="utf-8") as fh:
-        fh.write(text)
-        fh.flush()
-        os.fsync(fh.fileno())
-    os.replace(tmp, path)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
 
 
 def atomic_write_json(path: Path, obj: Any, pretty: bool = True) -> None:
@@ -169,9 +187,80 @@ class Store:
         atomic_write_json(self.head_path(track), head)
         self._touch(self.head_path(track))
 
+    @contextmanager
+    def index_lock(self, track: str):
+        """Held across reading the last seq, appending and rewriting the head, so two appends to
+        one track cannot take the same number."""
+        path = self.track_dir(track) / INDEX_LOCK_FILE
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            os.close(fd)
+
+    def index_parts(self, track: str) -> list[int]:
+        parts, part = [], 0
+        while self.index_part_path(track, part).exists():
+            parts.append(part)
+            part += 1
+        return parts
+
+    def _is_signed_line(self, line: bytes) -> bool:
+        key = self.signer.verify_key_hex if self.signer else ""
+        try:
+            body, tab, sig = line.decode("utf-8").partition("\t")
+        except UnicodeDecodeError:
+            return False
+        return bool(tab) and verify_signature(key, body, sig)
+
+    def repair_tail(self, track: str) -> None:
+        """Make the newest index part end in a whole line again.
+
+        A crash can leave a partial final line. If what is there is a complete signed record that
+        lost only its newline it is completed; anything else is dropped, because appending after it
+        would splice the next record onto half of one.
+        """
+        parts = self.index_parts(track)
+        if not parts:
+            return
+        path = self.index_part_path(track, parts[-1])
+        data = path.read_bytes()
+        if not data or data.endswith(b"\n"):
+            return
+        kept, _, tail = data.rpartition(b"\n")
+        if self._is_signed_line(tail):
+            log.warning("%s: completing a final line that lost its newline", path)
+            with open(path, "ab") as fh:
+                fh.write(b"\n")
+                fh.flush()
+                os.fsync(fh.fileno())
+            return
+        log.warning("%s: dropping %d bytes of a torn final line", path, len(tail))
+        with open(path, "r+b") as fh:
+            fh.truncate(len(kept) + 1 if kept else 0)
+            fh.flush()
+            os.fsync(fh.fileno())
+
+    def last_record(self, track: str) -> dict[str, Any] | None:
+        """The last whole line of the newest index part, as the index itself has it."""
+        for part in reversed(self.index_parts(track)):
+            for line in reversed(self.index_part_path(track, part).read_bytes().split(b"\n")):
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line.split(b"\t", 1)[0].decode("utf-8"))
+                except (UnicodeDecodeError, ValueError):
+                    continue
+                if isinstance(record, dict) and isinstance(record.get("seq"), int):
+                    return record
+        return None
+
     def next_seq(self, track: str) -> int:
-        head = self.head(track)
-        return int(head["seq"]) + 1 if head and isinstance(head.get("seq"), int) else 1
+        """One past the index's last record. `head.json` is a cache and never decides this."""
+        last = self.last_record(track)
+        return int(last["seq"]) + 1 if last else 1
 
     def part_of(self, seq: int) -> int:
         per = max(1, int(self.spec.store["index_lines_per_part"]))
@@ -191,29 +280,31 @@ class Store:
             raise RuntimeError(f"write the event before its record: {event_path} does not exist")
         record = dict(record)
         record["event_sha256"] = sha256_file(event_path)
-        seq = self.next_seq(track)
-        record["seq"] = seq
-        canonical = canonical_json(record)
-        line = canonical + "\t" + self.signer.sign(canonical) + "\n"
-        path = self.index_part_path(track, self.part_of(seq))
-        path.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
-        try:
-            os.write(fd, line.encode("utf-8"))
-            os.fsync(fd)
-        finally:
-            os.close(fd)
-        self._touch(path)
-        head = self.head(track)
-        king = king_after(record, head.get("king") if head else None)
-        self.write_head(
-            track,
-            seq=seq,
-            event_id=str(record["event_id"]),
-            block=int(record["block"]),
-            finished_at=str(record["finished_at"]),
-            king=king,
-        )
+        with self.index_lock(track):
+            self.repair_tail(track)
+            seq = self.next_seq(track)
+            record["seq"] = seq
+            canonical = canonical_json(record)
+            line = canonical + "\t" + self.signer.sign(canonical) + "\n"
+            path = self.index_part_path(track, self.part_of(seq))
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+            try:
+                os.write(fd, line.encode("utf-8"))
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            self._touch(path)
+            head = self.head(track)
+            king = king_after(record, head.get("king") if head else None)
+            self.write_head(
+                track,
+                seq=seq,
+                event_id=str(record["event_id"]),
+                block=int(record["block"]),
+                finished_at=str(record["finished_at"]),
+                king=king,
+            )
         return seq
 
     def iter_index(self, track: str) -> list[dict[str, Any]]:
