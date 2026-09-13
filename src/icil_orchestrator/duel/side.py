@@ -20,7 +20,9 @@ What makes a unit void rather than a loss, beyond what `subprocess_runner` alrea
 - the policy runtime died: the policy never listened, or died underneath its unit. That unit is
   void, and so is **every remaining unit of the side**, with the first death's reason: a runtime
   that died is not asked to start again forty times over the side's budget;
-- the side, or the duel, ran out of wall clock before the unit started.
+- the side, or the duel, ran out of wall clock before the unit started;
+- the duel already knows it is void (`void_units`): a unit void on the other side is void for
+  both, so it is not played here only to be thrown away.
 """
 
 from __future__ import annotations
@@ -101,10 +103,12 @@ def run_side(
     prepared: PreparedSubmission | None,
     refused: str | None = None,
     deadline: float | None = None,
+    void_units: Mapping[str, str] | None = None,
     on_start: Callable[[Mapping[str, Any]], None] | None = None,
     on_unit: Callable[[Mapping[str, Any], dict[str, Any]], None] | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """Every unit of one side, by unit id. `deadline` is the duel's, as a `time.monotonic()`."""
+    """Every unit of one side, by unit id. `deadline` is the duel's, as a `time.monotonic()`;
+    `void_units` maps the units already void for the duel to the reason."""
     side_dir.mkdir(parents=True, exist_ok=True)
     done = read_results(side_dir)
     budgets = spec.budgets
@@ -126,6 +130,8 @@ def run_side(
         prompt_sha = prompt.sha256 if prompt is not None and not prompt.void else None
         if refused is not None:
             outcome = voided(f"the {side}'s submission was refused: {refused}")
+        elif void_units and unit_id in void_units:
+            outcome = voided(f"not played: {void_units[unit_id]}")
         elif prompt is None or prompt.void:
             reason = prompt.error if prompt is not None else "no prompt was materialized"
             outcome = voided(f"no prompt: {reason}")

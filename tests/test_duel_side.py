@@ -159,3 +159,15 @@ def test_units_left_when_the_duel_runs_out_of_time_are_void(
     )
     assert {r["error"] for r in results.values()} == {"the side ran out of its wall-clock budget"}
     assert runtime.serves == []
+
+
+def test_a_unit_the_duel_already_holds_void_is_not_played(
+    duel_spec, fake, units, prompts, tmp_path
+):
+    runtime = FakePolicyRuntime(duel_spec)
+    reason = "void on the challenger's side: the policy runtime died"
+    results = side(
+        duel_spec, fake, units, prompts, tmp_path, runtime, void_units={units[0]["unit_id"]: reason}
+    )
+    assert results[units[0]["unit_id"]]["error"] == f"not played: {reason}"
+    assert [s[1] for s in runtime.serves] == [u["unit_id"] for u in units[1:]]
