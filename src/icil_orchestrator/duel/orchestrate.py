@@ -340,7 +340,7 @@ class Orchestrator:
             benchmark_of=lambda unit: duel.benchmarks[unit["benchmark"]],
             on_prompt=lambda unit, prompt: self._on_prompt(duel, unit, prompt),
         )
-        self._push_touched()
+        self.push_touched()
         if score.too_void(duel.units, spec.max_void_fraction(req.track)):
             return self._void(duel, f"{duel.prompts.void} of {len(duel.units)} prompts are void")
 
@@ -513,7 +513,7 @@ class Orchestrator:
                 "video": sha,
                 "success": row.get(f"{side}_success"),
             }
-        self._push_touched()
+        self.push_touched()
 
     def _side_meta(
         self, duel: _Duel, side: str, ref: SubmissionRef, refused: str | None
@@ -594,7 +594,7 @@ class Orchestrator:
             event["benchmarks"] = self._benchmark_info(duel)
             self.store.write_event(track, event)
             record["seq"] = self.store.append(track, record)
-            self._push_touched()
+            self.push_touched()
         result = DuelResult(
             status="published",
             kind=req.kind,
@@ -657,7 +657,8 @@ class Orchestrator:
             out[name] = {"info": info, "pin": pin, "installed_version": installed}
         return out
 
-    def _push_touched(self) -> None:
+    def push_touched(self) -> None:
+        """What the store wrote since the last push, to the mirror when there is one."""
         if self.mirror is None:
             return
         files = self.store.drain_touched()
