@@ -47,7 +47,7 @@ from typing import Any
 
 import numpy as np
 
-from . import wire
+from . import logs, wire
 from .errors import ManifestError, WireError
 from .manifest import Manifest
 from .manifest import load as load_manifest
@@ -59,9 +59,6 @@ EXIT_OK = 0
 EXIT_FAILED = 1
 EXIT_USAGE = 2
 
-#: How much of the log an error reply carries.
-LOG_TAIL_LINES = 40
-LOG_TAIL_BYTES = 8192
 #: The longest exception message an error reply carries.
 MESSAGE_CHARS = 4000
 #: How often the hang-up watch looks at the connection while a policy call runs.
@@ -299,22 +296,8 @@ class Session:
     def _log_tail(self) -> str:
         if self.log_file is None:
             return ""
-        return log_tail(self.log_file)
-
-
-def log_tail(path: str | os.PathLike[str], lines: int = LOG_TAIL_LINES) -> str:
-    """The last `lines` lines of a log file, at most `LOG_TAIL_BYTES` of it; "" if unreadable."""
-    _flush()
-    try:
-        with open(path, "rb") as handle:
-            handle.seek(0, os.SEEK_END)
-            size = handle.tell()
-            handle.seek(max(0, size - LOG_TAIL_BYTES))
-            data = handle.read()
-    except OSError:
-        return ""
-    text = data.decode("utf-8", errors="replace")
-    return "\n".join(text.splitlines()[-lines:])
+        _flush()
+        return logs.tail(self.log_file)
 
 
 def _flush() -> None:
