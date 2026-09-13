@@ -86,3 +86,20 @@ def test_the_docker_client_gets_the_allow_list_and_the_authkey_only_when_it_runs
         environ={"HF_TOKEN": "x", "ICIL_LIVE_TOKEN": "y", "DOCKER_HOST": "h", "PATH": "p"}
     )
     assert given.environ == {"DOCKER_HOST": "h", "PATH": "p"}
+
+
+def test_policy_containers_are_listed_with_their_labels_and_a_vanished_one_skipped(tmp_path):
+    script = (
+        'if [ "$1" = ps ]; then echo "$@" > ' + str(tmp_path / "ps") + "; printf 'aaa\\nbbb\\n'; "
+        "exit 0; fi\n"
+        "cat <<'JSON'\n"
+        '{"name": "/icil-policy-one", "running": true, "labels": '
+        '{"icil.orchestrator": "policy", "icil.shared-dir": "/work/a b,c/policy"}}\n'
+        "JSON\n"
+        "echo 'Error: No such container: bbb' >&2\nexit 1\n"
+    )
+    docker = Docker(binary=fake_binary(tmp_path / "docker", script))
+    (found,) = docker.policy_containers()
+    assert found.name == "icil-policy-one" and found.running
+    assert found.labels["icil.shared-dir"] == "/work/a b,c/policy", "a path is taken whole"
+    assert "label=icil.orchestrator=policy" in (tmp_path / "ps").read_text()

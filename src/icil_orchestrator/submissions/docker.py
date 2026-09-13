@@ -9,6 +9,7 @@ the orchestrator holds reaches a container unless it is passed here on purpose.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import tempfile
@@ -75,6 +76,15 @@ class ContainerState:
     running: bool
     exit_code: int | None
     error: str = ""
+
+
+@dataclass(frozen=True)
+class ContainerInfo:
+    """A container carrying `CONTAINER_LABEL`, as `Docker.policy_containers` lists it."""
+
+    name: str
+    running: bool
+    labels: dict[str, str]
 
 
 def docker_environment(source: Mapping[str, str] | None = None) -> dict[str, str]:
@@ -206,6 +216,40 @@ class Docker:
         running, _, rest = done.stdout.strip().partition(" ")
         code, _, error = rest.partition(" ")
         return ContainerState(running == "true", int(code) if code.isdigit() else None, error)
+
+    def policy_containers(self) -> list[ContainerInfo]:
+        """Every container carrying `CONTAINER_LABEL`, running or not, with its labels."""
+        listed = self._run(
+            ["ps", "--all", "--quiet", "--no-trunc", "--filter", f"label={CONTAINER_LABEL}"],
+            timeout_s=60,
+        ).stdout.split()
+        if not listed:
+            return []
+        # One JSON object a line; a container removed since `ps` is an error line, skipped.
+        template = (
+            '{"name": {{json .Name}}, "running": {{json .State.Running}}, '
+            '"labels": {{json .Config.Labels}}}'
+        )
+        done = self._run(
+            ["inspect", "--type", "container", "--format", template, *listed],
+            check=False,
+            timeout_s=60,
+        )
+        found = []
+        for line in done.stdout.splitlines():
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            labels = row.get("labels") or {}
+            found.append(
+                ContainerInfo(
+                    name=str(row.get("name", "")).lstrip("/"),
+                    running=row.get("running") is True,
+                    labels={str(k): str(v) for k, v in labels.items()},
+                )
+            )
+        return found
 
     def logs(self, name: str, *, tail_lines: int = 40) -> str:
         done = self._run(["logs", "--tail", str(tail_lines), name], check=False, timeout_s=60)
