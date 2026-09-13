@@ -12,7 +12,9 @@ import pytest
 from huggingface_hub.errors import HfHubHTTPError
 
 from icil_orchestrator.ids import SubmissionRef, is_commit_sha
+from icil_orchestrator.spec import load_spec_file
 from icil_orchestrator.submissions import SubmissionError, SubmissionRejected
+from icil_orchestrator.submissions.checks import check_repository, regular_file_inside
 from icil_orchestrator.submissions.fetch import (
     HubFetcher,
     LocalFetcher,
@@ -237,3 +239,96 @@ def test_a_local_directory_is_addressed_by_its_tree_and_copied_links_as_links(
     assert tree_hash(copy) != resolved.sha
     os.chmod(source / "pkg" / "policy.py", 0o755)
     assert tree_hash(source) != resolved.sha, "the executable bit is part of the tree, as in git"
+
+
+# -- checks -------------------------------------------------------------------------------------
+
+EXAMPLES = Path(__file__).resolve().parents[1] / "packages" / "icil-policy" / "examples"
+
+
+def test_the_replay_example_passes_the_manifest_check(spec):
+    manifest = check_repository(EXAMPLES / "replay_policy", spec)
+    assert manifest.policy == "replay.policy:ReplayPolicy"
+    assert manifest.requirements == "requirements.txt"
+    assert manifest.api == spec.submission["manifest_api"]
+
+
+def test_a_manifest_that_is_not_a_plain_file_of_the_repository_is_refused(spec, tmp_path):
+    root = write_policy_repo(tmp_path / "repo")
+    assert check_repository(root, spec).policy == "pkg.policy:Policy"
+
+    (root / "icil.yaml").rename(root / "real.yaml")
+    with pytest.raises(SubmissionRejected, match="icil.yaml.*is not in the repository") as info:
+        check_repository(root, spec)
+    assert info.value.step == "manifest"
+
+    os.symlink("real.yaml", root / "icil.yaml")
+    with pytest.raises(SubmissionRejected, match="goes through a symbolic link"):
+        check_repository(root, spec)
+    (root / "icil.yaml").unlink()
+
+    (root / "icil.yaml").mkdir()
+    with pytest.raises(SubmissionRejected, match="is not a regular file"):
+        check_repository(root, spec)
+    (root / "icil.yaml").rmdir()
+
+    os.mkfifo(root / "icil.yaml")
+    with pytest.raises(SubmissionRejected, match="is not a regular file"):
+        check_repository(root, spec)  # and did not block opening the pipe
+
+
+def test_a_manifests_problems_are_the_rejections_reason(spec, tmp_path):
+    root = write_policy_repo(tmp_path / "repo")
+    (root / "icil.yaml").write_text("api: 2\npolicy: not a class\nextra: 1\n")
+    with pytest.raises(SubmissionRejected) as info:
+        check_repository(root, spec)
+    reason = info.value.reason
+    assert "api: must be 1" in reason and "policy: must be module:Class" in reason
+    assert "unknown key(s) 'extra'" in reason
+
+    (root / "icil.yaml").write_text("api: 1\npolicy: pkg.policy:Policy\n")
+    other = json.loads(spec.path.read_text())
+    other["submission"]["manifest_api"] = 2
+    (tmp_path / "spec.json").write_text(json.dumps(other))
+    with pytest.raises(SubmissionRejected, match="api 1 is not this competition's 2"):
+        check_repository(root, load_spec_file(tmp_path / "spec.json"))
+
+
+def test_requirements_must_be_a_plain_file_inside_the_repository(spec, tmp_path):
+    root = write_policy_repo(tmp_path / "repo", requirements="requirements.txt")
+    (root / "requirements.txt").write_text("numpy\n")
+    assert check_repository(root, spec).requirements == "requirements.txt"
+
+    (tmp_path / "outside.txt").write_text("evil\n")
+    (root / "requirements.txt").unlink()
+    os.symlink(tmp_path / "outside.txt", root / "requirements.txt")
+    with pytest.raises(SubmissionRejected, match="requirements.*symbolic link|leaves the repo"):
+        check_repository(root, spec)
+    (root / "requirements.txt").unlink()
+
+    write_policy_repo(root, requirements="../outside.txt")
+    with pytest.raises(SubmissionRejected, match="leaves the repository"):
+        check_repository(root, spec)
+
+    # A link to a file that is inside: icil_policy resolves it happily; this check does not.
+    (root / "deps").mkdir()
+    (root / "deps" / "requirements.txt").write_text("numpy\n")
+    os.symlink("deps/requirements.txt", root / "requirements.txt")
+    write_policy_repo(root, requirements="requirements.txt")
+    with pytest.raises(SubmissionRejected, match="goes through a symbolic link \\(requirements"):
+        check_repository(root, spec)
+    (root / "requirements.txt").unlink()
+
+    os.symlink("deps", root / "linked")
+    write_policy_repo(root, requirements="linked/requirements.txt")
+    with pytest.raises(SubmissionRejected, match="goes through a symbolic link \\(linked\\)"):
+        check_repository(root, spec)
+
+
+def test_regular_file_inside_refuses_paths_that_leave_or_are_absolute(tmp_path):
+    (tmp_path / "f").write_text("x")
+    assert regular_file_inside(tmp_path, "f", what="it") == tmp_path / "f"
+    assert regular_file_inside(tmp_path, "./f", what="it") == tmp_path / "f"
+    for bad in ("/etc/passwd", "../f", "", "a/../f"):
+        with pytest.raises(SubmissionRejected, match="is not a path inside the repository"):
+            regular_file_inside(tmp_path, bad, what="it")
