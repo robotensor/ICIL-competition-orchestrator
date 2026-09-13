@@ -80,7 +80,7 @@ def plugin_units(
             )
         code = spec.skill_code(skill)
         for index, unit in enumerate(derived):
-            _check_unit(skill, name, index, unit)
+            check_unit(skill, name, index, unit)
             passed = {k: v for k, v in unit.items() if k not in RESERVED}
             uid = unit_id(code, len(out))
             out.append(
@@ -103,7 +103,7 @@ def plugin_units(
     return out
 
 
-def _check_unit(skill: str, name: str, index: int, unit: Any) -> None:
+def check_unit(skill: str, name: str, index: int, unit: Any) -> None:
     where = f"{skill}: {name} unit {index}"
     if not isinstance(unit, Mapping):
         raise DerivationError(f"{where} is {type(unit).__name__}, not a mapping")

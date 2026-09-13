@@ -11,6 +11,9 @@ license = { file = "LICENSE" }
 requires-python = ">=3.10"
 dependencies = ["pynacl>=1.5"]
 
+[project.scripts]
+icil-orchestrator = "icil_orchestrator.cli:main"
+
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff==0.16.7"]
 
