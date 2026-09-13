@@ -134,6 +134,65 @@ def test_a_hung_unit_is_killed_with_its_children(tmp_path):
     assert not _alive(child), "the benchmark's child process outlived its unit"
 
 
+def _spawner(pid_file, then: str) -> list[str]:
+    """A command that forks a long-lived child (a renderer, say), records its pid, then `then`."""
+    return [
+        sys.executable,
+        "-c",
+        "import subprocess,sys,time;"
+        "c=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)']);"
+        f"open({str(pid_file)!r},'w').write(str(c.pid));" + then,
+    ]
+
+
+def _gone(pid: int) -> bool:
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and _alive(pid):
+        time.sleep(0.05)
+    return not _alive(pid)
+
+
+@pytest.mark.parametrize("then, code", [("sys.exit(3)", 3), ("sys.exit(0)", 0)])
+def test_a_unit_that_exits_takes_its_children_with_it(tmp_path, then, code):
+    """A crash is the commonest way a simulator unit ends; what it forked must not hold the GPU
+    while the next unit runs."""
+    pid_file = tmp_path / "child.pid"
+    done = runner.run_argv(
+        _spawner(pid_file, then),
+        env={"PATH": "/usr/bin:/bin"},
+        timeout_s=30,
+        log_path=tmp_path / "l",
+    )
+    assert done.returncode == code and not done.timed_out
+    assert _gone(int(pid_file.read_text())), "the benchmark's child outlived its unit"
+
+
+def test_an_interrupted_orchestrator_does_not_leave_the_benchmark_running(tmp_path):
+    """The benchmark runs in its own session, so the terminal's Ctrl-C never reaches it; the
+    orchestrator has to take it down on the way out."""
+    import signal
+
+    pid_file = tmp_path / "child.pid"
+
+    def interrupt(*_):
+        raise KeyboardInterrupt
+
+    previous = signal.signal(signal.SIGALRM, interrupt)
+    signal.setitimer(signal.ITIMER_REAL, 1.5)
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            runner.run_argv(
+                _spawner(pid_file, "time.sleep(60)"),
+                env={"PATH": "/usr/bin:/bin"},
+                timeout_s=60,
+                log_path=tmp_path / "l",
+            )
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+    assert _gone(int(pid_file.read_text())), "the benchmark survived the interrupt"
+
+
 def _alive(pid: int) -> bool:
     try:
         with open(f"/proc/{pid}/stat") as fh:

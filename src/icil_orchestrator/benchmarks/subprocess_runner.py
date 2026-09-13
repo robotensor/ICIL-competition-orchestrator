@@ -133,8 +133,9 @@ def run_argv(
 ) -> Completed:
     """Run `argv` to completion or to `timeout_s`, its output going to `log_path`.
 
-    It runs in its own session, so on timeout the whole process group is killed: a simulator that
-    forked a renderer must not outlive its unit and hold the GPU for the next one.
+    It runs in its own session, and whatever ends the unit - a clean exit, a crash, the timeout, or
+    the orchestrator itself being interrupted - the whole process group is killed on the way out: a
+    simulator that forked a renderer must not outlive its unit and hold the GPU for the next one.
     """
     log_path.parent.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
@@ -150,12 +151,16 @@ def run_argv(
             )
         except OSError as exc:
             return Completed(None, False, str(exc), time.monotonic() - started, "")
+        returncode: int | None = None
+        timed_out = False
         try:
-            returncode: int | None = proc.wait(timeout=timeout_s)
-            timed_out = False
+            returncode = proc.wait(timeout=timeout_s)
         except subprocess.TimeoutExpired:
+            timed_out = True
+        finally:
+            # The session is the benchmark's alone (start_new_session), so this reaches only what
+            # it started - including children still running after the direct child exited.
             _kill_group(proc)
-            returncode, timed_out = None, True
     return Completed(returncode, timed_out, None, time.monotonic() - started, _tail(log_path))
 
 
@@ -163,7 +168,8 @@ def _kill_group(proc: subprocess.Popen) -> None:
     try:
         os.killpg(proc.pid, signal.SIGKILL)
     except (ProcessLookupError, PermissionError):
-        proc.kill()
+        if proc.poll() is None:
+            proc.kill()
     proc.wait()
 
 
