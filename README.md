@@ -16,8 +16,8 @@ arrays.
 
 **Status:** in progress. The first milestone plugs RoboTwin and launches a 1-arm Franka competition
 with one sensorimotor demonstration per episode. The contract, benchmark discovery, the signed
-store, the queue, live frames, the policy protocol and the policy sandbox are in place; duels are
-not yet.
+store, the queue, live frames, the policy protocol, the policy sandbox and duels are in place; the
+first smoke duel on RoboTwin's `franka_1arm` suite is next.
 
 ```bash
 uv venv --python 3.10 .venv && uv pip install -e ".[dev]" -e packages/icil-policy
@@ -37,6 +37,11 @@ icil-orchestrator submission check owner/policy@main --base-image sha256:<hex>  
                                                          # manifest, build, run, hello; reported
 icil-orchestrator submission check local/replay@main --local packages/icil-policy/examples/replay_policy
 icil-orchestrator submission prune                       # the icil-submission images nothing uses
+
+icil-orchestrator duel --track franka_1arm --challenger owner/policy@main --size smoke \
+    --store store/ --run-dir runs/ --base-image sha256:<hex>   # one duel, or genesis, published
+icil-orchestrator daemon --store store/ --run-dir runs/ --queue queue/ \
+    --live-url https://dashboard --live-token-env ICIL_LIVE_TOKEN   # serve the queues
 ```
 
 A submission is a Hugging Face repository at a commit: `queue add` resolves a branch or a tag to
@@ -62,6 +67,17 @@ what they build may be loaded. Submission code already runs natively in its cont
 it run code it wrote to a size-capped nosuid,nodev tmpfs removes a speed bump rather than a
 boundary; the boundary is the network (none), the read-only root, the non-root user and the
 limits.
+
+A duel fetches and checks both sides, then has the benchmark materialize every unit's prompt
+once, before either side runs: both run from those files, and the event publishes each prompt's
+sha256. Each unit gets a freshly served policy - a container per unit under `--runtime docker`,
+the default - and the benchmark's unit command drives it over the policy socket. Every unit's
+result is written to the run directory as it finishes, so a duel or a daemon that is killed and
+started again resumes where it stopped, running no unit twice. A duel with more than
+`max_void_fraction` of its units void, or with a side refused, is void and publishes nothing; the
+first entrant of an empty track is crowned by genesis. `--runtime local --local REPO=DIR` serves a
+directory's policy as a subprocess on the host, with no sandbox at all: for development with code
+you trust, never for a competitor's.
 
 `store init` writes the store's ed25519 signing key to `keys/orchestrator.ed25519` (mode 0600)
 unless `--key` says otherwise. It is the only thing that can publish as this store, so keep it out

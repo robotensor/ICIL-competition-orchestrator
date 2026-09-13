@@ -11,9 +11,9 @@ runnable policy code and weights, run in a sandboxed container.
 
 - The orchestration core is ported from `robotensor/ICIL-LiberoGen-bench` branch
   `milestone-two-fields` (`src/icilval/`): `benchmarks/{api,subprocess_runner,units}.py`,
-  `materialize.py`, `model/{wire,host}.py`, `store/`, `queue.py`, `daemon.py`, `live.py`,
-  `duel/`, `ids.py`, `canon.py`, `rng.py`, `spec.py`. Read the original before porting a module,
-  and cut what exists only because submissions were weights: `arch.py`,
+  `materialize.py` (now `duel/materialize.py`), `model/{wire,host}.py`, `store/`, `queue.py`,
+  `daemon.py`, `live.py`, `duel/`, `ids.py`, `canon.py`, `rng.py`, `spec.py`. Read the original
+  before porting a module, and cut what exists only because submissions were weights: `arch.py`,
   `model/{architectures,fingerprint,convert,bpp_robotwin}`, `pools/`, `simulators/`, `demoview.py`.
 - `robofluent/ICIL-competition-dashboard` renders this repository's `spec.json`,
   `store-schema.json`, store layout and live frames. A change to any of them is a dashboard change
@@ -45,6 +45,13 @@ runnable policy code and weights, run in a sandboxed container.
   Containers carry `icil.orchestrator=policy` and their owner's pid, start time and pid namespace;
   `PolicyContainer.start` reaps those whose owner has ended, and `submission prune` removes the
   `icil-submission` images no container uses.
+- The duel is `src/icil_orchestrator/duel/` (runtime, materialize, side, score, orchestrate) and
+  `daemon.py`, run by `icil-orchestrator duel` and `daemon`. A duel reaches a policy only through
+  `duel.runtime.PolicyRuntime`; `duel/docker_runtime.py` is the one module of it that imports
+  `submissions`, and `duel/local_runtime.py` serves a local directory with no sandbox (development
+  and tests only). The duel tests use `duel_spec` (a short `act_timeout_s`), `FakePolicyRuntime`
+  and `RecordingReporter` from `tests/duel_helpers.py`, and the example policies; the container
+  test (`tests/test_duel_container.py`) runs a smoke duel through Docker.
 
 ## Rules
 
@@ -69,7 +76,10 @@ runnable policy code and weights, run in a sandboxed container.
 - Everything published is deterministic from `spec.json`, the duel id and the two submission refs:
   unit lists, seeds, ids. No clocks and no global RNG in anything that is published.
 - A unit that fails for a harness reason is void, not a loss; `max_void_fraction` decides whether
-  the duel stands.
+  the duel stands. A unit void on either side is void for both, and a void duel publishes nothing.
+- Everything a duel does is resumable from its run directory, and nothing in it runs twice: a
+  prompt, a side's finished unit and the published record are each looked for before they are
+  made.
 - The index is the store's truth: a record's seq comes from the index's last signed line, and the
   record signs its event's bytes (`event_sha256`), so everything published hangs off one signature.
   The signing key lives outside the store and outside the checkout (`/keys/` is git-ignored), and

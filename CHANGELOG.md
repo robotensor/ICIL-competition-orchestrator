@@ -90,4 +90,31 @@
   writes can run from. `tests/test_submission_jit.py` serves a policy that compiles C on its
   first act and, under `slow`, one whose act runs `torch.compile` on the CPU, and walks every
   mount inside to check where the sandbox user can write and run code.
+- (feat): a duel runs from queue entry to published record, both sides on the same
+  demonstrations (`icil_orchestrator.duel`, `icil_orchestrator.daemon`). Phases `fetching ->
+  checking -> materializing -> evaluating(challenger) -> evaluating(king) -> publishing -> done |
+  failed`, each a live frame; `materializing` is a new live phase (schema `LiveFrame.phase`), which
+  the dashboard does not accept yet. Every unit's prompt is produced once through the plugin's
+  `materialize_command` before either side runs, verified with `verify_prompt`, and published as
+  `prompt_sha256` (the sha256 of the file's bytes); a unit whose prompt fails is void for both
+  sides. A submission's policy is reached only through `duel.runtime.PolicyRuntime` - `resolve`,
+  `fetch`, `prepare` (manifest, image, a `hello`) and `serve`, a fresh policy per unit -
+  implemented over the sandbox by `duel.docker_runtime` and, with no sandbox, for development, by
+  `duel.local_runtime`. Scoring: per-skill success rates over non-void units, their mean, the
+  crown to the challenger iff it beats the king's mean by `score_margin` points; a unit void on
+  either side is void for both, and a duel with more than `max_void_fraction` void is void and
+  publishes nothing. A policy runtime that dies voids its unit and the rest of its side; a refused
+  challenger or king voids the duel and the king keeps the crown. An empty track crowns its first
+  challenger (or its declared baseline) by genesis, with its own scores. A duel resumes from its
+  run directory - prompts, each side's `results.jsonl`, the index checked for its own event - so a
+  killed daemon restarted runs every unit once per side and publishes one record. The event also
+  carries both sides' commits and image digests, the benchmark's `info()` and pin, and the
+  scoring.
+- (feat): `icil-orchestrator duel --track T --challenger repo@revision [--size S] --store DIR
+  --run-dir DIR` and `icil-orchestrator daemon --store DIR --run-dir DIR [--queue DIR] [--once]`,
+  with `--runtime docker|local`, `--local REPO=DIR`, `--live-url` and `--live-token-env`, and
+  `--mirror`.
+- (feat): `Queue.take` takes an entry off the queue and marks its duel in progress in one write.
+- (test): the fake benchmark writes a prompt of named arrays and drives the served policy through
+  `RemotePolicy`, so the replay example wins and the zero example loses.
 - (chore): scaffold the orchestrator: package, pure test suite, CI and the repository's rules.
