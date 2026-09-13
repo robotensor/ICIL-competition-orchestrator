@@ -172,7 +172,7 @@ def _check_skill(
         unit=sample,
         prompt=f"{prompt_dir}/{PROMPT_FILE}",
         out_dir=f"{unit_dir}/challenger",
-        policy_address=f"unix://{CHECK_ROOT}/policy.sock",
+        policy_address=f"{CHECK_ROOT}/policy.sock",
         authkey_env=CHECK_AUTHKEY_ENV,
     )
 

@@ -43,7 +43,7 @@ def run(fake, units, tmp_path, timeout_s=30.0, env=None):
         fake,
         units,
         work_root=tmp_path / "units",
-        policy_address="unix:///tmp/icil-test-policy.sock",
+        policy_address="/tmp/icil-test-policy.sock",
         authkey_env=AUTHKEY_ENV,
         timeout_s=timeout_s,
         env={"PATH": "/usr/bin:/bin", AUTHKEY_ENV: AUTHKEY} if env is None else env,

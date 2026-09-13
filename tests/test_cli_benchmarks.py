@@ -144,6 +144,36 @@ def test_check_catches_a_benchmark_that_would_fail_a_duel(
     assert any(p.startswith(problem) for p in report.problems), report.problems
 
 
+def test_check_hands_run_command_an_address_in_the_wire_form(
+    install_distribution, spec_doc, write_spec
+):
+    """The policy wire listens on a Unix socket path or host:port (icil_policy.wire), so a plugin
+    that follows the contract and checks the address must pass `check`, not be failed by a URL."""
+    install_distribution(
+        "icil-variant-benchmark",
+        entry_points={"fake": "icil_variant_strict"},
+        modules={
+            "icil_variant_strict": (
+                "import importlib.util, os\n"
+                "s = importlib.util.spec_from_file_location("
+                f"'icil_variant_base', {str(FAKE_SITE / 'icil_fake_benchmark' / '__init__.py')!r})\n"
+                "m = importlib.util.module_from_spec(s); s.loader.exec_module(m)\n"
+                "class Strict(m.FakeBenchmark):\n"
+                "    def run_command(self, *, policy_address, **kw):\n"
+                "        host, _, port = policy_address.rpartition(':')\n"
+                "        if not (os.path.isabs(policy_address) or (host and port.isdigit())):\n"
+                "            raise ValueError(f'{policy_address!r} is not a socket path or host:port')\n"
+                "        return super().run_command(policy_address=policy_address, **kw)\n"
+                "BENCHMARK = Strict()\n"
+            )
+        },
+    )
+    spec = write_spec(
+        fake_spec_doc(spec_doc, {**FAKE_PIN, "distribution": "icil-variant-benchmark"})
+    )
+    assert check_benchmark(spec, "fake").problems == []
+
+
 def test_check_on_the_shipped_spec_says_robotwin_is_not_installed(spec, capsys):
     assert main(["benchmarks", "check", "robotwin"]) == 1
     out = capsys.readouterr().out

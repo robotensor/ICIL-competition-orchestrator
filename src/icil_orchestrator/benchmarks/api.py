@@ -138,6 +138,7 @@ class Benchmark(Protocol):
         """The argv that runs one unit from the prompt at `prompt` against a policy already served
         at `policy_address`, writing `RESULT_FILE` and `EVALUATION_CLIP` into `out_dir`.
 
+        `policy_address` is in the policy wire's form: a Unix socket path, or `host:port`.
         `authkey_env` is the *name* of the environment variable holding the policy's authkey (hex).
         The key itself never appears on a command line, where any process on the host can read it.
         """
