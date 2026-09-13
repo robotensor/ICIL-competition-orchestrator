@@ -136,6 +136,26 @@ def test_a_policy_that_cannot_be_built_raises_on_hello(probe_repo, serve):
     policy.close()
 
 
+def test_a_with_block_that_caught_a_failed_hello_is_left_without_an_error(probe_repo, serve):
+    server = serve(probe_repo(policy="broken:Policy"))
+    with remote(server) as policy:
+        with pytest.raises(PolicyUnavailable, match="broken on purpose"):
+            policy.hello()
+        # the server has ended the session: nothing more is sent to it
+        with pytest.raises(PolicyUnavailable, match="closed after an earlier failure"):
+            policy.reset(0)
+    assert server.wait() == 1
+
+
+def test_a_policy_whose_close_fails_is_closed_without_an_error(probe_repo, serve):
+    server = serve(probe_repo(kwargs={"broken_close": True}))
+    with remote(server) as policy:
+        policy.hello()
+    assert server.wait() == 0
+    assert "the probe fails to close" in server.log()
+    policy.close()  # and again: still nothing
+
+
 def test_an_array_that_cannot_be_sent_is_the_callers_error_and_sends_nothing(probe_repo, serve):
     server = serve(probe_repo())
     with remote(server) as policy:

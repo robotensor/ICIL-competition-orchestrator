@@ -20,8 +20,11 @@ one `timeout_s`, and each call gets its own, covering both sending the request a
 whole reply. When one runs out the socket is shut down, which unblocks whatever was waiting and
 tells the server its client has gone; the server exits.
 
-After an error reply the connection stays usable - the server keeps serving. After any other
-failure it is closed, and every later call raises `PolicyUnavailable` at once. A value that cannot
+After an error reply to `reset`, `prompt` or `act` the connection stays usable - the server keeps
+serving. After an error reply to `hello` the policy could not be built and the server has ended
+the session, so, as after any other failure, the connection is closed and every later call raises
+`PolicyUnavailable` at once. `close` is the exception: it is best effort and raises nothing, so
+leaving a `with` block never replaces the outcome the benchmark already has. A value that cannot
 be sent at all, such as an object array, is the caller's mistake: `WireError`, before anything is
 sent, and the connection is untouched. One `RemotePolicy` serves one thread at a time.
 """
@@ -88,7 +91,11 @@ class RemotePolicy:
 
     def hello(self) -> dict[str, Any]:
         """Greet the server, which builds the policy now; its `protocol`, `action_type`, `policy`."""
-        fields, _ = self._call("hello", {"client": f"icil-policy {__version__}"})
+        try:
+            fields, _ = self._call("hello", {"client": f"icil-policy {__version__}"})
+        except PolicyUnavailable:
+            self._abandon()  # a server that cannot build its policy has ended the session
+            raise
         protocol, action_type = fields.get("protocol"), fields.get("action_type")
         if type(protocol) is not int or protocol != wire.PROTOCOL_VERSION:
             self._abandon()
@@ -123,12 +130,16 @@ class RemotePolicy:
         return arrays
 
     def close(self) -> None:
-        """Say `close`, then close the connection whatever the answer. Idempotent."""
+        """Say `close`, then close the connection whatever the answer. Idempotent; raises nothing.
+
+        By the time a benchmark closes, a policy that fails to close changes no outcome.
+        """
         if self._closed:
             return
         try:
             if self._conn is not None:
-                self._call("close")
+                with contextlib.suppress(PolicyUnavailable):
+                    self._call("close")
         finally:
             self._closed = True
             self._abandon()
@@ -137,11 +148,7 @@ class RemotePolicy:
         return self
 
     def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
-        if exc_type is None:
-            self.close()
-        else:
-            with contextlib.suppress(PolicyUnavailable):
-                self.close()
+        self.close()
 
     # -- the connection ---------------------------------------------------------------------
 
