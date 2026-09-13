@@ -100,6 +100,21 @@ def test_check_refuses_another_api_version_with_the_reason(
             "    def info(self):\n        return {'id': 'fake', 'api_version': 1, 'x': __import__('mujoco')}\n",
             "calling its pure methods imported mujoco",
         ),
+        # A stub that returns nothing is as broken as one that raises.
+        ("    def info(self):\n        pass\n", "info: returned NoneType, not a mapping"),
+        ("    def catalogue(self):\n        pass\n", "catalogue: returned NoneType, not a mapping"),
+        (
+            "    def derive_units(self, **kw):\n        pass\n",
+            "franka_pick_and_place: derive_units: returned NoneType, not a list",
+        ),
+        (
+            "    def materialize_command(self, **kw):\n        pass\n",
+            "franka_pick_and_place: materialize_command: expected a non-empty list of strings, got None",
+        ),
+        (
+            "    def run_command(self, **kw):\n        pass\n",
+            "franka_pick_and_place: run_command: expected a non-empty list of strings, got None",
+        ),
     ],
 )
 def test_check_catches_a_benchmark_that_would_fail_a_duel(

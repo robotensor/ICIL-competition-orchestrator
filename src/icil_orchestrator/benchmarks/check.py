@@ -58,7 +58,9 @@ def check_benchmark(spec: Any, name: str) -> CheckReport:
     before = set(sys.modules)
     _check_info(report, benchmark)
     catalogue = _call(report, "catalogue", benchmark.catalogue)
-    if catalogue is not None and not isinstance(catalogue, Mapping):
+    if catalogue is RAISED:
+        catalogue = None
+    elif not isinstance(catalogue, Mapping):
         report.problems.append(f"catalogue: returned {type(catalogue).__name__}, not a mapping")
         catalogue = None
 
@@ -74,17 +76,22 @@ def check_benchmark(spec: Any, name: str) -> CheckReport:
     return report
 
 
+#: What `_call` returns for a method that raised (and was reported), so that a method that
+#: *returned* None is still looked at - and refused - by its caller.
+RAISED: Any = object()
+
+
 def _call(report: CheckReport, what: str, fn: Any, **kwargs: Any) -> Any:
     try:
         return fn(**kwargs)
     except Exception as exc:  # noqa: BLE001 - reported, so the operator sees every problem
         report.problems.append(f"{what}: raised {type(exc).__name__}: {exc}")
-        return None
+        return RAISED
 
 
 def _check_info(report: CheckReport, benchmark: Any) -> None:
     info = _call(report, "info", benchmark.info)
-    if info is None:
+    if info is RAISED:
         return
     if not isinstance(info, Mapping):
         report.problems.append(f"info: returned {type(info).__name__}, not a mapping")
@@ -125,11 +132,16 @@ def _check_skill(
         category=category,
     )
     units = _call(report, f"{skill}: derive_units", benchmark.derive_units, **kwargs)
-    if units is None:
+    if units is RAISED:
+        return
+    if not isinstance(units, (list, tuple)):
+        report.problems.append(
+            f"{skill}: derive_units: returned {type(units).__name__}, not a list"
+        )
         return
     again = _call(report, f"{skill}: derive_units", benchmark.derive_units, **kwargs)
     units = list(units)
-    if again is not None and list(again) != units:
+    if again is not RAISED and (not isinstance(again, (list, tuple)) or list(again) != units):
         report.problems.append(f"{skill}: derive_units is not a pure function of its arguments")
     if len(units) != count:
         report.problems.append(f"{skill}: derive_units returned {len(units)} units, not {count}")
@@ -167,7 +179,7 @@ def _check_skill(
 
 def _check_argv(report: CheckReport, what: str, fn: Any, **kwargs: Any) -> None:
     argv = _call(report, what, fn, **kwargs)
-    if argv is None:
+    if argv is RAISED:
         return
-    if isinstance(argv, (str, bytes)) or not all(isinstance(a, str) for a in argv) or not argv:
+    if not isinstance(argv, (list, tuple)) or not argv or not all(isinstance(a, str) for a in argv):
         report.problems.append(f"{what}: expected a non-empty list of strings, got {argv!r}")
