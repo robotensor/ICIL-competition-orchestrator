@@ -55,3 +55,34 @@ def test_a_missing_binary_is_the_harness_problem(tmp_path):
     with pytest.raises(DockerError, match="not installed or not on PATH"):
         Docker(binary=str(tmp_path / "no-such-docker")).image_id("x")
     assert not os.path.exists(tmp_path / "no-such-docker")
+
+
+def test_the_docker_client_gets_the_allow_list_and_the_authkey_only_when_it_runs(
+    tmp_path, monkeypatch
+):
+    """Nothing the orchestrator holds reaches a docker command, and so a container or a build,
+    unless it is passed on purpose: no Hub token, no live token, and the policy's authkey only for
+    the `run` it was given to."""
+    monkeypatch.setenv("HF_TOKEN", "hf_publish_secret")
+    monkeypatch.setenv("ICIL_LIVE_TOKEN", "live_secret")
+    monkeypatch.setenv("DOCKER_HOST", "unix:///run/docker.sock")
+    monkeypatch.setenv("LC_ALL", "C.UTF-8")
+    seen = tmp_path / "env"
+    docker = Docker(binary=fake_binary(tmp_path / "docker", f'env > "{seen}.$1"\necho id\n'))
+    assert "HF_TOKEN" not in docker.environ and "ICIL_LIVE_TOKEN" not in docker.environ
+    assert docker.environ["DOCKER_HOST"] == "unix:///run/docker.sock"
+
+    docker.run(["--name", "icil-policy-env", "img"], env={"ICIL_POLICY_AUTHKEY": "ab" * 16})
+    docker.image_id("img")
+    ran = dict(line.split("=", 1) for line in (tmp_path / "env.run").read_text().splitlines())
+    inspected = (tmp_path / "env.image").read_text()
+    for secret in ("hf_publish_secret", "live_secret"):
+        assert secret not in ran.values() and secret not in inspected
+    assert ran["ICIL_POLICY_AUTHKEY"] == "ab" * 16 and ran["DOCKER_HOST"] and ran["LC_ALL"]
+    assert "ICIL_POLICY_AUTHKEY" not in inspected, "the authkey is for the run it was given to"
+
+    # What is given explicitly is filtered the same way.
+    given = Docker(
+        environ={"HF_TOKEN": "x", "ICIL_LIVE_TOKEN": "y", "DOCKER_HOST": "h", "PATH": "p"}
+    )
+    assert given.environ == {"DOCKER_HOST": "h", "PATH": "p"}

@@ -220,9 +220,12 @@ def test_neither_the_store_nor_another_socket_directory_is_visible(
     (other / "policy.sock").write_text("the king's socket")
     monkeypatch.setenv("HF_TOKEN", "hf_secret_that_must_stay_on_the_host")
     monkeypatch.setenv("ICIL_LIVE_TOKEN", "live_secret_that_must_stay_on_the_host")
+    # A client made now, with the tokens in its process's environment: the module's `docker`
+    # took its environment before they were set and would show nothing.
+    holding = Docker()
     _, _, image = replay
     with PolicyContainer(
-        spec, docker, image.tag, name="icil-policy-test-blind", socket_dir=tmp_path / "s", gpus=0
+        spec, holding, image.tag, name="icil-policy-test-blind", socket_dir=tmp_path / "s", gpus=0
     ) as container:
         container.hello(spec.budgets["policy_start_seconds"])
         for path in (store, other, tmp_path):
