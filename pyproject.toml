@@ -30,6 +30,8 @@ ignore = ["E501"]
 testpaths = ["tests", "packages/icil-policy/tests"]
 # Two test trees share module names such as test_package.py.
 addopts = "--import-mode=importlib"
+# The icil-policy tests share helpers from a module of their own.
+pythonpath = ["packages/icil-policy/tests"]
 markers = [
   "sim: needs a plugged benchmark's simulator (assets, GPU)",
   "container: needs Docker and builds or runs a policy container",
