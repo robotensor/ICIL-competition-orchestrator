@@ -151,6 +151,26 @@ class Queue:
             entry = self.state.entries.pop(0) if self.state.entries else None
         return entry
 
+    def take(
+        self, key: str, *, block: int, event_id: str, now: str | None = None
+    ) -> QueueEntry | None:
+        """Take the entry `key` off the queue and mark its duel in progress, in one write.
+
+        Popping and marking separately would leave a window in which a killed orchestrator had
+        dropped the entry without a trace of the duel it was taken for; with both in one write, a
+        restart finds either the entry still queued or its duel in progress, and resumes it. The
+        block counter moves to `block`, never back. None when the entry has gone meanwhile.
+        """
+        with self._locked():
+            entry = next((e for e in self.state.entries if e.key == key), None)
+            if entry is not None:
+                self.state.entries = [e for e in self.state.entries if e.key != key]
+                self.state.block = max(self.state.block, int(block))
+                self.state.in_progress = InProgress(
+                    event_id=event_id, challenger=entry.ref.as_dict(), started_at=now or now_iso()
+                )
+        return entry
+
     def start(self, event_id: str, challenger: SubmissionRef, *, now: str | None = None) -> None:
         with self._locked():
             self.state.in_progress = InProgress(

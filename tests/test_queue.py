@@ -100,3 +100,19 @@ def test_one_queue_per_track(tmp_path):
     (tmp_path / "file").write_text("{}")
     with pytest.raises(ValueError, match="is a file"):
         Queues(tmp_path / "file", ["franka_1arm"])
+
+
+def test_take_pops_an_entry_and_marks_its_duel_in_progress_in_one_write(tmp_path):
+    q = Queue(tmp_path / "q.json")
+    first, _ = q.add("a/x", "1" * 40, duel_size="light")
+    second, _ = q.add("b/y", "2" * 40)
+    q.set_block(4)
+    taken = q.take(first.key, block=6, event_id="e" * 64, now="2026-09-13T10:00:00Z")
+    assert taken == first
+    again = Queue(tmp_path / "q.json").state
+    assert [e.key for e in again.entries] == [second.key] and again.block == 6
+    assert again.in_progress.event_id == "e" * 64
+    assert again.in_progress.challenger == first.ref.as_dict()
+    assert q.take(first.key, block=7, event_id="f" * 64) is None, "an entry was taken twice"
+    assert q.take(second.key, block=5, event_id="f" * 64).key == second.key
+    assert q.block == 6, "the block counter went back"
