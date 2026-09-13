@@ -7,7 +7,7 @@ import pytest
 from icil_orchestrator.ids import SubmissionRef
 from icil_orchestrator.queue import Queue, Queues
 from icil_orchestrator.spec import load_schema
-from icil_orchestrator.store.verify import Report, _Schema
+from icil_orchestrator.store.verify import Report, SchemaCheck
 
 
 def test_queue_replace_moves_to_back_and_persists(tmp_path):
@@ -35,7 +35,7 @@ def test_the_snapshot_is_the_schema_4_shape_the_dashboard_reads(tmp_path):
     king = SubmissionRef.make("org/king", "5" * 40)
     snap = q.snapshot("franka_1arm", king, 4, now="2026-09-13T10:06:00Z")
     report = Report()
-    _Schema(load_schema()).check("QueueSnapshot", snap, "queue.json", report)
+    SchemaCheck(load_schema()).check("QueueSnapshot", snap, "queue.json", report)
     assert report.errors == []
     assert snap["entries"][0] == {
         "position": 1,

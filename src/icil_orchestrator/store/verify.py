@@ -30,7 +30,7 @@ class Report:
         return not self.errors
 
 
-class _Schema:
+class SchemaCheck:
     """Validates a document against one `$defs` entry of `store-schema.json`."""
 
     def __init__(self, schema: dict[str, Any]):
@@ -53,7 +53,7 @@ class _Schema:
 def verify_store(root: str | Path, spec: Spec, schema: dict[str, Any] | None = None) -> Report:
     report = Report()
     store = Store(root, spec)
-    validator = _Schema(schema if schema is not None else load_schema())
+    validator = SchemaCheck(schema if schema is not None else load_schema())
 
     manifest = store.manifest()
     if manifest is None:

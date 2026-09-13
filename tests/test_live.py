@@ -20,7 +20,7 @@ import pytest
 
 from icil_orchestrator.live import PHASES, LiveReporter, build_frame
 from icil_orchestrator.spec import load_schema
-from icil_orchestrator.store.verify import Report, _Schema
+from icil_orchestrator.store.verify import Report, SchemaCheck
 
 # ---------------------------------------------------------------- the dashboard's rules
 
@@ -184,7 +184,7 @@ def test_the_frame_carries_progress_per_side_and_skill(spec):
     # An outcome is only shown once both sides have run the unit.
     assert [u["outcome"] for u in built["units"]] == ["tie", None, None]
     report = Report()
-    _Schema(load_schema()).check("LiveFrame", built, "frame", report)
+    SchemaCheck(load_schema()).check("LiveFrame", built, "frame", report)
     assert report.errors == []
 
 
