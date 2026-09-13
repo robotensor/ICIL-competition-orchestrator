@@ -8,12 +8,14 @@ and the error surfaces here rather than as a 422 nobody reads or a progress bar 
 
 from __future__ import annotations
 
+import http.client
 import json
 import logging
 import re
+import socket
+import threading
 import time
-import urllib.error
-import urllib.request
+import urllib.parse
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -162,9 +164,19 @@ def _check_unit_like(
         raise ValueError(f"{what}: instance must be a number, not {unit.get('instance')!r}")
 
 
+#: Of the dashboard's answer, which is a status and nothing the orchestrator acts on.
+MAX_RESPONSE_BYTES = 4096
+
+
 class LiveReporter:
     """POSTs frames to the dashboard. Failures are logged and otherwise ignored: a frame is a
-    window onto a duel, and a duel must never stop because the window is shut."""
+    window onto a duel, and a duel must never stop because the window is shut.
+
+    `timeout_s` bounds the whole request, not each socket operation: a dashboard that answers a
+    byte at a time would otherwise hold a duel for as long as it liked. A redirect is a failed
+    delivery and is never followed - the bearer token opens the ingest, and must not travel to
+    whatever host an answer names.
+    """
 
     def __init__(self, spec: Spec, url: str | None, token: str | None, *, timeout_s: float = 5.0):
         self.spec = spec
@@ -188,25 +200,71 @@ class LiveReporter:
             data = json.dumps({**frame, "units": []}).encode("utf-8")
         return data
 
+    def _deliver(self, body: bytes) -> None:
+        """POST `body` within `timeout_s`, or raise. The request runs on a worker thread whose
+        socket is shut from under it when the deadline passes, so no call can outlast the frame."""
+        parts = urllib.parse.urlsplit(str(self.url))
+        connect = (
+            http.client.HTTPSConnection if parts.scheme == "https" else http.client.HTTPConnection
+        )
+        conn = connect(parts.netloc, timeout=self.timeout_s)
+        path = parts.path or "/"
+        if parts.query:
+            path = f"{path}?{parts.query}"
+        outcome: dict[str, Any] = {}
+
+        def send() -> None:
+            try:
+                conn.request(
+                    "POST",
+                    path,
+                    body=body,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {self.token}",
+                    },
+                )
+                response = conn.getresponse()
+                response.read(MAX_RESPONSE_BYTES)
+                outcome["status"] = response.status
+            except Exception as exc:  # noqa: BLE001 - re-raised on the calling thread
+                outcome["error"] = exc
+
+        worker = threading.Thread(target=send, daemon=True)
+        worker.start()
+        worker.join(self.timeout_s)
+        try:
+            if worker.is_alive():
+                sock = conn.sock
+                if sock is not None:
+                    try:
+                        sock.shutdown(socket.SHUT_RDWR)
+                    except OSError:
+                        pass
+                worker.join(1.0)
+                raise TimeoutError(f"no answer within {self.timeout_s:g}s")
+            if "error" in outcome:
+                raise outcome["error"]
+            status = int(outcome.get("status", 0))
+            if 300 <= status < 400:
+                raise http.client.HTTPException(f"{status}: redirects are not followed")
+            if not 200 <= status < 300:
+                raise http.client.HTTPException(f"the dashboard answered {status}")
+        finally:
+            conn.close()
+
     def post(self, frame: dict[str, Any], *, force: bool = False) -> bool:
         if not self.enabled:
             return False
         now = time.monotonic()
         if not force and now - self._last_sent < self.min_interval_s:
             return False
-        req = urllib.request.Request(
-            self.url,  # type: ignore[arg-type]
-            data=self.encode(frame),
-            method="POST",
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {self.token}"},
-        )
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout_s) as resp:  # noqa: S310 - operator-configured url
-                resp.read()
-            self._last_sent = now
-            self.sent += 1
-            return True
-        except (urllib.error.URLError, OSError, ValueError) as exc:
+            self._deliver(self.encode(frame))
+        except Exception as exc:  # noqa: BLE001 - a shut window never stops a duel
             self.failed += 1
             log.warning("live frame not delivered: %s", exc)
             return False
+        self._last_sent = now
+        self.sent += 1
+        return True

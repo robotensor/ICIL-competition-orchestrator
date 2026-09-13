@@ -14,6 +14,8 @@ import itertools
 import json
 import re
 import threading
+import time
+from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
@@ -308,6 +310,80 @@ class _Sink(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "2")
         self.end_headers()
         self.wfile.write(b"{}")
+
+    def do_GET(self):
+        _Sink.frames.append((self.path, self.headers.get("Authorization"), {}))
+        self.send_response(200)
+        self.send_header("Content-Length", "2")
+        self.end_headers()
+        self.wfile.write(b"{}")
+
+
+class _Slow(BaseHTTPRequestHandler):
+    """Answers a byte at a time, for longer than any duel would wait."""
+
+    def log_message(self, *a):
+        return
+
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        self.send_response(200)
+        self.send_header("Content-Length", "20")
+        self.end_headers()
+        for _ in range(20):
+            try:
+                self.wfile.write(b"x")
+                self.wfile.flush()
+            except OSError:
+                return
+            time.sleep(0.5)
+
+
+class _Redirect(BaseHTTPRequestHandler):
+    elsewhere = ""
+
+    def log_message(self, *a):
+        return
+
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        self.send_response(302)
+        self.send_header("Location", _Redirect.elsewhere)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+
+@contextmanager
+def serving(handler):
+    httpd = HTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{httpd.server_address[1]}"
+    finally:
+        httpd.shutdown()
+
+
+def test_a_slow_dashboard_does_not_hold_the_duel(spec):
+    """The timeout is the whole request's, not each socket read's: a window that never finishes
+    answering must not stop a duel."""
+    with serving(_Slow) as url:
+        rep = LiveReporter(spec, url, "tok", timeout_s=1.0)
+        started = time.monotonic()
+        assert not rep.post(frame(spec), force=True)
+        assert time.monotonic() - started < 3, "the reporter waited on a slow answer"
+        assert rep.failed == 1
+
+
+def test_the_bearer_token_never_follows_a_redirect(spec):
+    """urllib would replay the POST as a GET and carry the Authorization header to whatever host
+    the answer names; the live token opens the dashboard's ingest."""
+    _Sink.frames = []
+    with serving(_Sink) as elsewhere, serving(_Redirect) as url:
+        _Redirect.elsewhere = f"{elsewhere}/steal"
+        rep = LiveReporter(spec, url, "SECRET-TOKEN", timeout_s=2.0)
+        assert not rep.post(frame(spec), force=True) and rep.failed == 1
+    assert _Sink.frames == [], "the token was sent to another host"
 
 
 def test_the_reporter_posts_with_a_bearer_token_and_never_raises(spec):
