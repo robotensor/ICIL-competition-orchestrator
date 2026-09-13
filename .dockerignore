@@ -1,0 +1,7 @@
+# The repository root is the build context of docker/policy-base/Dockerfile, which copies
+# packages/icil-policy and nothing else; the rest of the checkout (the venv above all) stays out
+# of the context.
+*
+!packages/icil-policy
+packages/icil-policy/**/__pycache__
+packages/icil-policy/**/*.egg-info

@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import hashlib
+import os
+import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import httpx
 from huggingface_hub.errors import RepositoryNotFoundError, RevisionNotFoundError
+
+from icil_orchestrator.submissions.docker import BuildFailed, ContainerState
 
 SHA_A = "a" * 40
 SHA_B = "b" * 40
@@ -84,3 +90,99 @@ def write_policy_repo(root: Path, policy: str = "pkg.policy:Policy", **manifest:
         lines.append(f"{key}: {value}")
     (root / "icil.yaml").write_text("\n".join(lines) + "\n")
     return root
+
+
+# -- Docker, stood in for ----------------------------------------------------------------------
+
+FAKE_BASE_DIGEST = "sha256:" + "b" * 64
+
+
+@dataclass
+class FakeDocker:
+    """`Docker` without Docker: builds are recorded and given an id, and `run` starts
+    `python -m icil_policy.serve` on the host, with the image's checkout in place of /submission
+    and the mounted directory in place of /run/icil, so the start-and-hello path runs for real."""
+
+    images: dict[str, str] = field(default_factory=dict)
+    contexts: dict[str, Path] = field(default_factory=dict)
+    builds: list[tuple[Path, str, str, dict]] = field(default_factory=list)
+    tags: list[tuple[str, str]] = field(default_factory=list)
+    runs: list[list[str]] = field(default_factory=list)
+    run_envs: list[dict] = field(default_factory=list)
+    removed: list[str] = field(default_factory=list)
+    processes: dict[str, subprocess.Popen] = field(default_factory=dict)
+    #: When set, every build fails with this as its log.
+    build_failure: str | None = None
+
+    # -- images
+    def image_id(self, ref):
+        return self.images.get(ref)
+
+    def find_image(self, image_id):
+        return next((ref for ref, found in self.images.items() if found == image_id), None)
+
+    def build(self, context, dockerfile, *, tag, build_args=None, timeout_s=None):
+        self.builds.append((Path(context), dockerfile, tag, dict(build_args or {})))
+        if self.build_failure is not None:
+            raise BuildFailed(tag, self.build_failure)
+        image_id = "sha256:" + hashlib.sha256(f"{context}\n{dockerfile}".encode()).hexdigest()
+        self.images[tag] = image_id
+        self.contexts[image_id] = Path(context)
+        return image_id
+
+    def tag(self, image, ref):
+        self.images[ref] = image if image.startswith("sha256:") else self.images[image]
+        self.tags.append((image, ref))
+
+    def remove_image(self, ref):
+        self.images.pop(ref, None)
+
+    # -- containers
+    def run(self, args, *, env=None):
+        args = list(args)
+        self.runs.append(args)
+        self.run_envs.append(dict(env or {}))
+        name = args[args.index("--name") + 1]
+        mount = next(a for a in args if a.startswith("type=bind,src="))
+        shared = mount.removeprefix("type=bind,src=").split(",")[0]
+        image = args[args.index("--env") + 2]
+        checkout = self.contexts[self.images[image]]
+        argv = [
+            a.replace("/submission", str(checkout)).replace("/run/icil", shared)
+            for a in args[args.index(image) + 1 :]
+        ]
+        argv[0] = sys.executable
+        environ = {"PATH": os.environ.get("PATH", ""), **(env or {})}
+        self.processes[name] = subprocess.Popen(
+            argv,
+            env=environ,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            cwd=shared,
+        )
+        return "0123456789ab"
+
+    def state(self, name):
+        process = self.processes.get(name)
+        if process is None:
+            return ContainerState(False, None, "no such container")
+        code = process.poll()
+        return ContainerState(code is None, code)
+
+    def logs(self, name, *, tail_lines=40):
+        return ""
+
+    def exec(self, name, argv, *, timeout_s=60):
+        raise NotImplementedError("the fake has no inside to look at")
+
+    def remove(self, name):
+        self.removed.append(name)
+        process = self.processes.pop(name, None)
+        if process is not None:
+            process.kill()
+            process.wait()
+
+    def kill_all(self):
+        for name in list(self.processes):
+            self.remove(name)
