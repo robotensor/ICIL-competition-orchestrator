@@ -1,13 +1,15 @@
 """A fake benchmark, packaged the way a real one is: its own distribution, found by entry point.
 
-The pure half below imports nothing but the standard library. The command half is `command.py`, a
-small script run as a subprocess, which imports `icil_fake_simulator` - a stand-in for SAPIEN - so a
-test can check that loading and calling the plugin never loads the "simulator".
+The pure half below imports the standard library, and numpy inside `verify_prompt` to read a
+prompt. The command half is `command.py`, a small script run as a subprocess, which imports
+`icil_fake_simulator` - a stand-in for SAPIEN - so a test can check that loading and calling the
+plugin never loads the "simulator".
 
 It never imports `icil_orchestrator`, as the ABI requires of every benchmark.
 
-`run_command` reads the unit's `fake_behaviour` (default `succeed`) so a test can make a unit
-fail, crash, hang or write nothing, the ways a real benchmark subprocess goes wrong.
+`run_command` reads the unit's `fake_behaviour` (default `policy`: drive the served policy) so a
+test can make a unit fail, crash, hang or write nothing, the ways a real benchmark subprocess goes
+wrong; `materialize_command` reads its `fake_materialize` (default `succeed`) the same way.
 """
 
 from __future__ import annotations
@@ -82,12 +84,20 @@ class FakeBenchmark:
         return units
 
     def verify_prompt(self, *, path: str, unit: Any) -> dict[str, Any]:
+        import io
+        import zipfile
+
+        import numpy as np
+
         problems = []
         try:
             data = Path(path).read_bytes()
-            doc = json.loads(data)
-        except (OSError, ValueError) as exc:
+            with np.load(io.BytesIO(data), allow_pickle=False) as arrays:
+                doc = json.loads(bytes(arrays["meta"]).decode())
+        except (OSError, ValueError, KeyError, zipfile.BadZipFile) as exc:
             return {"ok": False, "sha256": "", "problems": [f"unreadable prompt: {exc}"]}
+        if not isinstance(doc, dict):
+            return {"ok": False, "sha256": "", "problems": ["the prompt's meta is not an object"]}
         if doc.get("task") != unit["task"]:
             problems.append(f"task {doc.get('task')!r} is not the unit's {unit['task']!r}")
         seed = unit["instance_params"]["scene_seed"]
@@ -116,6 +126,8 @@ class FakeBenchmark:
             str(unit["task"]),
             "--scene-seed",
             str(unit["instance_params"]["scene_seed"]),
+            "--behaviour",
+            str(unit.get("fake_materialize", "succeed")),
         ]
 
     def run_command(
@@ -141,7 +153,9 @@ class FakeBenchmark:
             "--authkey-env",
             authkey_env,
             "--behaviour",
-            str(unit.get("fake_behaviour", "succeed")),
+            str(unit.get("fake_behaviour", "policy")),
+            "--act-timeout-s",
+            str(float(extra.get("act_timeout_s", 30.0))),
         ]
 
 

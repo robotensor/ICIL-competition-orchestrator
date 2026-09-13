@@ -2,11 +2,25 @@
 
 Run as a script, never imported by the plugin. It imports `icil_fake_simulator` first, the way a
 real command half imports SAPIEN, so the "simulator" is loaded here and only here.
+
+`materialize` writes a prompt shaped like RoboTwin's: named arrays (`frames_head_camera`, `qpos`,
+`actions`, ...) and a privileged `meta` array (the task and the scene seed as JSON bytes) that
+never reaches a policy. The actions are a function of the scene seed.
+
+`run` with `--behaviour policy` (what a duel's units get) drives the served policy through
+`icil_policy.client.RemotePolicy`: hello, the demonstration without `meta`, reset, then one `act`
+per demonstrated action. The episode succeeds iff the policy's actions are the demonstration's, so
+the replay example wins and the zero example loses. A policy that fails is a failed episode, not a
+void one: the benchmark cannot tell a broken policy from a dead container, and the orchestrator,
+which can, voids the unit when it was the container.
+
+Every run appends a line to `runs.log` in its directory, so a test can count how often a unit ran.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -18,21 +32,54 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import icil_fake_simulator  # noqa: E402
 
 CLIP = b"\x00\x00\x00\x18ftypmp42" + b"fake-clip" * 8
+#: Frames in a demonstration; there is one action fewer.
+STEPS = 6
+ACTION_DIM = 16
+
+
+def clip(tag: str) -> bytes:
+    """A clip whose bytes say what it shows, so two different rollouts never share a sha."""
+    return CLIP + hashlib.sha256(tag.encode()).hexdigest().encode()
 
 
 def materialize(args: argparse.Namespace) -> int:
+    import numpy as np
+
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    prompt = {"task": args.task, "scene_seed": args.scene_seed, "sim": icil_fake_simulator.NAME}
-    (out / "prompt.npz").write_text(json.dumps(prompt, sort_keys=True))
-    (out / "demonstration.mp4").write_bytes(CLIP)
-    (out / "result.json").write_text(json.dumps({"success": True, "void": False, "steps": 5}))
+    behaviour = args.behaviour
+    if behaviour == "crash":
+        print("the expert lost the GPU", file=sys.stderr)
+        return 3
+    if behaviour == "hang":
+        time.sleep(600)
+        return 0
+    rng = np.random.default_rng(args.scene_seed)
+    seed = args.scene_seed + (1 if behaviour == "wrong" else 0)
+    meta = {"task": args.task, "scene_seed": seed, "sim": icil_fake_simulator.NAME}
+    arrays = {
+        "frames_head_camera": rng.integers(0, 255, (STEPS, 4, 4, 3), dtype=np.uint8),
+        "qpos": rng.standard_normal((STEPS, ACTION_DIM)),
+        "actions": rng.standard_normal((STEPS - 1, ACTION_DIM)),
+        "frequency": np.array(10.0),
+        "meta": np.frombuffer(json.dumps(meta, sort_keys=True).encode(), dtype=np.uint8),
+    }
+    with open(out / "prompt.npz", "wb") as fh:
+        np.savez(fh, **arrays)
+    (out / "demonstration.mp4").write_bytes(clip(f"demo|{args.task}|{args.scene_seed}"))
+    expert = behaviour != "expert_fails"
+    result = {"success": expert, "void": False, "steps": STEPS - 1}
+    if not expert:
+        result["error"] = "the expert never succeeded"
+    (out / "result.json").write_text(json.dumps(result))
     return 0
 
 
 def run(args: argparse.Namespace) -> int:
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+    with open(out / "runs.log", "a") as fh:
+        fh.write(f"{os.getpid()}\n")
     if args.authkey_env not in os.environ:
         print(f"no policy authkey in ${args.authkey_env}", file=sys.stderr)
         return 4
@@ -48,17 +95,60 @@ def run(args: argparse.Namespace) -> int:
     if behaviour == "garbage":
         (out / "result.json").write_text("{not json")
         return 0
-    result = {
-        "success": behaviour == "succeed",
-        "void": False,
-        "steps": 5,
-        "error": None,
-        "progress": 1.0 if behaviour == "succeed" else 0.25,
-        "prompt_sha256": icil_fake_simulator.digest(Path(args.prompt)),
-    }
+    prompt_sha256 = icil_fake_simulator.digest(Path(args.prompt))
+    if behaviour == "policy":
+        result = drive_policy(args)
+    else:
+        result = {
+            "success": behaviour == "succeed",
+            "void": False,
+            "steps": 5,
+            "error": None,
+            "progress": 1.0 if behaviour == "succeed" else 0.25,
+        }
+    result["prompt_sha256"] = prompt_sha256
     (out / "result.json").write_text(json.dumps(result))
-    (out / "evaluation.mp4").write_bytes(CLIP)
+    tag = f"eval|{prompt_sha256}|{result['success']}|{result['steps']}|{result.get('error')}"
+    (out / "evaluation.mp4").write_bytes(clip(tag))
     return 0
+
+
+def drive_policy(args: argparse.Namespace) -> dict:
+    """One episode against the served policy: act once per demonstrated action."""
+    import numpy as np
+
+    from icil_policy.client import PolicyUnavailable, RemotePolicy
+
+    with np.load(args.prompt) as data:
+        arrays = {name: data[name] for name in data.files}
+    meta = json.loads(bytes(arrays.pop("meta")).decode())  # privileged: stays on this side
+    demonstrated = arrays["actions"]
+    taken: list = []
+    error = None
+    try:
+        key = bytes.fromhex(os.environ[args.authkey_env])
+        with RemotePolicy(args.policy_address, key, timeout_s=args.act_timeout_s) as policy:
+            policy.hello()
+            policy.set_demonstration(arrays, {"frequency": 10.0, "cameras": ["head_camera"]})
+            policy.reset(int(meta["scene_seed"]))
+            for t in range(len(demonstrated)):
+                action = policy.act({"qpos": arrays["qpos"][t]})["action"]
+                taken.append(np.atleast_2d(np.asarray(action, dtype=np.float64))[0])
+    except PolicyUnavailable as exc:
+        error = f"policy: {exc}"
+        print(error, file=sys.stderr)
+    matched = sum(
+        1
+        for t, action in enumerate(taken)
+        if action.shape == demonstrated[t].shape and np.allclose(action, demonstrated[t])
+    )
+    return {
+        "success": error is None and matched == len(demonstrated),
+        "void": False,
+        "steps": len(taken),
+        "error": error,
+        "progress": matched / len(demonstrated),
+    }
 
 
 def main() -> int:
@@ -68,12 +158,14 @@ def main() -> int:
     m.add_argument("--out", required=True)
     m.add_argument("--task", required=True)
     m.add_argument("--scene-seed", type=int, required=True)
+    m.add_argument("--behaviour", default="succeed")
     r = sub.add_parser("run")
     r.add_argument("--prompt", required=True)
     r.add_argument("--out", required=True)
     r.add_argument("--policy-address", required=True)
     r.add_argument("--authkey-env", required=True)
-    r.add_argument("--behaviour", default="succeed")
+    r.add_argument("--behaviour", default="policy")
+    r.add_argument("--act-timeout-s", type=float, default=30.0)
     args = parser.parse_args()
     return materialize(args) if args.cmd == "materialize" else run(args)
 
