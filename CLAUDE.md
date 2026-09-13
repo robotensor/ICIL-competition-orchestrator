@@ -26,7 +26,8 @@ runnable policy code and weights, run in a sandboxed container.
   command half is a script). After an intended change to `spec.json` or the store layout,
   regenerate the fixture store with `python tests/fixtures/make_store.py` and commit it.
 - `live.PHASES` must equal the dashboard's `PHASES` (`lib/live/types.ts`); a new phase is a
-  dashboard change first.
+  dashboard change too. `materializing` is ahead of the dashboard, which refuses those frames
+  until it adds the phase (`AWAITING_DASHBOARD` in `tests/test_live.py`).
 - `packages/icil-policy/` is the policy protocol, a distribution of its own installed into every
   competitor's image: numpy and PyYAML only, never an import of `icil_orchestrator`. CI also tests
   it alone, installed with nothing but pytest: `pytest packages/icil-policy`.

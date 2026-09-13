@@ -778,12 +778,13 @@
      "enum": [
       "fetching",
       "checking",
+      "materializing",
       "evaluating",
       "publishing",
       "done",
       "failed"
      ],
-     "description": "Exactly the phases the dashboard's POST /api/live accepts."
+     "description": "The phases of a duel, in order. The dashboard's POST /api/live must accept exactly these."
     },
     "side": {
      "type": [
