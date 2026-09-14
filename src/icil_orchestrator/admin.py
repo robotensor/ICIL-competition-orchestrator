@@ -577,7 +577,9 @@ def _handler(server: AdminServer, timeout_s: float) -> type[BaseHTTPRequestHandl
                 self.close_connection = True
 
         def _answer(self) -> tuple[int, dict[str, Any], bool]:
-            if not server.authorized(self.headers.get("Authorization")):
+            # Exactly one: which of two counts is a guess a proxy in front may make the other way.
+            named = self.headers.get_all("Authorization") or []
+            if len(named) != 1 or not server.authorized(named[0]):
                 raise Refused(
                     401,
                     "The bearer token is missing or wrong.",

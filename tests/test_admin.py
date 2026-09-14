@@ -150,6 +150,16 @@ def test_health_answers_only_with_the_token(spec, server):
     assert status == 405 and response.getheader("Allow") == "POST"
 
 
+def test_a_request_naming_a_token_twice_is_refused(server):
+    """Which of two Authorization headers counts is a guess a proxy may make the other way."""
+    for tokens in ((TOKEN, "nope"), ("nope", TOKEN), (TOKEN, TOKEN)):
+        with connect(server) as sock:
+            named = "".join(f"Authorization: Bearer {token}\r\n" for token in tokens)
+            sock.sendall(f"GET {HEALTH} HTTP/1.1\r\n{named}\r\n".encode())
+            _, answer = until_closed(sock, 3)
+        assert answer.startswith(b"HTTP/1.1 401"), (tokens[1], answer[:40])
+
+
 def test_a_branch_is_queued_at_its_commit_and_listed(spec, server, hub, paths, capsys):
     status, body, _ = call(
         server,
