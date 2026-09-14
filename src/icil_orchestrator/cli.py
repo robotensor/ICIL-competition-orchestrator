@@ -6,10 +6,13 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import signal
 import sys
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 #: Where `store init` keeps the signing key unless told otherwise. Never inside the store: the
 #: store is mirrored, and a key in it would be published.
@@ -258,6 +261,296 @@ def cmd_submission(args: argparse.Namespace) -> int:
     return {"accepted": 0, "rejected": 1}.get(report.verdict, 2)
 
 
+def _local_dirs(pairs: Sequence[str] | None) -> dict[str, str]:
+    """`--local REPO=DIR` pairs, or `ValueError` naming the one that is not."""
+    out: dict[str, str] = {}
+    for pair in pairs or ():
+        repo, sep, directory = pair.partition("=")
+        if not sep or not repo or not directory:
+            raise ValueError(f"--local {pair!r} is not REPO=DIR")
+        out[repo] = directory
+    return out
+
+
+def _orchestrator(args: argparse.Namespace, spec):
+    """The store, runtime, live reporter and mirror a duel or the daemon publishes with."""
+    import os
+
+    from .canon import Signer
+    from .duel.orchestrate import Orchestrator
+    from .live import LiveReporter
+    from .store.writer import Store
+
+    local = _local_dirs(args.local)
+    key = Path(args.key)
+    if not key.is_file():
+        raise ValueError(f"no signing key at {key}; `store init` writes one, or pass --key")
+    signer = Signer.from_file(key)
+    store = Store(args.store, spec, signer)
+    manifest = store.manifest()
+    if manifest is None:
+        raise ValueError(f"{args.store} is not a store; run `icil-orchestrator store init` first")
+    if manifest.get("validator_key") != signer.verify_key_hex:
+        raise ValueError(f"{args.store} is signed by {manifest.get('validator_key')}, not by {key}")
+    if args.runtime == "local":
+        from .duel.local_runtime import SubprocessPolicyRuntime
+
+        if not local:
+            raise ValueError("--runtime local serves only what --local REPO=DIR maps")
+        runtime = SubprocessPolicyRuntime(spec, local)
+    else:
+        from .duel.docker_runtime import DockerPolicyRuntime
+
+        runtime = DockerPolicyRuntime(
+            spec, cache_dir=args.cache, local=local, base_digest=args.base_image, gpus=args.gpus
+        )
+    token = os.environ.get(args.live_token_env) if args.live_token_env else None
+    if args.live_url and not token:
+        raise ValueError("--live-url needs --live-token-env naming a variable that holds the token")
+    mirror = None
+    if args.mirror:
+        from .store.mirror import Mirror
+
+        mirror = Mirror(store.root, args.mirror, token=os.environ.get("HF_TOKEN"))
+    return Orchestrator(
+        spec,
+        store,
+        runtime,
+        args.run_dir,
+        live=LiveReporter(spec, args.live_url, token),
+        mirror=mirror,
+    )
+
+
+def _logging() -> None:
+    import logging
+
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
+
+
+class Terminated(KeyboardInterrupt):
+    """SIGTERM or SIGINT, raised where the duel or the daemon was when it arrived."""
+
+    def __init__(self, signum: int) -> None:
+        self.signum = int(signum)
+        super().__init__(signal.Signals(self.signum).name)
+
+
+@contextmanager
+def _terminable() -> Iterator[None]:
+    """SIGTERM and SIGINT raise `Terminated` in the main thread, so what was running unwinds
+    through its `finally` blocks - the unit's policy server or container, the benchmark's process
+    group, the socket directory - before the process exits. Python's default for SIGTERM is to
+    die on the spot, which leaves all of those running. A second signal while that unwinding
+    happens is ignored; SIGKILL still ends the process, and the next start reaps what it left."""
+
+    def stop(signum: int, frame: Any) -> None:
+        for name in (signal.SIGTERM, signal.SIGINT):
+            signal.signal(name, signal.SIG_IGN)
+        raise Terminated(signum)
+
+    previous = {name: signal.signal(name, stop) for name in (signal.SIGTERM, signal.SIGINT)}
+    try:
+        yield
+    finally:
+        for name, handler in previous.items():
+            signal.signal(name, handler)
+
+
+def _until_terminated(
+    command: Callable[[argparse.Namespace], int], args: argparse.Namespace
+) -> int:
+    try:
+        with _terminable():
+            return command(args)
+    except Terminated as exc:
+        print(
+            f"stopped by {exc}: the unit that was running was torn down; the same command resumes "
+            "the duel where it stopped",
+            file=sys.stderr,
+        )
+        return 128 + exc.signum
+
+
+def cmd_duel(args: argparse.Namespace) -> int:
+    return _until_terminated(_duel, args)
+
+
+def cmd_daemon(args: argparse.Namespace) -> int:
+    return _until_terminated(_daemon, args)
+
+
+def _duel(args: argparse.Namespace) -> int:
+    from .duel.orchestrate import DuelFailed, DuelRequest
+    from .duel.runtime import RuntimeUnavailable, SubmissionRefused
+    from .ids import SubmissionRef
+    from .queue import Queues
+    from .store.writer import store_lock
+
+    spec = _spec(args)
+    try:
+        track = args.track or spec.sole_track
+        spec.track(track)
+        if args.size is not None and args.size not in spec.sizes(track):
+            raise ValueError(
+                f"duel size {args.size!r} is not one of {', '.join(spec.sizes(track))}"
+            )
+        repo, _, revision = args.challenger.partition("@")
+        if not repo or not revision:
+            raise ValueError(f"{args.challenger!r} is not owner/name@revision")
+        orchestrator = _orchestrator(args, spec)
+    except (KeyError, ValueError) as exc:
+        print(f"error: {exc.args[0] if exc.args else exc}", file=sys.stderr)
+        return 2
+    _logging()
+    try:
+        challenger = orchestrator.runtime.resolve(repo, revision)
+    except (RuntimeUnavailable, SubmissionRefused, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if challenger.revision != revision:
+        print(f"resolved {repo}@{revision} to {challenger.revision}", file=sys.stderr)
+    store = orchestrator.store
+    try:
+        # A daemon holds this lock for its whole life, so a duel here never runs beside one.
+        with store_lock(store.root):
+            orchestrator.reap_orphans()
+            head = store.head(track) or {}
+            king = SubmissionRef.from_dict(head.get("king"))
+            if king is not None and king.key == challenger.key:
+                print(f"error: {challenger.entry} already holds the crown", file=sys.stderr)
+                return 2
+            if king is None and spec.baseline(track) is not None:
+                # The daemon crowns the declared baseline by genesis before any entry; an entrant
+                # crowned here instead would be shown as the organizer's baseline.
+                print(
+                    f"error: track {track} declares a baseline, which takes its empty throne; "
+                    "run the daemon to crown it first",
+                    file=sys.stderr,
+                )
+                return 2
+            queue = Queues(args.queue, spec.tracks)[track]
+            head_block = int(head.get("block") or 0)
+            # Numbered from the queue's counter, as the daemon numbers its duels, so the two never
+            # share a run directory. The last block handed out is reused only for this very duel
+            # left unfinished there: running a failed duel again resumes it.
+            req = DuelRequest(
+                track, challenger, king, args.size, block=max(queue.block, head_block)
+            )
+            if req.block <= head_block or not orchestrator.holds_request(req):
+                req = DuelRequest(
+                    track, challenger, king, args.size, block=queue.claim_block(head_block)
+                )
+            result = orchestrator.run(req)
+    except (DuelFailed, RuntimeError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    record = result.record or {}
+    print(
+        json.dumps(
+            {
+                "status": result.status,
+                "kind": result.kind,
+                "reason": result.reason,
+                "event_id": result.event_id,
+                "duel_id": result.duel_id,
+                "dethroned": record.get("dethroned"),
+                "king": record.get("king"),
+                "new_king": record.get("new_king"),
+                "king_scores": record.get("king_scores"),
+                "challenger_scores": record.get("challenger_scores"),
+                "void": sum(1 for u in result.units if u.get("void")),
+                "units": len(result.units),
+                "run_dir": str(result.run_dir),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return 0 if result.published else 1
+
+
+def _daemon(args: argparse.Namespace) -> int:
+    from .daemon import Daemon
+    from .queue import Queues
+
+    spec = _spec(args)
+    try:
+        orchestrator = _orchestrator(args, spec)
+        queues = Queues(args.queue, spec.tracks)
+    except ValueError as exc:
+        print(f"error: {exc.args[0] if exc.args else exc}", file=sys.stderr)
+        return 2
+    _logging()
+    try:
+        Daemon(
+            orchestrator, queues, idle_sleep_s=args.idle_sleep, max_backoff_s=args.max_backoff
+        ).run(once=args.once)
+    except RuntimeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _add_duel_args(p: argparse.ArgumentParser) -> None:
+    p.add_argument(
+        "--queue",
+        default="queue",
+        help="queue directory, one file per track; its block counter numbers every duel",
+    )
+    p.add_argument("--store", required=True, help="the store to publish to (`store init`)")
+    p.add_argument(
+        "--run-dir",
+        required=True,
+        metavar="DIR",
+        help="where duels keep prompts, side results and logs, and resume from",
+    )
+    p.add_argument(
+        "--key", default=DEFAULT_KEY, help=f"the store's signing key (default: {DEFAULT_KEY})"
+    )
+    p.add_argument(
+        "--runtime",
+        choices=("docker", "local"),
+        default="docker",
+        help="where policies run: docker, the sandbox (default); or local, which runs submission "
+        "code on this host WITHOUT A SANDBOX, as a subprocess with every permission the "
+        "orchestrator has - for development with code you trust, never for a competitor's",
+    )
+    p.add_argument(
+        "--local",
+        action="append",
+        metavar="REPO=DIR",
+        help="serve repository REPO from this directory instead of the Hub (repeatable)",
+    )
+    p.add_argument(
+        "--cache", default="cache", help="where checkouts are kept, by commit (default: cache)"
+    )
+    p.add_argument(
+        "--base-image",
+        default=None,
+        metavar="DIGEST",
+        help="the base image digest while spec.json's is null (docker runtime)",
+    )
+    p.add_argument(
+        "--gpus", type=int, default=None, help="GPUs per policy container (default: the spec's)"
+    )
+    p.add_argument("--live-url", default=None, help="the dashboard's base url for live frames")
+    p.add_argument(
+        "--live-token-env",
+        default=None,
+        metavar="NAME",
+        help="the environment variable holding the live ingest token",
+    )
+    p.add_argument(
+        "--mirror",
+        default=None,
+        metavar="REPO",
+        help="also push what is published to this Hugging Face dataset (token from HF_TOKEN)",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="icil-orchestrator", description="ICIL competition orchestrator"
@@ -365,6 +658,33 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sm_prune.add_argument("--json", action="store_true")
     sm.set_defaults(func=cmd_submission)
+
+    du = sub.add_parser("duel", help="run one duel (or a genesis on an empty track) and publish it")
+    du.add_argument("--track", default=None, help="which track (default: the only one)")
+    du.add_argument(
+        "--challenger", required=True, help="owner/name@revision (a branch or tag is resolved)"
+    )
+    du.add_argument("--size", default=None, help="the duel size (default: the track's)")
+    _add_duel_args(du)
+    du.set_defaults(func=cmd_duel)
+
+    dm = sub.add_parser(
+        "daemon", help="serve the queues: resume, genesis, duel, publish, mirror; one per store"
+    )
+    dm.add_argument("--once", action="store_true", help="one step for every track, then exit")
+    dm.add_argument(
+        "--idle-sleep", type=float, default=15.0, help="seconds to wait when every queue is empty"
+    )
+    dm.add_argument(
+        "--max-backoff",
+        type=float,
+        default=300.0,
+        metavar="SECONDS",
+        help="after a step crashes, wait 1s, doubling with each crash in a row up to this "
+        "(default: 300)",
+    )
+    _add_duel_args(dm)
+    dm.set_defaults(func=cmd_daemon)
 
     return p
 

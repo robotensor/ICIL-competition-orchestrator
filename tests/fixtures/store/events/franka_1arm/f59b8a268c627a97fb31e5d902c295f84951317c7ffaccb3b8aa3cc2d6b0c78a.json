@@ -1,4 +1,20 @@
 {
+  "benchmarks": {
+    "robotwin": {
+      "info": {
+        "id": "robotwin"
+      },
+      "installed_version": null,
+      "pin": {
+        "_comment": "Pinned by distribution, version and wheel sha256 once the wheel is built (robotensor/ICIL-robotwin-benchmark#86). Entry-point discovery imports code into the orchestrator, so the pin is checked from the installed distribution's metadata before anything is imported from it. null means not yet pinned, and `icil-orchestrator benchmarks check` says so.",
+        "api_version": 1,
+        "distribution": "robotwin-icil-competition",
+        "repo": "robotensor/ICIL-robotwin-benchmark",
+        "version": null,
+        "wheel_sha256": null
+      }
+    }
+  },
   "block": 2,
   "challenger": {
     "key": "c1a90bff152ab2ae",
@@ -46,61 +62,99 @@
     "revision": "0000000000000000000000000000000000000002"
   },
   "notes": [
-    "Fixture store written by tests/fixtures/make_store.py; not a competition result."
+    "Crown rule: margin-met (+61.11 points against a margin of 3).",
+    "Fixture store written by tests/fixtures/make_store.py; not a result."
   ],
   "prompts": [
     {
+      "demo_video": null,
       "sha256": "1622e782e0df9d6f60fef0aec8da29796bf6a8837a77f23398cbe9eed2b59641",
       "unit_id": "fp-000"
     },
     {
+      "demo_video": null,
       "sha256": "021771492f82689572bc614b67ece9214ae1c3ac68c220e113e9825bae2f350a",
       "unit_id": "fp-001"
     },
     {
+      "demo_video": null,
       "sha256": "116411dec7a1224da9c001af6085379fa40927eb28469e9c80d0f5cd596f8fa1",
       "unit_id": "fp-002"
     },
     {
+      "demo_video": null,
       "sha256": "6f5d1c9d43203c8cb673b3704720f22c93968bddf4441e4fa2f55de1071236f4",
       "unit_id": "fs-003"
     },
     {
+      "demo_video": null,
       "sha256": "dcbc4d0d1167bf7c2d579881e3c13cdcad838b1aa65b6abcfb6f569d7fd9ccd2",
       "unit_id": "fs-004"
     },
     {
+      "demo_video": null,
       "sha256": "2a8e8ced7c86fdcc2e33f95bff615439b85dc6b074217f984a046dd4c33fb0ec",
       "unit_id": "fs-005"
     },
     {
+      "demo_video": null,
       "sha256": "248402c6c08f449eae9f43852481927fed9582bbce0529d2a5abb9e6d1332b7c",
       "unit_id": "fu-006"
     },
     {
+      "demo_video": null,
       "sha256": "2b7eda62616d63b032898f07ed7923f0bdc51871600bdf181467bd40420114ae",
       "unit_id": "fu-007"
     },
     {
+      "demo_video": null,
       "sha256": "ef5349d923895510da9a4e0e7c13fa0589a7bfe14793db35e5114d389be22379",
       "unit_id": "fu-008"
     }
   ],
+  "runtime": "docker",
   "schema": 4,
   "score_margin": 3.0,
+  "scoring": {
+    "delta_points": 61.11111111111111,
+    "max_void_fraction": 0.2,
+    "reason": "margin-met",
+    "score_margin": 3.0,
+    "void_fraction": 0.1111111111111111
+  },
   "sides": {
     "challenger": {
-      "base_image_digest": null,
+      "action_type": "qpos",
+      "base_image_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "commit": "0000000000000000000000000000000000000002",
+      "image": "sha256:aff56ab514115e336621118bd780a46baba467f306a434a32bfee3bbb728e024",
+      "key": "c1a90bff152ab2ae",
+      "policy": "replay.policy:ReplayPolicy",
+      "refused": null,
+      "repo": "robotensor/icil-replay-policy",
+      "revision": "0000000000000000000000000000000000000002",
+      "runtime": "docker",
+      "units": 9,
+      "void": 1,
       "wall_seconds": 1800.0
     },
     "king": {
-      "base_image_digest": null,
+      "action_type": "qpos",
+      "base_image_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "commit": "0000000000000000000000000000000000000001",
+      "image": "sha256:5bb86f7ea8bcb02558079300181ad64737617d55bc9c9a8b28a59db2b80cb95c",
+      "key": "1cae8a350e3f919b",
+      "policy": "zero.policy:ZeroPolicy",
+      "refused": null,
+      "repo": "robotensor/icil-zero-policy",
+      "revision": "0000000000000000000000000000000000000001",
+      "runtime": "docker",
+      "units": 9,
+      "void": 0,
       "wall_seconds": 1800.0
     }
   },
-  "spec_fingerprint": "a3329adf572cc738ba08d47f6c8103a461a8e4ba66fe77306dab500ea87ed00e",
+  "spec_fingerprint": "b8bed40a23225f162aceb78f1f1806677d8da042cd2127f577748c4d4f7f30f6",
   "spec_version": 7,
   "started_at": "2026-09-13T10:00:00Z",
   "ties": 3,
@@ -138,6 +192,7 @@
         "steps": 0,
         "view": "sensorimotor"
       },
+      "prompt_sha256": "1622e782e0df9d6f60fef0aec8da29796bf6a8837a77f23398cbe9eed2b59641",
       "seed": 2820746043,
       "skill": "franka_pick_and_place",
       "task": "place_cup_coaster",
@@ -177,6 +232,7 @@
         "steps": 0,
         "view": "sensorimotor"
       },
+      "prompt_sha256": "021771492f82689572bc614b67ece9214ae1c3ac68c220e113e9825bae2f350a",
       "seed": 1557828967,
       "skill": "franka_pick_and_place",
       "task": "place_cup_coaster",
@@ -216,6 +272,7 @@
         "steps": 0,
         "view": "sensorimotor"
       },
+      "prompt_sha256": "116411dec7a1224da9c001af6085379fa40927eb28469e9c80d0f5cd596f8fa1",
       "seed": 166772170,
       "skill": "franka_pick_and_place",
       "task": "place_cube_plate",
@@ -255,6 +312,7 @@
         "steps": 0,
         "view": "sensorimotor"
       },
+      "prompt_sha256": "6f5d1c9d43203c8cb673b3704720f22c93968bddf4441e4fa2f55de1071236f4",
       "seed": 749232052,
       "skill": "franka_stacking",
       "task": "stack_two_blocks",
@@ -263,7 +321,7 @@
       "void": false
     },
     {
-      "challenger_error": "fake: unit exceeded its 600s budget",
+      "challenger_error": "fake: the simulator lost the scene",
       "challenger_metric": null,
       "challenger_progress": null,
       "challenger_steps": null,
@@ -294,6 +352,7 @@
         "steps": 0,
         "view": "sensorimotor"
       },
+      "prompt_sha256": "dcbc4d0d1167bf7c2d579881e3c13cdcad838b1aa65b6abcfb6f569d7fd9ccd2",
       "seed": 750276457,
       "skill": "franka_stacking",
       "task": "stack_two_blocks",
@@ -333,6 +392,7 @@
         "steps": 0,
         "view": "sensorimotor"
       },
+      "prompt_sha256": "2a8e8ced7c86fdcc2e33f95bff615439b85dc6b074217f984a046dd4c33fb0ec",
       "seed": 2229112402,
       "skill": "franka_stacking",
       "task": "stack_two_blocks",
@@ -372,6 +432,7 @@
         "steps": 0,
         "view": "sensorimotor"
       },
+      "prompt_sha256": "248402c6c08f449eae9f43852481927fed9582bbce0529d2a5abb9e6d1332b7c",
       "seed": 4158397391,
       "skill": "franka_press_push",
       "task": "press_button",
@@ -411,6 +472,7 @@
         "steps": 0,
         "view": "sensorimotor"
       },
+      "prompt_sha256": "2b7eda62616d63b032898f07ed7923f0bdc51871600bdf181467bd40420114ae",
       "seed": 4043967884,
       "skill": "franka_press_push",
       "task": "press_button",
@@ -450,6 +512,7 @@
         "steps": 0,
         "view": "sensorimotor"
       },
+      "prompt_sha256": "ef5349d923895510da9a4e0e7c13fa0589a7bfe14793db35e5114d389be22379",
       "seed": 1982363512,
       "skill": "franka_press_push",
       "task": "press_button",

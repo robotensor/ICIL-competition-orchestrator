@@ -27,6 +27,9 @@ from icil_orchestrator.store.verify import Report, SchemaCheck
 # ---------------------------------------------------------------- the dashboard's rules
 
 DASHBOARD_PHASES = ("fetching", "checking", "evaluating", "publishing", "done", "failed")
+#: Phases the orchestrator reports that the dashboard does not accept yet: frames in them are
+#: refused (422) until `lib/live/types.ts` adds them, and the duel goes on regardless.
+AWAITING_DASHBOARD = ("materializing",)
 DASHBOARD_SIDES = ("challenger", "king")
 DASHBOARD_OUTCOMES = ("challenger", "king", "tie")
 MAX_BODY_BYTES = 512 * 1024
@@ -202,10 +205,10 @@ def frame(spec, **overrides):
 
 
 def test_every_phase_and_side_builds_a_frame_the_dashboard_accepts_whole(spec):
-    assert PHASES == DASHBOARD_PHASES
+    assert tuple(p for p in PHASES if p not in AWAITING_DASHBOARD) == DASHBOARD_PHASES
     reporter = LiveReporter(spec, "http://127.0.0.1:9", "tok")
     skills = spec.skills(TRACK)
-    for phase, side in itertools.product(PHASES, (*DASHBOARD_SIDES, None)):
+    for phase, side in itertools.product(DASHBOARD_PHASES, (*DASHBOARD_SIDES, None)):
         built = frame(spec, phase=phase, side=side)
         parsed = post_body_accepted(reporter.encode(built), spec.tracks, skills, 4)
         assert parsed["ok"], (phase, side, parsed)
@@ -213,6 +216,18 @@ def test_every_phase_and_side_builds_a_frame_the_dashboard_accepts_whole(spec):
         assert len(kept["units"]) == len(built["units"]), "the dashboard dropped units"
         for part in ("current", "recent_media", "king", "challenger"):
             assert kept[part] is not None, f"the dashboard dropped {part}"
+
+
+def test_prompts_are_materialized_between_checking_and_evaluating(spec):
+    """Both sides run from prompts fixed before either starts, and the live view says so. The
+    dashboard has to learn the phase; until it does, it refuses these frames and nothing else."""
+    assert PHASES.index("checking") < PHASES.index("materializing") < PHASES.index("evaluating")
+    built = frame(spec, phase="materializing", side=None, current=None, recent_media=None)
+    report = Report()
+    SchemaCheck(load_schema()).check("LiveFrame", built, "frame", report)
+    assert report.errors == []
+    refused = parse_live_frame(built, spec.tracks, spec.skills(TRACK), 4)
+    assert not refused["ok"] and "phase must be one of" in refused["reason"]
 
 
 def test_the_frame_carries_progress_per_side_and_skill(spec):
@@ -243,7 +258,7 @@ def test_a_large_unit_list_is_slimmed_to_fit_rather_than_refused(spec):
 @pytest.mark.parametrize(
     "overrides, message",
     [
-        ({"phase": "materializing"}, "phase must be one of"),
+        ({"phase": "scoring"}, "phase must be one of"),
         ({"track": "sensorimotor"}, "track must be one of"),
         ({"event_id": "not-hex"}, "event_id must be 8-64 lowercase hex"),
         ({"event_id": "E" * 64}, "event_id must be 8-64 lowercase hex"),
@@ -279,7 +294,7 @@ def test_the_encoded_rules_do_refuse_what_the_dashboard_refuses(spec):
         ("validator_key", " "),
         ("track", "video_only"),
         ("event_id", "abc"),
-        ("phase", "materializing"),
+        ("phase", "scoring"),
         ("side", "both"),
     ):
         assert not parse_live_frame({**good, key: value}, spec.tracks, skills, 4)["ok"], key

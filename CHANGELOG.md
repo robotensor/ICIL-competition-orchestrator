@@ -90,4 +90,69 @@
   writes can run from. `tests/test_submission_jit.py` serves a policy that compiles C on its
   first act and, under `slow`, one whose act runs `torch.compile` on the CPU, and walks every
   mount inside to check where the sandbox user can write and run code.
+- (feat): a duel runs from queue entry to published record, both sides on the same
+  demonstrations (`icil_orchestrator.duel`, `icil_orchestrator.daemon`). Phases `fetching ->
+  checking -> materializing -> evaluating(challenger) -> evaluating(king) -> publishing -> done |
+  failed`, each a live frame; `materializing` is a new live phase (schema `LiveFrame.phase`), which
+  the dashboard does not accept yet. Every unit's prompt is produced once through the plugin's
+  `materialize_command` before either side runs, verified with `verify_prompt`, and published as
+  `prompt_sha256` (the sha256 of the file's bytes); a unit whose prompt fails is void for both
+  sides. A submission's policy is reached only through `duel.runtime.PolicyRuntime` - `resolve`,
+  `fetch`, `prepare` (manifest, image, a `hello`) and `serve`, a fresh policy per unit -
+  implemented over the sandbox by `duel.docker_runtime` and, with no sandbox, for development, by
+  `duel.local_runtime`. Scoring: per-skill success rates over non-void units, their mean, the
+  crown to the challenger iff it beats the king's mean by `score_margin` points; a unit void on
+  either side is void for both, and a duel with more than `max_void_fraction` void is void and
+  publishes nothing. A unit is void only for a harness cause; what a side's own submission does -
+  its container exiting or OOM-killed, never listening, an act timeout or error, a benchmark's
+  `void_cause: "policy"` - is that side's failure, and a policy that died is served again for the
+  next unit. A refused challenger is refused and publishes nothing; a refused king forfeits every
+  unit and the duel is published with the note `king forfeit: <reason>`. An empty track crowns its
+  first challenger (or its declared baseline) by genesis, with its own scores. A duel resumes from
+  its run directory - prompts, each side's `results.jsonl`, the index checked for its own event -
+  so a killed daemon restarted runs every unit once per side and publishes one record. The event
+  also carries both sides' commits and image digests, the benchmark's `info()` and pin, and the
+  scoring. The dashboard must be deployed first, to accept the `materializing` phase.
+- (fix): a duel is never published against a king who lost the crown while it was stopped: its run
+  is moved aside as `<dir>.stale-<n>` and its challenger queued again at the head. A duel resumed
+  after its record was appended rebuilds `head.json` from the index and pushes to the mirror again.
+- (fix): SIGTERM and SIGINT tear the running unit's policy and benchmark down before `duel` or
+  `daemon` exits (128+signal); after a SIGKILL, the next start reaps the policy containers whose
+  owner process is gone and the process groups in each unit's `pids.json` before a unit runs again.
+- (fix): a duel's containers run with exactly the sandbox's `docker run` - the scratch tmpfs that
+  may run code, `HOME` and the JIT caches in it, the noexec socket tmpfs - and the docker runtime
+  adds nothing to it. The sandbox's owner labels and `reap_orphans` replace the duel's own store
+  labels and reaping, and the runtime seam's `bind` is gone. Only a socket itself counts as a
+  unit's policy listening; whether its container was OOM-killed comes from `Docker.state`
+  (`ContainerState.oom_killed`); and a `docker inspect` that times out voids its unit for the
+  harness instead of failing the duel, while a unit already scored keeps its score.
+- (fix): `duel` numbers its block from the queue's counter (`--queue`) and refuses to run beside a
+  daemon; it leaves a declared baseline's empty throne to the daemon. The daemon keeps a duel in
+  progress while the harness is unavailable, moves aside a run directory holding another request,
+  and backs off exponentially up to `--max-backoff` when a step keeps crashing.
+- (fix): each side gets at most an even share of what materializing left of the duel's wall clock,
+  materializing stops at the duel's deadline, serving a policy counts in its unit's budget, and a
+  prompt is re-checked after its unit and against the hash the benchmark read.
+- (feat): a unit's benchmark is told its time limits and given the policy's log, under the names
+  the RoboTwin plugin reads: `unit_timeout_s`, the seconds before its subprocess is killed, so it
+  writes why a unit it cannot finish ended; `policy_budget_s`, what starting the policy left of
+  the new `budgets.policy_budget_seconds` (300, below `unit_wall_seconds`), never more than that
+  timeout less the plugin's `info()["limits"]["result_reserve_s"]`; and `policy_log`, a copy of
+  the end of the policy's log in the unit's directory, never the log the policy writes. A policy
+  that uses up its budget, or takes all of it to start, fails the unit rather than running it
+  into a void for both sides.
+- (feat): a published unit's `instance_params.scene_seed` is the seed its prompt was built on, as
+  the materialize result names it, and a result naming another seed than `verify_prompt` read from
+  the file voids the prompt: RoboTwin chooses the scene among a unit's candidates only then.
+- (fix): a benchmark subprocess keeps `ROBOTWIN_ICIL_PYTHON` and `ROBOTWIN_ICIL_DENOISER` from the
+  orchestrator's environment.
+- (fix): a `prompt_sha256` either benchmark command reports must be the materialized prompt's
+  sha256, whatever its type, or the unit is void on the harness with the reason.
+- (feat): `icil-orchestrator duel --track T --challenger repo@revision [--size S] --store DIR
+  --run-dir DIR` and `icil-orchestrator daemon --store DIR --run-dir DIR [--queue DIR] [--once]`,
+  with `--runtime docker|local`, `--local REPO=DIR`, `--live-url` and `--live-token-env`, and
+  `--mirror`.
+- (feat): `Queue.take` takes an entry off the queue and marks its duel in progress in one write.
+- (test): the fake benchmark writes a prompt of named arrays and drives the served policy through
+  `RemotePolicy`, so the replay example wins and the zero example loses.
 - (chore): scaffold the orchestrator: package, pure test suite, CI and the repository's rules.

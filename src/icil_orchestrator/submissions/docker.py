@@ -76,6 +76,8 @@ class ContainerState:
     running: bool
     exit_code: int | None
     error: str = ""
+    #: The kernel killed the container for its memory limit (`State.OOMKilled`).
+    oom_killed: bool = False
 
 
 @dataclass(frozen=True)
@@ -218,13 +220,15 @@ class Docker:
         return done.stdout.strip()
 
     def state(self, name: str) -> ContainerState:
+        """Whether `name` runs, its exit code, docker's error and whether the kernel killed it for
+        its memory limit; a container docker does not know has no exit code."""
         done = self._run(
             [
                 "inspect",
                 "--type",
                 "container",
                 "--format",
-                "{{.State.Running}} {{.State.ExitCode}} {{.State.Error}}",
+                "{{.State.Running}} {{.State.OOMKilled}} {{.State.ExitCode}} {{.State.Error}}",
                 name,
             ],
             check=False,
@@ -233,8 +237,14 @@ class Docker:
         if done.returncode != 0:
             return ContainerState(False, None, f"no such container: {_tail(done.stderr, 200)}")
         running, _, rest = done.stdout.strip().partition(" ")
+        oom_killed, _, rest = rest.partition(" ")
         code, _, error = rest.partition(" ")
-        return ContainerState(running == "true", int(code) if code.isdigit() else None, error)
+        return ContainerState(
+            running == "true",
+            int(code) if code.isdigit() else None,
+            error,
+            oom_killed=oom_killed == "true",
+        )
 
     def policy_containers(self) -> list[ContainerInfo]:
         """Every container carrying `CONTAINER_LABEL`, running or not, with its labels."""

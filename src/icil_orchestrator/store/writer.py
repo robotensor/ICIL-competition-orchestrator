@@ -141,6 +141,10 @@ class Store:
     def _touch(self, path: Path) -> None:
         self.touched.add(str(path.relative_to(self.root)))
 
+    def touch(self, path: Path) -> None:
+        """Mark `path`, a file of this store, as one the next mirror push must carry again."""
+        self._touch(Path(path))
+
     # ---------------------------------------------------------------- manifest
     def init(self, validator_key: str) -> dict[str, Any]:
         manifest = {
@@ -306,6 +310,29 @@ class Store:
                 king=king,
             )
         return seq
+
+    def rebuild_head(self, track: str) -> dict[str, Any] | None:
+        """Rewrite `head.json` from the index, which is the truth: its last record, and the king the
+        records crown one after another - what `append` writes, for a head a kill between the index
+        line and the head's rewrite left behind. The head; None for an empty index (left as is)."""
+        with self.index_lock(track):
+            self.repair_tail(track)
+            king: dict | None = None
+            last: dict[str, Any] | None = None
+            for record in self.iter_index(track):
+                king = king_after(record, king)
+                last = record
+            if last is None:
+                return None
+            self.write_head(
+                track,
+                seq=int(last["seq"]),
+                event_id=str(last["event_id"]),
+                block=int(last["block"]),
+                finished_at=str(last["finished_at"]),
+                king=king,
+            )
+        return self.head(track)
 
     def iter_index(self, track: str) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []

@@ -46,6 +46,9 @@ class InProgress:
     event_id: str
     challenger: dict[str, str]
     started_at: str
+    #: The queue entry the duel was taken from, to put back if the duel goes stale. Local state:
+    #: never in the published snapshot. None for a baseline's genesis, which no entry asked for.
+    entry: dict[str, Any] | None = None
 
 
 @dataclass
@@ -94,7 +97,11 @@ class Queue:
             for e in doc.get("entries", [])
         ]
         ip = doc.get("in_progress")
-        in_progress = InProgress(**ip) if ip else None
+        in_progress = (
+            InProgress(**{k: v for k, v in ip.items() if k in InProgress.__dataclass_fields__})
+            if ip
+            else None
+        )
         return QueueState(entries=entries, in_progress=in_progress, block=int(doc.get("block", 0)))
 
     def save(self) -> None:
@@ -151,6 +158,50 @@ class Queue:
             entry = self.state.entries.pop(0) if self.state.entries else None
         return entry
 
+    def take(
+        self, key: str, *, block: int, event_id: str, now: str | None = None
+    ) -> QueueEntry | None:
+        """Take the entry `key` off the queue and mark its duel in progress, in one write.
+
+        Popping and marking separately would leave a window in which a killed orchestrator had
+        dropped the entry without a trace of the duel it was taken for; with both in one write, a
+        restart finds either the entry still queued or its duel in progress, and resumes it. The
+        block counter moves to `block`, never back. None when the entry has gone meanwhile.
+        """
+        with self._locked():
+            entry = next((e for e in self.state.entries if e.key == key), None)
+            if entry is not None:
+                self.state.entries = [e for e in self.state.entries if e.key != key]
+                self.state.block = max(self.state.block, int(block))
+                self.state.in_progress = InProgress(
+                    event_id=event_id,
+                    challenger=entry.ref.as_dict(),
+                    started_at=now or now_iso(),
+                    entry=asdict(entry),
+                )
+        return entry
+
+    def put_back(self, fallback: QueueEntry | None = None) -> QueueEntry | None:
+        """The duel in progress back at the head of the queue as the entry it was taken from, and
+        nothing in progress, in one write; the entry put back.
+
+        `fallback` stands in for an in-progress duel that recorded no entry (a file written before
+        entries were kept); with neither, nothing is queued - a baseline's genesis has no entry.
+        An entry of the same key queued meanwhile gives way to the one put back.
+        """
+        with self._locked():
+            ip = self.state.in_progress
+            entry = None
+            if ip is not None and ip.entry:
+                fields = QueueEntry.__dataclass_fields__
+                entry = QueueEntry(**{k: v for k, v in ip.entry.items() if k in fields})
+            elif ip is not None:
+                entry = fallback
+            if entry is not None:
+                self.state.entries = [entry] + [e for e in self.state.entries if e.key != entry.key]
+            self.state.in_progress = None
+        return entry
+
     def start(self, event_id: str, challenger: SubmissionRef, *, now: str | None = None) -> None:
         with self._locked():
             self.state.in_progress = InProgress(
@@ -164,6 +215,15 @@ class Queue:
     def advance_block(self) -> int:
         with self._locked():
             self.state.block += 1
+            block = self.state.block
+        return block
+
+    def claim_block(self, floor: int = 0) -> int:
+        """The next block - one past both this counter and `floor`, the head's - for a duel no entry
+        of this queue asked for (one run on the command line). The counter moves to it, so no duel
+        the daemon runs later is numbered the same, and none shares its run directory."""
+        with self._locked():
+            self.state.block = max(self.state.block, int(floor)) + 1
             block = self.state.block
         return block
 
@@ -196,7 +256,15 @@ class Queue:
             "block": self.state.block,
             "written_at": now or now_iso(),
             "king": king.as_dict() if king else None,
-            "in_progress": asdict(self.state.in_progress) if self.state.in_progress else None,
+            "in_progress": (
+                {
+                    k: v
+                    for k, v in asdict(self.state.in_progress).items()
+                    if k in ("event_id", "challenger", "started_at")
+                }
+                if self.state.in_progress
+                else None
+            ),
             "entries": [
                 {
                     "position": i + 1,

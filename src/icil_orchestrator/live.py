@@ -24,9 +24,11 @@ from .store.records import now_iso
 
 log = logging.getLogger(__name__)
 
-#: Exactly the phases the dashboard accepts (`PHASES` in its `lib/live/types.ts`). A duel that
-#: materializes prompts reports that stage as `checking` until the dashboard knows the phase.
-PHASES = ("fetching", "checking", "evaluating", "publishing", "done", "failed")
+#: The phases of a duel, in the order it goes through them (`PHASES` in the dashboard's
+#: `lib/live/types.ts` must equal this). `materializing` is when every unit's prompt is produced,
+#: once, before either side runs; a dashboard that predates it refuses those frames, and the duel
+#: goes on regardless, since a frame is only a window onto it.
+PHASES = ("fetching", "checking", "materializing", "evaluating", "publishing", "done", "failed")
 
 SIDES = ("challenger", "king")
 

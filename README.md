@@ -16,8 +16,8 @@ arrays.
 
 **Status:** in progress. The first milestone plugs RoboTwin and launches a 1-arm Franka competition
 with one sensorimotor demonstration per episode. The contract, benchmark discovery, the signed
-store, the queue, live frames, the policy protocol and the policy sandbox are in place; duels are
-not yet.
+store, the queue, live frames, the policy protocol, the policy sandbox and duels are in place; the
+first smoke duel on RoboTwin's `franka_1arm` suite is next.
 
 ```bash
 uv venv --python 3.10 .venv && uv pip install -e ".[dev]" -e packages/icil-policy
@@ -37,6 +37,11 @@ icil-orchestrator submission check owner/policy@main --base-image sha256:<hex>  
                                                          # manifest, build, run, hello; reported
 icil-orchestrator submission check local/replay@main --local packages/icil-policy/examples/replay_policy
 icil-orchestrator submission prune                       # the icil-submission images nothing uses
+
+icil-orchestrator duel --track franka_1arm --challenger owner/policy@main --size smoke \
+    --store store/ --run-dir runs/ --base-image sha256:<hex>   # one duel, or genesis, published
+icil-orchestrator daemon --store store/ --run-dir runs/ --queue queue/ \
+    --live-url https://dashboard --live-token-env ICIL_LIVE_TOKEN   # serve the queues
 ```
 
 A submission is a Hugging Face repository at a commit: `queue add` resolves a branch or a tag to
@@ -62,6 +67,66 @@ what they build may be loaded. Submission code already runs natively in its cont
 it run code it wrote to a size-capped nosuid,nodev tmpfs removes a speed bump rather than a
 boundary; the boundary is the network (none), the read-only root, the non-root user and the
 limits.
+
+A duel fetches and checks both sides, then has the benchmark materialize every unit's prompt
+once, before either side runs: both run from those files, and the event publishes each prompt's
+sha256. Each unit gets a freshly served policy - a container per unit under `--runtime docker`,
+the default - and the benchmark's unit command drives it over the policy socket. Every unit's
+result is written to the run directory as it finishes, so a duel or a daemon that is killed and
+started again resumes where it stopped, running no unit twice. The first entrant of an empty track
+is crowned by genesis (or the track's declared baseline, by the daemon). `--runtime local --local
+REPO=DIR` serves a directory's policy as a subprocess on the host, with no sandbox at all: for
+development with code you trust, never for a competitor's.
+
+The unit command is given the unit's time limits: `act_timeout_s`; `unit_timeout_s`, the seconds
+its subprocess has before it is killed, so it can write why a unit it cannot finish ended; and
+`policy_budget_s`, what starting the policy left of `budgets.policy_budget_seconds` for all of its
+calls together, never more than that timeout less the benchmark's own result reserve. It is also
+given `policy_log`, a copy of the end of the policy's log kept beside its result while it runs,
+never the log file the policy itself writes. It runs with an allow-listed environment: the locale,
+the interpreter's paths, what a GPU simulator reads, RoboTwin's `ROBOTWIN_ICIL_PYTHON` and
+`ROBOTWIN_ICIL_DENOISER`, and never `HF_TOKEN` or the live token. A benchmark may choose a unit's
+scene only while it materializes (RoboTwin's expert tries the unit's candidate seeds in order), so
+a published unit's `instance_params.scene_seed` is the seed its prompt was built on.
+
+What a unit counts as depends on whose doing its end was:
+
+- **Void, for both sides**, only for a harness cause: its prompt failed to materialize or was
+  rejected, or is not the file both sides ran from (a benchmark reporting another
+  `prompt_sha256`, or another scene seed than the prompt's own), the benchmark crashed or ran out
+  of the unit's time while the policy was within its budget (or reported `void_cause: "harness"`),
+  Docker or the host failed (a container removed from outside, a `docker inspect` that does not
+  answer in time), or the orchestrator stopped the run. A duel with more than `max_void_fraction`
+  of its units void is void and publishes nothing; once that is certain, nothing more is
+  materialized or played.
+- **That side's failure** for anything its own submission did: its policy container exiting on its
+  own or OOM-killed in its sandbox (read from `docker inspect`), not listening within
+  `budgets.policy_start_seconds`, taking all of `budgets.policy_budget_seconds` to start or using
+  it up over the unit's calls, an act timeout, an error reply or a non-zero exit (a benchmark
+  reports those as `void_cause: "policy"`). A scored result is never turned into a void
+  afterwards, and a policy that died on one unit is simply served again for the next.
+- **A refused king forfeits**: when the king's repository is gone or private, its image no longer
+  builds or its manifest is invalid, every king unit is a failure and the duel is published with
+  the note `king forfeit: <reason>`; the challenger takes the crown if its own average clears the
+  margin. A refused challenger is refused: nothing is published and its entry is used up.
+
+A duel is never published against a king who no longer holds the crown: before it starts or
+resumes, and again before it publishes, the request's king is compared with the track head's, and a
+stale duel's run is moved aside as `<dir>.stale-<n>` while the daemon puts its challenger back at
+the head of the queue. A duel resumed after its record was appended rebuilds `head.json` from the
+index and pushes its files to the mirror again. `duel` numbers its block from the queue's counter
+(`--queue`) and refuses to run while a daemon holds the store's lock. The daemon keeps a duel in
+progress while the harness is only unavailable (benchmark not installed, Docker down, the Hub
+unreachable), moves aside a run directory holding another request, and backs off exponentially,
+up to `--max-backoff` (300 s), when a step keeps crashing. SIGTERM and SIGINT tear the running
+unit's policy and benchmark down before exiting; after a SIGKILL, the next start reaps what was
+left - the policy containers whose owner process is gone (the sandbox labels each container with
+the process that started it), and the process groups recorded in each unit's `pids.json` - before
+any unit runs again. A unit's container runs with exactly the sandbox's `docker run`: the duel
+adds nothing to it.
+
+Deploy the dashboard before this orchestrator: its live ingest must accept the `materializing`
+phase, which every duel reports between `checking` and `evaluating`, or those frames are refused.
 
 `store init` writes the store's ed25519 signing key to `keys/orchestrator.ed25519` (mode 0600)
 unless `--key` says otherwise. It is the only thing that can publish as this store, so keep it out
