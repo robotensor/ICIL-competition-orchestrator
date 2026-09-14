@@ -20,6 +20,7 @@ from icil_orchestrator.benchmarks.units import plugin_units
 from icil_orchestrator.canon import Signer
 from icil_orchestrator.duel.orchestrate import (
     OUTCOME_FILE,
+    CrownMoved,
     DuelFailed,
     DuelRequest,
     Orchestrator,
@@ -315,6 +316,54 @@ def test_a_duel_killed_after_it_published_does_not_publish_twice(duel_spec, stor
     assert result.published and result.record["seq"] == 2
     assert len(store.iter_index(TRACK)) == 2
     verified(store, duel_spec)
+
+
+def test_a_duel_resumed_after_its_king_lost_the_crown_is_moved_aside_unpublished(
+    duel_spec, store, tmp_path
+):
+    crowned(store, duel_spec, ZERO_REF)
+    req = DuelRequest(TRACK, REPLAY_REF, ZERO_REF, "smoke", block=2)
+    with pytest.raises(Crash):
+        orchestrator(
+            duel_spec, store, tmp_path, FakePolicyRuntime(duel_spec, crash_on_serve=4)
+        ).run(req)
+    # While it was stopped, someone else took ZERO's crown.
+    publish(store, duel_spec, make_record(duel_spec, "duel", 3, ZERO_REF, BOMB_REF, dethroned=True))
+
+    fresh = FakePolicyRuntime(duel_spec)
+    duel = orchestrator(duel_spec, store, tmp_path, fresh)
+    run_dir = duel.run_dir(req)
+    with pytest.raises(CrownMoved) as moved:
+        duel.run(req)
+    assert moved.value.moved_to == run_dir.with_name(run_dir.name + ".stale-1")
+    assert (moved.value.moved_to / "challenger" / "results.jsonl").is_file()
+    assert not run_dir.exists() and fresh.prepared == [] and fresh.serves == []
+    assert [r["kind"] for r in store.iter_index(TRACK)] == ["genesis", "duel"]
+    assert store.head(TRACK)["king"] == BOMB_REF.as_dict()
+
+
+def test_a_duel_is_not_published_against_a_king_crowned_away_while_it_ran(
+    duel_spec, store, tmp_path
+):
+    crowned(store, duel_spec, ZERO_REF)
+
+    class Usurped(FakePolicyRuntime):
+        def serve(self, prepared, *, workdir):
+            if len(self.serves) == 5:  # the king's last unit: another writer crowns BOMB
+                record = make_record(duel_spec, "duel", 3, ZERO_REF, BOMB_REF, dethroned=True)
+                publish(store, duel_spec, record)
+            return super().serve(prepared, workdir=workdir)
+
+    live = RecordingReporter(duel_spec)
+    req = DuelRequest(TRACK, REPLAY_REF, ZERO_REF, "smoke", block=2)
+    duel = orchestrator(duel_spec, store, tmp_path, Usurped(duel_spec), live=live)
+    with pytest.raises(CrownMoved, match="the crown moved from robotensor/icil-zero-policy@"):
+        duel.run(req)
+    records = store.iter_index(TRACK)
+    assert [(r["kind"], r["block"]) for r in records] == [("genesis", 1), ("duel", 3)]
+    assert store.head(TRACK)["king"] == BOMB_REF.as_dict()
+    assert not duel.run_dir(req).exists()
+    assert live.frames[-1]["phase"] == "failed" and live.frames[-1]["message"].startswith("stale: ")
 
 
 def test_a_refused_challenger_is_refused_and_the_king_keeps_the_crown(duel_spec, store, tmp_path):

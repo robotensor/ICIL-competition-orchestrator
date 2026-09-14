@@ -8,7 +8,9 @@ import pytest
 
 from conftest import FAKE_PIN, fake_spec_doc
 from duel_helpers import (
+    REPLAY,
     REPLAY_REF,
+    ZERO,
     ZERO_REF,
     Crash,
     FakePolicyRuntime,
@@ -18,7 +20,8 @@ from duel_helpers import (
 from icil_orchestrator.benchmarks.units import plugin_units
 from icil_orchestrator.canon import Signer
 from icil_orchestrator.daemon import Daemon
-from icil_orchestrator.duel.orchestrate import Orchestrator
+from icil_orchestrator.duel.orchestrate import DuelRequest, Orchestrator
+from icil_orchestrator.ids import SubmissionRef
 from icil_orchestrator.queue import Queues
 from icil_orchestrator.spec import load_schema
 from icil_orchestrator.store.verify import Report, SchemaCheck, verify_store
@@ -116,6 +119,43 @@ def test_a_killed_daemon_restarted_finishes_the_duel_running_each_unit_once_per_
                 f"{side} {unit['unit_id']} ran {runs.count(chr(10))} times"
             )
     assert len(runtime.serves) == 2, "the restarted daemon re-ran finished units"
+    assert verify_store(store.root, duel_spec).ok
+
+
+def test_a_resumed_duel_whose_king_lost_the_crown_requeues_its_challenger_and_never_publishes(
+    duel_spec, store, queues, tmp_path
+):
+    """The daemon is killed mid-duel; while it is down, a duel on the command line dethrones the
+    king. The resumed duel must not publish against the old king, which would crown him again."""
+    other = SubmissionRef.make("org/other-policy", "6" * 40)
+    local = {REPLAY_REF.repo: REPLAY, ZERO_REF.repo: ZERO, other.repo: REPLAY}
+    publish(store, duel_spec, make_record(duel_spec, "genesis", 1, ZERO_REF, None))
+    add(queues, REPLAY_REF, size="smoke")
+    killed = daemon(
+        duel_spec, store, tmp_path, FakePolicyRuntime(duel_spec, local, crash_on_serve=4)
+    )
+    with pytest.raises(Crash):
+        killed.step(TRACK)
+    stale = queues[TRACK].reload().in_progress.event_id
+
+    by_hand = daemon(duel_spec, store, tmp_path, FakePolicyRuntime(duel_spec, local)).orchestrator
+    assert by_hand.run(DuelRequest(TRACK, other, ZERO_REF, "smoke", block=3)).record["dethroned"]
+
+    restarted = daemon(duel_spec, store, tmp_path, FakePolicyRuntime(duel_spec, local))
+    assert restarted.step(TRACK) is True
+    state = queues[TRACK].reload()
+    assert state.in_progress is None
+    assert [(e.key, e.duel_size) for e in state.entries] == [(REPLAY_REF.key, "smoke")]
+    assert (tmp_path / "runs" / TRACK / f"{stale[:16]}.stale-1").is_dir()
+    assert [r["kind"] for r in store.iter_index(TRACK)] == ["genesis", "duel"]
+
+    assert restarted.step(TRACK) is True
+    records = store.iter_index(TRACK)
+    assert [(r["king"]["key"], r["challenger"]["key"]) for r in records[1:]] == [
+        (ZERO_REF.key, other.key),
+        (other.key, REPLAY_REF.key),
+    ]
+    assert records[2]["block"] == 4 and store.head(TRACK)["king"] == other.as_dict()
     assert verify_store(store.root, duel_spec).ok
 
 

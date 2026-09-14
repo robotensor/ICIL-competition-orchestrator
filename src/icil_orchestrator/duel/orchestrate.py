@@ -42,6 +42,11 @@ returns it.
   scored and published as any other with the note `king forfeit: <reason>`, and the challenger
   takes the crown if its own average clears the margin. The forfeit is recorded in
   `forfeit.json`, so a resumed duel keeps it.
+- `CrownMoved`: the track's head no longer names the king the duel was asked against (someone
+  else was crowned while this duel was stopped). Checked before the duel starts or resumes, and
+  again just before it publishes: its run directory is moved aside as `<dir>.stale-<n>`, nothing
+  is published, and the caller queues the challenger again. A record against a king who has lost
+  the crown would hand it back to him.
 - A published duel moves the crown iff `score.crown_moves`.
 
 **Genesis.** A track with no king (`baselines` null and nothing crowned yet) crowns its first
@@ -92,6 +97,29 @@ SIDES = ("challenger", "king")
 
 class DuelFailed(RuntimeError):
     """The harness could not run the duel. Nothing was published or decided."""
+
+
+class CrownMoved(RuntimeError):
+    """The track's crown is no longer held by the king the duel was asked against. Nothing was
+    published, the duel's run was moved aside (`moved_to`), and its challenger is to be queued
+    again: a record against a king who no longer holds the crown would hand it back to him."""
+
+    def __init__(self, req: DuelRequest, reason: str, moved_to: Path | None) -> None:
+        self.req = req
+        self.reason = reason
+        self.moved_to = moved_to
+        super().__init__(reason)
+
+
+def move_aside(run_dir: Path, why: str) -> Path | None:
+    """`run_dir` renamed to `<run_dir>.<why>-<n>`, the first `n` free; None when there was none."""
+    if not run_dir.exists():
+        return None
+    n = 1
+    while (target := run_dir.with_name(f"{run_dir.name}.{why}-{n}")).exists():
+        n += 1
+    run_dir.rename(target)
+    return target
 
 
 @dataclass(frozen=True)
@@ -268,6 +296,24 @@ class Orchestrator:
         doc = read_json(self.run_dir(req) / OUTCOME_FILE)
         return DuelResult.from_dict(doc) if isinstance(doc, dict) else None
 
+    def _check_crown(self, req: DuelRequest, duel: _Duel | None = None) -> None:
+        """`CrownMoved`, with the duel's run moved aside, unless the track's head still names the
+        king `req` was asked against (no king at all, for a genesis)."""
+        head = self.store.head(req.track) or {}
+        holder = head.get("king") or None
+        wanted = req.king.as_dict() if req.king is not None else None
+        if holder == wanted:
+            return
+        run_dir = self.run_dir(req)
+        moved = move_aside(run_dir, "stale")
+        who = holder.get("repo") if isinstance(holder, dict) else "nobody"
+        was = req.king.entry if req.king is not None else "nobody"
+        reason = f"the crown moved from {was} to {who} since this duel was asked for"
+        log.warning("duel %s is stale: %s; its run is at %s", run_dir.name, reason, moved)
+        if duel is not None:
+            self._post(duel, force=True, phase="failed", side=None, message=f"stale: {reason}")
+        raise CrownMoved(req, reason, moved)
+
     # -- the duel ---------------------------------------------------------------------------
 
     def run(self, req: DuelRequest) -> DuelResult:
@@ -281,6 +327,8 @@ class Orchestrator:
         if decided is not None:
             log.info("duel %s was already decided: %s", decided.event_id[:16], decided.status)
             return decided
+        if self._published(req.track, req.event_id(self.spec)) is None:
+            self._check_crown(req)
         run_dir = self.run_dir(req)
         # The duel's budget is spent by work, not by the time a stopped orchestrator was down.
         spent = _work_seconds(run_dir)
@@ -295,6 +343,8 @@ class Orchestrator:
         )
         try:
             result = self._run(duel)
+        except CrownMoved:
+            raise
         except DuelFailed as exc:
             self._failed(duel, str(exc))
             raise
@@ -543,6 +593,8 @@ class Orchestrator:
         track, skills, margin = req.track, spec.skills(req.track), spec.score_margin(req.track)
         self._post(duel, force=True, phase="publishing", side=None, message="publishing the record")
         existing = self._published(track, duel.event_id)
+        if existing is None:
+            self._check_crown(req, duel)
         if req.kind == "genesis":
             units = [_as_king(u) for u in duel.units]
             reason = "genesis"

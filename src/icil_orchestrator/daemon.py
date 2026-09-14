@@ -12,10 +12,13 @@ Ported from icilval's `daemon.py`. Each step takes one track's next entry and ru
   the head's). The entry leaves the queue and the duel is marked in progress in one write
   (`Queue.take`), so a restart finds one or the other.
 
-A duel that publishes, is void, or fails for the harness finishes its entry: the queue moves on
-(as in icilval; a failed entry is queued again by hand). An interrupt does not finish it, which is
-what lets the next daemon resume it. A track whose benchmark is not installed, or not the pinned
-one, is skipped with a warning and its queue left as it is.
+A duel that publishes, is refused or void, or fails for the harness finishes its entry: the queue
+moves on (as in icilval; a failed entry is queued again by hand). An interrupt does not finish it,
+which is what lets the next daemon resume it. A duel whose king lost the crown while it was stopped
+(`CrownMoved`) is discarded - its run moved aside, nothing published - and its challenger's entry
+goes back to the head of the queue, to duel the king who holds the crown now. A track whose
+benchmark is not installed, or not the pinned one, is skipped with a warning and its queue left as
+it is.
 
 Tracks are served round-robin by one process: the store has one writer, held by `store_lock` for
 the daemon's lifetime.
@@ -28,9 +31,10 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .duel.orchestrate import REQUEST_FILE, DuelFailed, DuelRequest, Orchestrator
+from .duel.orchestrate import REQUEST_FILE, CrownMoved, DuelFailed, DuelRequest, Orchestrator
 from .ids import SubmissionRef
-from .queue import InProgress, Queue, Queues
+from .queue import InProgress, Queue, QueueEntry, Queues
+from .store.records import now_iso
 from .store.writer import read_json, store_lock
 
 log = logging.getLogger(__name__)
@@ -136,6 +140,21 @@ class Daemon:
     def _run(self, track: str, queue: Queue, req: DuelRequest) -> None:
         try:
             result = self.orchestrator.run(req)
+        except CrownMoved as exc:
+            entry = queue.put_back(self._entry_of(track, req))
+            again = (
+                f"{entry.ref.entry} is queued again at the head" if entry else "nothing requeued"
+            )
+            log.warning(
+                "%s: duel %s discarded: %s (its run is at %s); %s",
+                track,
+                req.event_id(self.spec)[:16],
+                exc.reason,
+                exc.moved_to,
+                again,
+            )
+            self.publish_queue(track)
+            return
         except DuelFailed as exc:
             log.error("%s: duel %s failed: %s", track, req.event_id(self.spec)[:16], exc)
         else:
@@ -164,6 +183,26 @@ class Daemon:
         log.info("%s: resuming duel %s", track, in_progress.event_id[:16])
         self._run(track, queue, req)
         return True
+
+    def _entry_of(self, track: str, req: DuelRequest) -> QueueEntry | None:
+        """The entry a stale duel goes back as when its in-progress mark kept none: the request's
+        challenger at the request's size. None for the track's baseline, which no entry asked for."""
+        baseline = self.spec.baseline(track)
+        if req.king is None and baseline is not None:
+            if (baseline.get("repo"), baseline.get("revision")) == (
+                req.challenger.repo,
+                req.challenger.revision,
+            ):
+                return None
+        return QueueEntry(
+            key=req.challenger.key,
+            repo=req.challenger.repo,
+            revision=req.challenger.revision,
+            commit_block=req.block,
+            duel_size=req.size,
+            accepted_at=now_iso(),
+            source="requeued",
+        )
 
     def _baseline_genesis(self, track: str, queue: Queue, baseline: dict[str, Any]) -> bool:
         try:
