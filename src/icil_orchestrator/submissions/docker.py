@@ -158,11 +158,15 @@ class Docker:
         tag: str,
         build_args: Mapping[str, str] | None = None,
         timeout_s: float | None = None,
+        no_cache: bool = False,
     ) -> str:
         """Build `dockerfile` (its text; read from stdin) with `context`, tagged `tag`; the image
         id. `BuildFailed` with the log's tail when the build itself fails, `BuildTimedOut` when
-        it is not done within `timeout_s`."""
+        it is not done within `timeout_s`. `no_cache` runs every step again, for a build whose
+        point is what its steps do now rather than the image they leave."""
         args = ["build", "--tag", tag, "--file", "-"]
+        if no_cache:
+            args.append("--no-cache")
         for key, value in (build_args or {}).items():
             args += ["--build-arg", f"{key}={value}"]
         with tempfile.TemporaryDirectory(prefix="icil-build-") as tmp:

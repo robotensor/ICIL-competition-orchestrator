@@ -49,6 +49,10 @@ def test_a_build_gets_its_dockerfile_on_stdin_and_reads_the_image_id_back(tmp_pa
     args = (tmp_path / "seen.args").read_text().split()
     assert args[:6] == ["build", "--tag", "t:1", "--file", "-", "--build-arg"]
     assert args[6] == "A=1" and args[-1] == str(tmp_path / "ctx")
+    assert "--no-cache" not in args, "Docker's cache is used unless asked otherwise"
+    docker.build(tmp_path / "ctx", "FROM x\n", tag="t:2", timeout_s=30, no_cache=True)
+    args = (tmp_path / "seen.args").read_text().split()
+    assert args[:6] == ["build", "--tag", "t:2", "--file", "-", "--no-cache"]
 
 
 def test_a_missing_binary_is_the_harness_problem(tmp_path):
