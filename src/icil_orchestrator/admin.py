@@ -37,7 +37,7 @@ import sys
 import threading
 import time
 import traceback
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -172,7 +172,9 @@ class AdminServer:
     """The intake on its own threads: `serve_forever` in the foreground, or `start` beside a loop.
 
     `api` is what `resolve` asks (an `HfApi`, or a stand-in); `store`, when given, is where an
-    accepted entry's queue snapshot is published, as `queue --store add` publishes it.
+    accepted entry's queue snapshot is published, as `queue --store add` publishes it. `publish`,
+    when given, publishes it instead: a daemon serving the intake beside its loop holds the store,
+    so the intake publishes through the daemon (`Daemon.publish_queue`).
     """
 
     def __init__(
@@ -184,6 +186,7 @@ class AdminServer:
         host: str = DEFAULT_HOST,
         port: int = DEFAULT_PORT,
         store: Store | None = None,
+        publish: Callable[[str], None] | None = None,
         api: Any = None,
         request_timeout_s: float = REQUEST_TIMEOUT_S,
         max_connections: int = MAX_CONNECTIONS,
@@ -199,6 +202,7 @@ class AdminServer:
         self.spec = spec
         self.queues = queues
         self.store = store
+        self._publish = publish
         self.api = api if api is not None else HubApi()
         self.resolve_budget_s = resolve_budget_s
         self._token = token
@@ -392,8 +396,16 @@ class AdminServer:
             raise Refused(503, str(exc)) from None
 
     def publish(self, track: str) -> None:
-        """`tracks/{track}/queue.json` in the store, as `queue --store add` writes it. A store held by
-        a running orchestrator is left to it: it rewrites the snapshot every cycle."""
+        """`tracks/{track}/queue.json` in the store, as `queue --store add` writes it, or through the
+        `publish` this intake was given. Without one, a store a running daemon holds is left to the
+        daemon, which publishes the snapshot again when it next takes or settles an entry. The entry
+        is queued either way, so a snapshot that cannot be written is logged, not answered."""
+        if self._publish is not None:
+            try:
+                self._publish(track)
+            except Exception as exc:  # noqa: BLE001 - the entry is queued; a later change publishes
+                log.warning("queue snapshot for %s not published: %s", track, exc)
+            return
         if self.store is None:
             return
         try:

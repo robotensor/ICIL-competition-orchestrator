@@ -534,6 +534,29 @@ def test_no_token_no_server(spec, hub, paths):
     AdminServer(spec, queues, "x" * 32, port=0, api=hub).httpd.server_close()
 
 
+def test_an_intake_given_a_publisher_publishes_through_it(serve, paths, caplog):
+    """Beside a daemon, which holds the store, the intake publishes through the daemon. The entry is
+    queued whether or not its snapshot could be published, so a failure is logged, not answered."""
+    published: list[str] = []
+    server = serve(publish=published.append)
+    body = {"repo": "org/policy", **DASHBOARD}
+    assert call(server, "POST", "/admin/submissions", body)[0] == 200
+    assert call(server, "POST", "/admin/submissions", body)[0] == 200
+    assert published == [TRACK], "a submission already waiting was published again"
+
+    def broken(track):
+        raise OSError("No space left on device")
+
+    caplog.set_level(logging.WARNING)
+    other = serve(publish=broken)
+    status, answer, _ = call(
+        other, "POST", "/admin/submissions", {"repo": "org/other", **DASHBOARD}
+    )
+    assert status == 200 and answer["position"] == 2, answer
+    assert [e.repo for e in queued(paths)] == ["org/policy", "org/other"]
+    assert f"queue snapshot for {TRACK} not published: No space left on device" in caplog.text
+
+
 def test_an_intake_stops_at_once_whether_or_not_it_served(spec, hub, paths):
     """socketserver's `shutdown` waits for its serving loop to end, for ever when it never began:
     a daemon that could not take its store stops an intake that never served."""
