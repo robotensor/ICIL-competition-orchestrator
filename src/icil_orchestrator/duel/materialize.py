@@ -157,18 +157,22 @@ def materialize_units(
     env: Mapping[str, str] | None = None,
     timeout_s: float | None = None,
     deadline: float | None = None,
+    stop: Callable[[], bool] | None = None,
     on_prompt: Callable[[Mapping[str, Any], Prompt], None] | None = None,
 ) -> Materialized:
     """Every unit's prompt under `root`, re-using what an earlier run of this duel produced.
 
     `deadline` is the duel's, as a `time.monotonic()`: no unit's materialization runs past it, and
-    a unit not started by then has no prompt."""
+    a unit not started by then has no prompt. `stop`, asked before each unit, ends the loop early
+    when it says so (the duel is already certain to be void); the units after it have no entry."""
     root.mkdir(parents=True, exist_ok=True)
     budget = float(spec.budgets["materialize_wall_seconds"]) if timeout_s is None else timeout_s
     environ = dict(benchmark_environment(os.environ, "") if env is None else env)
     done = read_manifest(root)
     prompts: dict[str, Prompt] = {}
     for unit in units:
+        if stop is not None and stop():
+            break
         unit_id = str(unit["unit_id"])
         prompt = done.get(unit_id)
         if prompt is not None:

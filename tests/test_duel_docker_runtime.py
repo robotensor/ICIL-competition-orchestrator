@@ -134,15 +134,21 @@ def test_a_challenger_that_does_not_build_is_refused(spec, docker, tmp_path):
 
 
 def test_a_container_removed_from_outside_voids_its_unit_and_the_next_one_runs(
-    spec, docker, tmp_path
+    spec, write_spec, docker, tmp_path
 ):
-    runtime = runtime_for(spec, docker, tmp_path, cls=Killing)
+    import json
+
+    doc = json.loads(spec.path.read_text())
+    doc["duel"]["max_void_fraction"] = 0.5  # so that one void unit leaves the duel standing
+    lenient = write_spec(doc, name="lenient-docker-duel-spec.json")
+    runtime = runtime_for(lenient, docker, tmp_path, cls=Killing)
     runtime.kill, runtime.how = {"fp-000"}, "remove"
-    store, result = duel(spec, runtime, tmp_path)
-    first, second, _ = result.units
+    store, result = duel(lenient, runtime, tmp_path)
+    first, second, third = result.units
     assert first["void"] and "the policy container is gone" in first["challenger_error"]
     assert second["challenger_success"] is True, "a removed container stopped its side"
-    assert result.status == "void" and "1 of 3 units are void" in result.reason
+    assert third["challenger_success"] is True
+    assert result.published and result.record["void"] == 1, result.reason
 
 
 @pytest.mark.parametrize(

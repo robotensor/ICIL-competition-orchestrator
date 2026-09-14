@@ -332,6 +332,18 @@ def test_starting_the_policy_is_taken_from_its_units_budget_and_counted_in_its_w
     assert results[units[0]["unit_id"]]["wall_s"] >= 2.0, "the wall time left out the start"
 
 
+def test_a_side_told_to_stop_plays_nothing_more(duel_spec, fake, units, prompts, tmp_path):
+    runtime = FakePolicyRuntime(duel_spec)
+    asked = []
+
+    def stop():
+        asked.append(True)
+        return len(asked) > 1
+
+    results = side(duel_spec, fake, units, prompts, tmp_path, runtime, stop=stop)
+    assert list(results) == [units[0]["unit_id"]] and len(runtime.serves) == 1
+
+
 def test_a_side_given_less_than_its_budget_stops_at_its_share(
     duel_spec, fake, units, prompts, tmp_path
 ):

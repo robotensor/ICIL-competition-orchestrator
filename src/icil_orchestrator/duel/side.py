@@ -162,12 +162,15 @@ def run_side(
     deadline: float | None = None,
     budget_s: float | None = None,
     void_units: Mapping[str, str] | None = None,
+    stop: Callable[[], bool] | None = None,
     on_start: Callable[[Mapping[str, Any]], None] | None = None,
     on_unit: Callable[[Mapping[str, Any], dict[str, Any]], None] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Every unit of one side, by unit id. `deadline` is the duel's, as a `time.monotonic()`;
     `budget_s` is the side's wall clock (`budgets.side_wall_seconds` unless the duel gives it
-    less); `void_units` maps the units already void for the duel to the reason."""
+    less); `void_units` maps the units already void for the duel to the reason. `stop`, asked
+    before each unit not yet finished, ends the side there when it says so (the duel is already
+    certain to be void): nothing more is played for a result that cannot stand."""
     side_dir.mkdir(parents=True, exist_ok=True)
     done = read_results(side_dir)
     budgets = spec.budgets
@@ -185,6 +188,8 @@ def run_side(
         unit_id = str(unit["unit_id"])
         if unit_id in done:
             continue
+        if stop is not None and stop():
+            break
         prompt = prompts.prompts.get(unit_id)
         prompt_sha = prompt.sha256 if prompt is not None and not prompt.void else None
         if prompt is None or prompt.void:

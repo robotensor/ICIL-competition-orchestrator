@@ -444,6 +444,7 @@ class Orchestrator:
             duel.run_dir / "prompts",
             benchmark_of=lambda unit: duel.benchmarks[unit["benchmark"]],
             deadline=duel.deadline,
+            stop=lambda: self._certainly_void(duel),
             on_prompt=lambda unit, prompt: self._on_prompt(duel, unit, prompt),
         )
         self.push_touched()
@@ -503,6 +504,12 @@ class Orchestrator:
         done = sum(1 for u in duel.units if u["prompt_sha256"] or u["void"])
         self._post(duel, message=f"materialized {done} of {len(duel.units)}: {prompt.unit_id}")
 
+    def _certainly_void(self, duel: _Duel) -> bool:
+        """Whether the duel is void whatever its remaining units do: void units only ever add up,
+        so once more than `max_void_fraction` of all units are void, nothing played or
+        materialized after can make it stand."""
+        return score.too_void(duel.units, self.spec.max_void_fraction(duel.req.track))
+
     def _evaluate(self, duel: _Duel, side: str) -> None:
         side_dir = duel.run_dir / side
         self._post(duel, force=True, phase="evaluating", side=side, message=f"evaluating {side}")
@@ -532,6 +539,7 @@ class Orchestrator:
                 len(self._sides(duel.req)),
             ),
             void_units=void_units,
+            stop=lambda: self._certainly_void(duel),
             on_start=lambda unit: self._on_start(duel, side, unit),
             on_unit=lambda unit, record: self._on_unit(duel, side, record),
         )

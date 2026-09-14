@@ -257,11 +257,12 @@ def test_a_duel_with_too_many_units_void_for_the_harness_is_void(duel_spec, stor
     duel = orchestrator(duel_spec, store, tmp_path, runtime, live=live, resolve=lambda name: lost)
     result = duel.run(req)
 
-    assert result.status == "void" and "2 of 3 units are void after the challenger" in result.reason
+    assert result.status == "void" and "1 of 3 units are void after the challenger" in result.reason
     first, second, third = result.units
-    assert not first["void"] and second["void"] and third["void"]
+    assert not first["void"] and second["void"] and not third["void"]
     assert "the simulator lost it" in second["challenger_error"]
-    assert [repo for repo, _ in runtime.serves] == [REPLAY_REF.repo] * 3, "the king was played"
+    assert third["challenger_success"] is None, "a unit was played for a duel already void"
+    assert [repo for repo, _ in runtime.serves] == [REPLAY_REF.repo] * 2, "the king was played"
     assert len(store.iter_index(TRACK)) == 1, "a void duel was published"
     assert store.head(TRACK)["king"] == ZERO_REF.as_dict()
     outcome = json.loads((duel.run_dir(req) / OUTCOME_FILE).read_text())
@@ -508,8 +509,11 @@ def test_a_resumed_duel_keeps_the_kings_forfeit(duel_spec, store, tmp_path):
 def test_too_many_void_prompts_void_the_duel_before_either_side_runs(duel_spec, store, tmp_path):
     import icil_fake_benchmark
 
+    experts = []
+
     class Broken(icil_fake_benchmark.FakeBenchmark):
         def materialize_command(self, *, unit, out_dir):
+            experts.append(unit["unit_id"])
             if unit["unit_id"].endswith("-001"):
                 unit = {**unit, "fake_materialize": "crash"}
             return super().materialize_command(unit=unit, out_dir=out_dir)
@@ -522,6 +526,7 @@ def test_too_many_void_prompts_void_the_duel_before_either_side_runs(duel_spec, 
     assert result.status == "void" and result.reason == "1 of 3 prompts are void"
     assert "materialize: exited 3" in result.units[1]["challenger_error"]
     assert runtime.serves == []
+    assert len(experts) == 2, "an expert ran for a duel already certain to be void"
 
 
 def test_a_harness_that_cannot_fetch_fails_the_duel_without_deciding_it(duel_spec, store, tmp_path):
