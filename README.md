@@ -44,13 +44,22 @@ its sha once, through the Hub, confirms a sha it is given, and everything publis
 sha. `submission check` fetches it into `cache/<sha>/` (git-ignored), reads its `icil.yaml` as a
 plain file, builds its image `FROM` the pinned base by digest with its checkout copied in and its
 requirements installed at build time (bounded by `--build-timeout`), runs it under
-`spec.submission.sandbox` - no network, a read-only root, `/tmp` as tmpfs, a non-root user, memory
-with no swap, cpu and pid limits, one directory shared for the socket (a small tmpfs when the
-orchestrator is root) - and says `hello`. A step that fails is the submission's rejection with the
-reason or the harness's error, and the container is removed either way; a container whose process
-was killed is removed by the next start. `--local DIR` takes a directory in the Hub's place. See
+`spec.submission.sandbox` - no network, a read-only root, `/tmp` a nosuid,nodev tmpfs of
+`tmpfs_bytes` that may run code, a non-root user, memory with no swap, cpu and pid limits, one
+directory shared for the socket (a small tmpfs when the orchestrator is root) - and says `hello`.
+A step that fails is the submission's rejection with the reason or the harness's error, and the
+container is removed either way; a container whose process was killed is removed by the next
+start. `--local DIR` takes a directory in the Hub's place. See
 [`docker/policy-base`](docker/policy-base/README.md) for the base image, what a policy finds at
 run time and what was measured.
+
+A policy may compile at run time - `torch.compile`, Triton, cffi, `torch.utils.cpp_extension`:
+the base is CUDA's `devel` image with gcc, g++, make and Python's headers, and `HOME`, `TMPDIR`,
+`XDG_CACHE_HOME` and the Triton, inductor and torch extension caches all point into `/tmp`, where
+what they build may be loaded. Submission code already runs natively in its container, so letting
+it run code it wrote to a size-capped nosuid,nodev tmpfs removes a speed bump rather than a
+boundary; the boundary is the network (none), the read-only root, the non-root user and the
+limits.
 
 `store init` writes the store's ed25519 signing key to `keys/orchestrator.ed25519` (mode 0600)
 unless `--key` says otherwise. It is the only thing that can publish as this store, so keep it out

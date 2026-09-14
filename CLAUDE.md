@@ -35,7 +35,9 @@ runnable policy code and weights, run in a sandboxed container.
   `icil-orchestrator submission build-base`, which prints the digest to pin as
   `spec.submission.base_image.digest` (null until pinned; `submission check --base-image` names
   one meanwhile). `pytest -m container` builds the base and the replay example's image and looks
-  around inside a running policy container: Docker with the nvidia runtime and a GPU, so not CI.
+  around inside a running policy container, and `tests/test_submission_jit.py` serves policies
+  that compile at run time (`tests/fixtures/`; the torch.compile one downloads torch, so it is
+  also `slow`): Docker with the nvidia runtime and a GPU, so not CI.
   Every docker call goes through `submissions.docker.Docker`; the pure tests stand `FakeDocker` in,
   which runs the real server on the host in the container's place, and record the shared
   directory's tmpfs mount instead of making it (the container tests mount it for real, as root).
@@ -52,7 +54,8 @@ runnable policy code and weights, run in a sandboxed container.
   the HF repo at a resolved commit sha, `--network none`, a read-only root filesystem, a non-root
   user and resource limits. The orchestrator never imports, unpickles or executes anything from a
   submission, and a policy container never mounts the store, prompt metadata or the other side's
-  files.
+  files. `/tmp` may run code on purpose (`sandbox.tmpfs_exec`, so JIT compilers work): it is
+  nosuid, nodev and capped by `sandbox.tmpfs_bytes`, and it is not part of the boundary.
 - No architecture or model-type check. A submission satisfies `icil.yaml` and the policy protocol:
   it answers `hello`, accepts one demonstration and returns actions of the benchmark's shape in time.
 - The wire carries named arrays and JSON fields only. Never pickle; object dtypes are refused at
