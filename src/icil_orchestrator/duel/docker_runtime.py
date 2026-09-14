@@ -46,7 +46,7 @@ from ..ids import SubmissionRef
 from ..submissions import SubmissionError, SubmissionRejected
 from ..submissions.checks import check_repository
 from ..submissions.container import AUTHKEY_ENV, PolicyContainer
-from ..submissions.docker import Docker
+from ..submissions.docker import ContainerState, Docker
 from ..submissions.fetch import HubFetcher, LocalFetcher, RepoCache
 from ..submissions.image import base_image, build_submission_image
 from .runtime import (
@@ -252,10 +252,7 @@ class DockerPolicyRuntime:
                 error = f": {state.error}" if state.error else ""
                 if state.exit_code is None:
                     raise RuntimeUnavailable(f"the policy container is gone{error}")
-                raise PolicyDied(
-                    f"the policy container {self._how(container, state.exit_code)} "
-                    f"before listening{error}"
-                )
+                raise PolicyDied(f"the policy container {self._how(state)} before listening{error}")
             if time.monotonic() >= deadline:
                 raise PolicyDied(
                     f"the policy container did not listen within {self.start_timeout_s:g}s"
@@ -278,31 +275,13 @@ class DockerPolicyRuntime:
         error = f": {state.error}" if state.error else ""
         if state.exit_code is None:
             return PolicyEnd(f"the policy container is gone{error}", HARNESS)
-        return PolicyEnd(
-            f"the policy container {self._how(container, state.exit_code)}{error}", POLICY
-        )
+        return PolicyEnd(f"the policy container {self._how(state)}{error}", POLICY)
 
-    def _how(self, container: PolicyContainer, exit_code: int) -> str:
-        if self._oom_killed(container.name):
+    def _how(self, state: ContainerState) -> str:
+        if state.oom_killed:
             memory = int(self.spec.submission["sandbox"]["memory_bytes"])
-            return f"was killed for going over its {memory} bytes of memory ({exit_code})"
-        return f"exited ({exit_code})"
-
-    def _oom_killed(self, name: str) -> bool:
-        """`State.OOMKilled`, which `Docker.state` does not read; False when it cannot be told."""
-        run = getattr(self.docker, "_run", None)
-        if run is None:
-            return False
-        try:
-            done = run(
-                ["inspect", "--type", "container", "--format", "{{.State.OOMKilled}}", name],
-                check=False,
-                timeout_s=60,
-            )
-        except SubmissionError as exc:
-            log.warning("could not ask docker whether %s ran out of memory: %s", name, exc)
-            return False
-        return done.returncode == 0 and done.stdout.strip() == "true"
+            return f"was killed for going over its {memory} bytes of memory ({state.exit_code})"
+        return f"exited ({state.exit_code})"
 
 
 @contextmanager
