@@ -748,6 +748,23 @@ def _loopback(host: str) -> bool:
         return False
 
 
+def read_token(token_env: str = DEFAULT_TOKEN_ENV, environ: Mapping[str, str] | None = None) -> str:
+    """The bearer token from the variable `token_env` names, or `ValueError` saying what is wrong
+    with it - never the token itself. `admin serve` and `daemon --admin` both read it here."""
+    environ = os.environ if environ is None else environ
+    token = (environ.get(token_env) or "").strip()
+    if not token:
+        raise ValueError(
+            f"{token_env} is not set; the intake does not serve without a bearer token"
+        )
+    if not _strong(token):
+        raise ValueError(
+            f"{token_env} must be {MIN_TOKEN_CHARS} or more printable ASCII characters without a "
+            "space; make one with python -c 'import secrets; print(secrets.token_urlsafe(32))'"
+        )
+    return token
+
+
 def serve(
     spec: Spec,
     *,
@@ -759,21 +776,10 @@ def serve(
     environ: Mapping[str, str] | None = None,
 ) -> int:
     """`icil-orchestrator admin serve`. 2 for what stops it starting; 0 when interrupted."""
-    environ = os.environ if environ is None else environ
-    token = (environ.get(token_env) or "").strip()
-    if not token:
-        print(
-            f"error: {token_env} is not set; the intake does not serve without a bearer token",
-            file=sys.stderr,
-        )
-        return 2
-    if not _strong(token):
-        print(
-            f"error: {token_env} must be {MIN_TOKEN_CHARS} or more printable ASCII characters "
-            "without a space; make one with "
-            "python -c 'import secrets; print(secrets.token_urlsafe(32))'",
-            file=sys.stderr,
-        )
+    try:
+        token = read_token(token_env, environ)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
         return 2
     store = Store(store_dir, spec)
     if store.manifest() is None:
