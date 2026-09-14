@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from pathlib import Path
 
 import pytest
 
+from conftest import fake_spec_doc
 from duel_helpers import REPLAY_REF, ZERO_REF, Crash, FakePolicyRuntime
 from icil_orchestrator.benchmarks.subprocess_runner import Outcome, voided
 from icil_orchestrator.benchmarks.units import plugin_units
@@ -363,3 +365,24 @@ def test_a_unit_the_duel_already_holds_void_is_not_played(
     )
     assert results[units[0]["unit_id"]]["error"] == f"not played: {reason}"
     assert [s[1] for s in runtime.serves] == [u["unit_id"] for u in units[1:]]
+
+
+def given(tmp_path, unit_id):
+    """What the fake benchmark's run command was given for one of the challenger's units."""
+    return json.loads((tmp_path / "challenger" / unit_id / "given.json").read_text())["args"]
+
+
+def test_a_unit_whose_harness_runs_long_is_written_void_before_its_benchmark_is_killed(
+    spec_doc, write_spec, fake, units, prompts, tmp_path
+):
+    """Told the seconds its subprocess has (`unit_timeout_s`), the benchmark stops calling the
+    policy in time to write a harness void, rather than being killed with nothing written."""
+    doc = fake_spec_doc(spec_doc)
+    doc["budgets"].update(act_timeout_s=2.0, unit_wall_seconds=6.0, policy_budget_seconds=3.0)
+    short = write_spec(doc, name="short-unit-spec.json")
+    units[0]["fake_step_s"] = 2.0  # a simulator far slower than its unit allows
+    results = side(short, fake, units[:1], prompts, tmp_path, FakePolicyRuntime(short))
+    record = results[units[0]["unit_id"]]
+    assert (record["success"], record["void"]) == (None, True)
+    assert record["error"].startswith("fake: the unit ran out of time during"), record["error"]
+    assert 0 < given(tmp_path, units[0]["unit_id"])["unit_timeout_s"] <= 6.0

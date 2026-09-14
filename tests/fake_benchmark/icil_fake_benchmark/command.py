@@ -14,6 +14,12 @@ the replay example wins and the zero example loses. A policy that is lost or doe
 time ends the episode void with `void_cause: "policy"`, as the RoboTwin plugin reports it: the
 orchestrator counts that as the side's failure, not a void for both.
 
+It keeps time as RoboTwin's run-unit does. With `--unit-timeout-s`, no call to the policy runs
+within `RESULT_RESERVE_S` of that timeout, counted from the command's start, and a call cut short
+there voids the unit on the harness, written before whoever started the command kills it.
+`--step-s` is how long the "simulator" takes over each step, never past that deadline: a harness
+that runs long.
+
 `--behaviour policy_then_void` drives the policy the same way and then reports the unit void, with
 `--void-cause` as its `void_cause` when one is given: a simulator that lost the scene after the
 policy was done with it.
@@ -28,14 +34,20 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import sys
 import time
 from pathlib import Path
 
+#: When the command started: a unit's timeout counts from here.
+STARTED = time.monotonic()
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import icil_fake_simulator  # noqa: E402
+
+from icil_fake_benchmark import RESULT_RESERVE_S  # noqa: E402
 
 CLIP = b"\x00\x00\x00\x18ftypmp42" + b"fake-clip" * 8
 #: Frames in a demonstration; there is one action fewer.
@@ -134,29 +146,59 @@ def run(args: argparse.Namespace) -> int:
     return 0
 
 
+class OutOfTime(Exception):
+    """A call to the policy the unit's deadline cut short: the harness's time ran out."""
+
+    def __init__(self, op: str) -> None:
+        super().__init__(f"the unit ran out of time during {op}")
+
+
 def drive_policy(args: argparse.Namespace) -> dict:
     """One episode against the served policy: act once per demonstrated action."""
     import numpy as np
 
     from icil_policy.client import PolicyUnavailable, RemotePolicy
 
+    deadline = math.inf
+    if args.unit_timeout_s is not None:
+        deadline = STARTED + args.unit_timeout_s - RESULT_RESERVE_S
     with np.load(args.prompt) as data:
         arrays = {name: data[name] for name in data.files}
     meta = json.loads(bytes(arrays.pop("meta")).decode())  # privileged: stays on this side
     demonstrated = arrays["actions"]
     taken: list = []
-    error = None
+    error = cause = None
     try:
         key = bytes.fromhex(os.environ[args.authkey_env])
         with RemotePolicy(args.policy_address, key, timeout_s=args.act_timeout_s) as policy:
-            policy.hello()
-            policy.set_demonstration(arrays, {"frequency": 10.0, "cameras": ["head_camera"]})
-            policy.reset(int(meta["scene_seed"]))
+
+            def call(op, method, *call_args):
+                limit = min(args.act_timeout_s, deadline - time.monotonic())
+                if limit <= 0:
+                    raise OutOfTime(op)
+                policy.timeout_s = limit
+                began = time.monotonic()
+                try:
+                    return method(*call_args)
+                except PolicyUnavailable:
+                    cut = limit < args.act_timeout_s and time.monotonic() - began >= limit
+                    if cut:
+                        raise OutOfTime(op) from None
+                    raise
+
+            call("hello", policy.hello)
+            info = {"frequency": 10.0, "cameras": ["head_camera"]}
+            call("prompt", policy.set_demonstration, arrays, info)
+            call("reset", policy.reset, int(meta["scene_seed"]))
             for t in range(len(demonstrated)):
-                action = policy.act({"qpos": arrays["qpos"][t]})["action"]
+                action = call("act", policy.act, {"qpos": arrays["qpos"][t]})["action"]
                 taken.append(np.atleast_2d(np.asarray(action, dtype=np.float64))[0])
+                time.sleep(max(0.0, min(args.step_s, deadline - time.monotonic())))
+    except OutOfTime as exc:
+        error, cause = str(exc), "harness"
     except PolicyUnavailable as exc:
-        error = f"policy: {exc}"
+        error, cause = f"policy: {exc}", "policy"
+    if error is not None:
         print(error, file=sys.stderr)
     matched = sum(
         1
@@ -167,7 +209,7 @@ def drive_policy(args: argparse.Namespace) -> dict:
         return {
             "success": None,
             "void": True,
-            "void_cause": "policy",
+            "void_cause": cause,
             "steps": len(taken),
             "error": error,
             "progress": matched / len(demonstrated),
@@ -196,6 +238,8 @@ def main() -> int:
     r.add_argument("--authkey-env", required=True)
     r.add_argument("--behaviour", default="policy")
     r.add_argument("--act-timeout-s", type=float, default=30.0)
+    r.add_argument("--unit-timeout-s", type=float, default=None)
+    r.add_argument("--step-s", type=float, default=0.0)
     r.add_argument("--void-cause", default="")
     args = parser.parse_args()
     return materialize(args) if args.cmd == "materialize" else run(args)

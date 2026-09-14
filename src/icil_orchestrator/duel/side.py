@@ -7,7 +7,9 @@ order. For each one:
 2. the runtime serves the side's policy for this unit alone (`PolicyRuntime.serve`);
 3. the benchmark's `run_command` runs as a subprocess with the allow-listed environment plus the
    policy's key variable, within `min(budgets.unit_wall_seconds, what is left of the side's
-   budget)`, and its result is read back as an `Outcome`;
+   budget)` less the time the policy took to start, and its result is read back as an `Outcome`.
+   `run_command` is given `act_timeout_s` and that subprocess timeout as `unit_timeout_s`, so the
+   benchmark can stop calling the policy in time to write why a unit it cannot finish ended;
 4. whose the outcome is, when it is not a scored one, is decided (`attribute`);
 5. the unit's record is appended to `<side_dir>/results.jsonl` and handed to `on_unit`.
 
@@ -271,6 +273,10 @@ def _play(
                 **benchmark_environment(os.environ, served.authkey_env),
                 **served.env,
             }
+            timeout_s = max(0.0, deadline - time.monotonic())
+            # The seconds the subprocess has before it is killed: told them, the benchmark stops
+            # calling the policy in time to write why the unit ended, rather than writing nothing.
+            limits = {**extra, "unit_timeout_s": timeout_s} if timeout_s > 0 else dict(extra)
             outcome = run_unit(
                 benchmark,
                 unit,
@@ -278,9 +284,9 @@ def _play(
                 out_dir=unit_dir,
                 policy_address=served.address,
                 authkey_env=served.authkey_env,
-                timeout_s=max(0.0, deadline - time.monotonic()),
+                timeout_s=timeout_s,
                 env=env,
-                extra=extra,
+                extra=limits,
                 ledger=Ledger(unit_dir),
             )
             end = served.died()

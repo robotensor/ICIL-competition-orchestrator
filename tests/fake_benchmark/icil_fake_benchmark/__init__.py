@@ -9,8 +9,10 @@ It never imports `icil_orchestrator`, as the ABI requires of every benchmark.
 
 `run_command` reads the unit's `fake_behaviour` (default `policy`: drive the served policy) so a
 test can make a unit fail, crash, hang or write nothing, the ways a real benchmark subprocess goes
-wrong, and its `fake_void_cause` for `policy_then_void`; `materialize_command` reads its
-`fake_materialize` (default `succeed`) the same way.
+wrong, its `fake_void_cause` for `policy_then_void`, and its `fake_step_s`, how long the simulator
+takes over each step; `materialize_command` reads its `fake_materialize` (default `succeed`) the
+same way. The time limits a duel passes in `extra` become flags under the names the RoboTwin plugin
+reads them by, and `info()["limits"]` says what the command keeps back from a unit's timeout.
 """
 
 from __future__ import annotations
@@ -36,6 +38,8 @@ TASKS = {
 }
 SUITES = {"franka_1arm": sorted(TASKS)}
 EMBODIMENT = ["franka-panda", "franka-panda", 0.6]
+#: What `run` keeps back from `--unit-timeout-s` to write its result, as RoboTwin's run-unit does.
+RESULT_RESERVE_S = 1.0
 
 
 class FakeBenchmark:
@@ -49,6 +53,7 @@ class FakeBenchmark:
             "embodiment": EMBODIMENT,
             "cameras": ["head_camera"],
             "action_dims": {"qpos": 16, "ee": 16},
+            "limits": {"result_reserve_s": RESULT_RESERVE_S},
         }
 
     def catalogue(self) -> dict[str, Any]:
@@ -141,7 +146,7 @@ class FakeBenchmark:
         authkey_env: str,
         **extra: Any,
     ) -> list[str]:
-        return [
+        argv = [
             sys.executable,
             COMMAND,
             "run",
@@ -157,9 +162,14 @@ class FakeBenchmark:
             str(unit.get("fake_behaviour", "policy")),
             "--act-timeout-s",
             str(float(extra.get("act_timeout_s", 30.0))),
+            "--step-s",
+            str(float(unit.get("fake_step_s", 0.0))),
             "--void-cause",
             str(unit.get("fake_void_cause", "")),
         ]
+        if extra.get("unit_timeout_s") is not None:
+            argv += ["--unit-timeout-s", repr(float(extra["unit_timeout_s"]))]
+        return argv
 
 
 BENCHMARK = FakeBenchmark()
