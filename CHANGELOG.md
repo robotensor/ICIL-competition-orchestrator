@@ -174,4 +174,11 @@
   request naming `Authorization` twice is 401. A revision under `refs/` is refused, a resubmission
   at another duel size is 409, and an entry whose resolution took more than 5 s in all is not
   queued (503). The README's example keeps the token out of shell history.
+- (feat): `icil-orchestrator daemon --admin [--admin-host 127.0.0.1] [--admin-port 8799]
+  [--admin-token-env ICIL_ADMIN_TOKEN]` serves the submission intake on its own thread beside the
+  duel loop, on the daemon's queues. It binds before the daemon takes the store (a port in use or a
+  missing token exits 2), serves once the store is held, writes an accepted entry's queue snapshot
+  at once through the daemon (`Daemon.publish_queue(mirror=False)`, pushed with the daemon's next
+  push), and stops with the daemon: after `--once`, when the store cannot be taken, and on SIGTERM
+  or SIGINT. Stopping an intake that never served no longer hangs.
 - (chore): scaffold the orchestrator: package, pure test suite, CI and the repository's rules.

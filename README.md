@@ -47,6 +47,8 @@ icil-orchestrator duel --track franka_1arm --challenger owner/policy@main --size
     --store store/ --run-dir runs/ --base-image sha256:<hex>   # one duel, or genesis, published
 icil-orchestrator daemon --store store/ --run-dir runs/ --queue queue/ \
     --live-url https://dashboard --live-token-env ICIL_LIVE_TOKEN   # serve the queues
+icil-orchestrator daemon --store store/ --run-dir runs/ --queue queue/ --admin   # and the intake,
+                                               # as admin serve does, in the same process
 ```
 
 A submission is a Hugging Face repository at a commit: `queue add` resolves a branch or a tag to
@@ -153,6 +155,15 @@ asked. The Hub refusing a revision is a 422 with its reason, a Hub that cannot b
 Hub is given 5 s for each step of its request and resolving 5 s in all: past that nothing is queued
 and the answer is 503, because the dashboard, waiting `ICIL_ADMIN_TIMEOUT_MS` (6 s by default), has
 already reported a timeout.
+
+`daemon --admin` serves the same intake beside the duel loop, in the daemon's process and on its
+queues, with `admin serve`'s defaults (`--admin-host`, `--admin-port`, `--admin-token-env`). It
+binds before the daemon takes the store, so a port in use stops the daemon at once, and it serves
+only once the store is held. An accepted entry's queue snapshot is written to the store at once,
+even while a duel runs, and goes to the mirror with the daemon's next push. It stops with the
+daemon: after `--once`, when the store cannot be taken, and on SIGTERM or SIGINT. `admin serve`
+beside a running daemon queues on the same files, but cannot publish into the store the daemon
+holds, so its snapshot waits until the daemon next takes or settles an entry.
 
 `store init` writes the store's ed25519 signing key to `keys/orchestrator.ed25519` (mode 0600)
 unless `--key` says otherwise. It is the only thing that can publish as this store, so keep it out

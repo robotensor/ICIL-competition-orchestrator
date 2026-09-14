@@ -66,8 +66,14 @@ runnable policy code and weights, run in a sandboxed container.
   change on either side is a change on both. The dashboard's receipt shows the duel size it sent, so
   a resubmission at another size is refused (409), never answered 200. The token comes only from
   the environment, is 32 or more characters and never reaches a log. Handler threads share the
-  track queues, so `Queue` holds a thread lock beside its file lock. Its tests stand `FakeHub` in; the one marked `network` asks the real Hub and skips
-  when it cannot be reached.
+  track queues, so `Queue` holds a thread lock beside its file lock. Its tests stand `FakeHub` in;
+  the ones marked `network` ask the real Hub and skip when it cannot be reached.
+- `daemon --admin [--admin-host] [--admin-port] [--admin-token-env]` serves the same `AdminServer`
+  on its own thread beside the duel loop, sharing the daemon's `Queues`: bound in `cli._daemon`,
+  started by `Daemon.run(serving=...)` once the store is held, publishing through
+  `Daemon.publish_queue(track, mirror=False)` (a lock keeps a stale snapshot from landing last),
+  and shut down in `_daemon`'s `finally`, signals included. `tests/test_cli_duel.py` runs it end to
+  end on the local runtime and stops it with SIGINT.
 
 ## Rules
 
