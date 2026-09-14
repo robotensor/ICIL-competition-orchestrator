@@ -156,9 +156,13 @@ def materialize_units(
     benchmark_of: Callable[[Mapping[str, Any]], Any],
     env: Mapping[str, str] | None = None,
     timeout_s: float | None = None,
+    deadline: float | None = None,
     on_prompt: Callable[[Mapping[str, Any], Prompt], None] | None = None,
 ) -> Materialized:
-    """Every unit's prompt under `root`, re-using what an earlier run of this duel produced."""
+    """Every unit's prompt under `root`, re-using what an earlier run of this duel produced.
+
+    `deadline` is the duel's, as a `time.monotonic()`: no unit's materialization runs past it, and
+    a unit not started by then has no prompt."""
     root.mkdir(parents=True, exist_ok=True)
     budget = float(spec.budgets["materialize_wall_seconds"]) if timeout_s is None else timeout_s
     environ = dict(benchmark_environment(os.environ, "") if env is None else env)
@@ -172,9 +176,17 @@ def materialize_units(
             if reason is not None:
                 prompt = Prompt(unit_id=unit_id, void=True, error=f"materialize: {reason}")
                 _append(root, prompt)
+        elif deadline is not None and time.monotonic() >= deadline:
+            prompt = Prompt(
+                unit_id=unit_id,
+                void=True,
+                error="materialize: the duel ran out of its wall-clock budget",
+            )
+            _append(root, prompt)
         else:
+            left = budget if deadline is None else min(budget, deadline - time.monotonic())
             prompt = materialize_unit(
-                benchmark_of(unit), unit, root / unit_id, env=environ, timeout_s=budget
+                benchmark_of(unit), unit, root / unit_id, env=environ, timeout_s=left
             )
             _append(root, prompt)
         if prompt.void:

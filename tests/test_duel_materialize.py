@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 
 import pytest
 
@@ -40,6 +41,30 @@ def counting(fake):
             return super().materialize_command(unit=unit, out_dir=out_dir)
 
     return Counted(), calls
+
+
+def test_no_prompt_is_made_past_the_duels_deadline(fake_spec, fake, units, tmp_path):
+    counted, calls = counting(fake)
+    out = materialize_units(
+        fake_spec, units, tmp_path, benchmark_of=lambda u: counted, deadline=time.monotonic() - 1
+    )
+    assert calls == [], "an expert ran after the duel's time was up"
+    assert all(
+        p.void and "ran out of its wall-clock budget" in p.error for p in out.prompts.values()
+    )
+
+
+def test_a_materialization_is_cut_at_the_duels_deadline_before_its_own_budget(
+    fake_spec, fake, units, tmp_path
+):
+    units[0]["fake_materialize"] = "hang"
+    started = time.monotonic()
+    out = materialize_units(
+        fake_spec, units[:1], tmp_path, benchmark_of=lambda u: fake, deadline=started + 1.0
+    )
+    assert time.monotonic() - started < 30, "the expert ran on past the duel's deadline"
+    (prompt,) = out.prompts.values()
+    assert prompt.void and "budget" in prompt.error
 
 
 def test_every_unit_gets_a_verified_prompt_and_its_hash(fake_spec, fake, units, tmp_path):

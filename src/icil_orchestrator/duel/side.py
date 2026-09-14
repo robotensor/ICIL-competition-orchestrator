@@ -159,17 +159,20 @@ def run_side(
     prepared: PreparedSubmission | None,
     refused: str | None = None,
     deadline: float | None = None,
+    budget_s: float | None = None,
     void_units: Mapping[str, str] | None = None,
     on_start: Callable[[Mapping[str, Any]], None] | None = None,
     on_unit: Callable[[Mapping[str, Any], dict[str, Any]], None] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Every unit of one side, by unit id. `deadline` is the duel's, as a `time.monotonic()`;
-    `void_units` maps the units already void for the duel to the reason."""
+    `budget_s` is the side's wall clock (`budgets.side_wall_seconds` unless the duel gives it
+    less); `void_units` maps the units already void for the duel to the reason."""
     side_dir.mkdir(parents=True, exist_ok=True)
     done = read_results(side_dir)
     budgets = spec.budgets
     spent = sum(float(r.get("wall_s") or 0.0) for r in done.values())
-    side_deadline = time.monotonic() + float(budgets["side_wall_seconds"]) - spent
+    side_budget = float(budgets["side_wall_seconds"]) if budget_s is None else float(budget_s)
+    side_deadline = time.monotonic() + side_budget - spent
     if deadline is not None:
         side_deadline = min(side_deadline, deadline)
     unit_budget = float(budgets["unit_wall_seconds"])

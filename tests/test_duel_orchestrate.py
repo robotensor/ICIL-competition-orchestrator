@@ -24,6 +24,7 @@ from icil_orchestrator.duel.orchestrate import (
     DuelRequest,
     HarnessUnavailable,
     Orchestrator,
+    side_share,
 )
 from icil_orchestrator.duel.runtime import RuntimeUnavailable
 from icil_orchestrator.duel.side import read_results
@@ -558,6 +559,42 @@ def test_a_run_directory_holding_another_duel_is_moved_aside_and_the_duel_runs(
     stale = duel.run_dir(req).with_name(duel.run_dir(req).name + ".stale-1")
     assert json.loads((stale / "request.json").read_text())["size"] == "heavy"
     assert duel.run(req).published, "a request that matches is not moved aside"
+
+
+def test_each_side_may_spend_an_even_share_of_what_materializing_left_of_the_duel():
+    budgets = {"duel_wall_seconds": 28800, "side_wall_seconds": 10800}
+    assert side_share(budgets, 0, 2) == 10800
+    assert side_share(budgets, 18000, 2) == 5400, "the challenger could spend the king's time"
+    assert side_share(budgets, 18000, 1) == 10800
+    assert side_share(budgets, 30000, 2) == 0.0
+
+
+def test_the_king_is_given_the_challengers_share_of_the_duel(
+    spec_doc, write_spec, store, tmp_path, monkeypatch
+):
+    from conftest import fake_spec_doc
+    from icil_orchestrator.duel import orchestrate
+
+    doc = fake_spec_doc(spec_doc)
+    doc["budgets"]["act_timeout_s"] = 2.0
+    doc["budgets"]["side_wall_seconds"] = doc["budgets"]["duel_wall_seconds"]  # more than half
+    spec = write_spec(doc, name="long-sides.json")
+    store.spec = spec
+    crowned(store, spec, ZERO_REF)
+    shares = {}
+    run_side = orchestrate.run_side
+
+    def spying(spec, **kwargs):
+        shares[kwargs["side"]] = kwargs["budget_s"]
+        return run_side(spec, **kwargs)
+
+    monkeypatch.setattr(orchestrate, "run_side", spying)
+    result = orchestrator(spec, store, tmp_path).run(
+        DuelRequest(TRACK, REPLAY_REF, ZERO_REF, "smoke", block=2)
+    )
+    assert result.published, result.reason
+    half = spec.budgets["duel_wall_seconds"] / 2
+    assert shares["challenger"] == shares["king"] and half - 60 < shares["king"] <= half
 
 
 def test_a_duels_identity_is_its_spec_track_and_refs():

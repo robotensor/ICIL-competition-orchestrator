@@ -259,6 +259,15 @@ def test_an_interrupted_unit_is_reaped_and_moved_aside_before_it_runs_again(
     assert runs(tmp_path, first) == 1 and not (unit_dir / "pids.json").exists()
 
 
+def test_a_side_given_less_than_its_budget_stops_at_its_share(
+    duel_spec, fake, units, prompts, tmp_path
+):
+    runtime = FakePolicyRuntime(duel_spec)
+    results = side(duel_spec, fake, units, prompts, tmp_path, runtime, budget_s=0)
+    assert {r["error"] for r in results.values()} == {"the side ran out of its wall-clock budget"}
+    assert runtime.serves == []
+
+
 def test_a_unit_the_duel_already_holds_void_is_not_played(
     duel_spec, fake, units, prompts, tmp_path
 ):

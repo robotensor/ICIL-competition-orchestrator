@@ -443,6 +443,7 @@ class Orchestrator:
             duel.unit_defs,
             duel.run_dir / "prompts",
             benchmark_of=lambda unit: duel.benchmarks[unit["benchmark"]],
+            deadline=duel.deadline,
             on_prompt=lambda unit, prompt: self._on_prompt(duel, unit, prompt),
         )
         self.push_touched()
@@ -525,6 +526,11 @@ class Orchestrator:
             prepared=duel.prepared.get(side),
             refused=duel.forfeit if side == "king" else None,
             deadline=duel.deadline,
+            budget_s=side_share(
+                self.spec.budgets,
+                sum(p.wall_s for p in duel.prompts.prompts.values()) if duel.prompts else 0.0,
+                len(self._sides(duel.req)),
+            ),
             void_units=void_units,
             on_start=lambda unit: self._on_start(duel, side, unit),
             on_unit=lambda unit, record: self._on_unit(duel, side, record),
@@ -878,6 +884,14 @@ def _note(kind: str, scoring: Mapping[str, Any]) -> str:
         f"Crown rule: {scoring['reason']} ({points} against a margin of "
         f"{scoring['score_margin']:g})."
     )
+
+
+def side_share(budgets: Mapping[str, Any], materialized_s: float, sides: int) -> float:
+    """The wall clock each side of a duel may spend: `side_wall_seconds`, but never more than an
+    even share of what materializing left of `duel_wall_seconds`. The challenger plays first, and
+    without a share it could spend the king's time, voiding the king's last units for both."""
+    left = float(budgets["duel_wall_seconds"]) - float(materialized_s)
+    return max(0.0, min(float(budgets["side_wall_seconds"]), left / max(1, sides)))
 
 
 def _work_seconds(run_dir: Path) -> float:
