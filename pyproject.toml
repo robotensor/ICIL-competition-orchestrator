@@ -9,7 +9,7 @@ description = "Orchestration layer of the RoboTensor one-demonstration ICIL comp
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
-dependencies = ["pynacl>=1.5", "jsonschema>=4.20", "huggingface_hub>=0.25"]
+dependencies = ["pynacl>=1.5", "jsonschema>=4.20", "huggingface_hub>=1.0"]
 
 [project.scripts]
 icil-orchestrator = "icil_orchestrator.cli:main"
@@ -28,14 +28,20 @@ packages = ["src/icil_orchestrator"]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
-src = ["src", "tests"]
+src = ["src", "tests", "packages/icil-policy/src"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "W"]
 ignore = ["E501"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "packages/icil-policy/tests"]
+# Two test trees share module names such as test_package.py.
+addopts = "--import-mode=importlib"
+# importlib mode puts no test directory on sys.path; the orchestrator's tests import their
+# conftest and store_helpers as plain modules, and the icil-policy tests share helpers from a
+# module of their own. The orchestrator's directory comes first, so `conftest` is its own.
+pythonpath = ["tests", "packages/icil-policy/tests"]
 markers = [
   "sim: needs a plugged benchmark's simulator (assets, GPU)",
   "container: needs Docker and builds or runs a policy container",

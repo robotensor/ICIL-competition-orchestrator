@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -39,6 +40,36 @@ def track():
 def spec_doc(spec):
     """A mutable copy of the shipped contract, so a rule is tested against the real spec."""
     return json.loads(spec.path.read_text())
+
+
+@pytest.fixture
+def sandbox_spec(spec, tmp_path):
+    """The contract, with the sandbox user this process can hand a directory to: root can give
+    it to the spec's user, anyone else only to themselves. The limits are the spec's own."""
+    if os.getuid() == 0:
+        return spec
+    doc = json.loads(spec.path.read_text())
+    doc["submission"]["sandbox"]["user"] = f"{os.getuid()}:{os.getgid()}"
+    (tmp_path / "sandbox-spec.json").write_text(json.dumps(doc))
+    return load_spec_file(tmp_path / "sandbox-spec.json")
+
+
+@pytest.fixture(autouse=True)
+def shared_mounts(request, monkeypatch):
+    """The pure suite mounts no filesystem: the shared directory's tmpfs is recorded here, as
+    `("mount", directory, uid, gid)` and `("umount", directory)`, instead of mounted. A container
+    test mounts it for real."""
+    calls: list[tuple] = []
+    if request.node.get_closest_marker("container") is None:
+        monkeypatch.setattr(
+            "icil_orchestrator.submissions.container.mount_shared_dir",
+            lambda directory, uid, gid: calls.append(("mount", Path(directory), uid, gid)),
+        )
+        monkeypatch.setattr(
+            "icil_orchestrator.submissions.container.unmount_shared_dir",
+            lambda directory: calls.append(("umount", Path(directory))),
+        )
+    return calls
 
 
 @pytest.fixture

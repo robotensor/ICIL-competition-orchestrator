@@ -34,4 +34,43 @@
   refuses a root that is not a store, and drops the `--all` flag, which did nothing.
 - (test): a fake benchmark distribution under `tests/fake_benchmark` and a reproducible fixture
   store under `tests/fixtures/store`.
+- (feat): `packages/icil-policy`, the policy protocol: a competitor's policy named by `icil.yaml`
+  and served by `python -m icil_policy.serve` to one client, which a benchmark drives with
+  `icil_policy.client.RemotePolicy`. Named arrays and JSON fields over an authenticated socket, no
+  pickling, object dtypes refused at both ends, hard per-call timeouts, and one
+  `PolicyUnavailable` for every failure, `close` apart, which is best effort. Both ends bound what
+  a hostile message can cost them: at most 1024 arrays and 32 dimensions each, keys of at least 16
+  bytes, an `icil.yaml` of at most 1 MiB whose problems quote only excerpts, and a session that
+  ends after `--idle-timeout-s` of silence. Examples `replay_policy` and `zero_policy` are
+  complete competitor repositories. Depends on numpy and PyYAML.
+- (feat): a submission runs pinned to its commit, with no network. `queue add` resolves a branch
+  or a tag to its commit sha through the Hub, once; the checkout is fetched into a cache addressed
+  by that sha, no larger than `max_repo_bytes`; `icil.yaml` and its requirements must be plain
+  files of the repository (no symbolic link, no pipe) before `icil_policy` reads them;
+  `docker/policy-base/Dockerfile` (CUDA 12.8 runtime, Python 3.10, icil-policy) is built by
+  `submission build-base` and referenced by digest; a submission's image is its checkout and its
+  requirements installed at build time, nothing else; it runs under exactly
+  `spec.submission.sandbox` - `--network none`, `--read-only`, `--tmpfs /tmp`, the non-root user,
+  the GPU count and the memory, cpu and pid limits - with one directory mounted for the socket, the
+  authkey passed by variable name, and `hello` within `budgets.policy_start_seconds` as the health
+  check; the container is removed whatever happened. `icil-orchestrator submission check
+  <repo>@<revision> [--local DIR]` reports every step; a manifest naming a missing class or
+  requirements that do not install is a rejection with the reason and nothing runs.
+- (fix): the policy sandbox after review. The container gets no swap (`--memory-swap` equal to
+  `--memory`), so `memory_bytes` is its total. The one directory it shares with the host is a
+  64 MiB, 64-entry tmpfs mounted by the orchestrator when root, so a policy cannot fill the host's
+  disk through it, and only a socket itself (not a link at its name) counts as listening. The
+  build is bounded (`submission check --build-timeout`, 1800 s by default until `spec.budgets`
+  carries a build budget). A build that fails or runs past it is a rejection once the
+  orchestrator's own index probe (pip in the base, with nothing of the submission, never cached)
+  gets through, whatever the build printed, and the harness's error when the probe cannot reach
+  the index either. The session kept after `hello` is bounded by
+  `act_timeout_s`. A file the Hub declares no size for is not downloaded; a missing branch or
+  repository is rejected with the Hub's words for it; `queue add` confirms a commit sha on the Hub
+  too; `--local` holds the ref to a repo id. Containers are labelled with the process that started
+  them, and a start reaps those whose process has ended, with their tmpfs.
+- (feat): `icil-orchestrator submission prune` removes the `icil-submission` images no container
+  uses. The checkout is copied into its image rather than bind-mounted read-only as issue #4's
+  scope put it: the requirements install needs it at build time, the recorded image id is the code
+  that ran, and the container mounts nothing of the host but its socket directory.
 - (chore): scaffold the orchestrator: package, pure test suite, CI and the repository's rules.

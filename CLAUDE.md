@@ -21,12 +21,27 @@ runnable policy code and weights, run in a sandboxed container.
 
 ## Commands
 
-- Host env: `uv venv --python 3.10 .venv && uv pip install -e ".[dev]"`; `ruff check . && ruff format --check .`; `pytest -m "not sim and not container"`.
+- Host env: `uv venv --python 3.10 .venv && uv pip install -e ".[dev]" -e packages/icil-policy`; `ruff check . && ruff format --check .`; `pytest -m "not sim and not container"`.
 - Tests run a benchmark through `tests/fake_benchmark` (a real `.dist-info` on `sys.path`; its
   command half is a script). After an intended change to `spec.json` or the store layout,
   regenerate the fixture store with `python tests/fixtures/make_store.py` and commit it.
 - `live.PHASES` must equal the dashboard's `PHASES` (`lib/live/types.ts`); a new phase is a
   dashboard change first.
+- `packages/icil-policy/` is the policy protocol, a distribution of its own installed into every
+  competitor's image: numpy and PyYAML only, never an import of `icil_orchestrator`. CI also tests
+  it alone, installed with nothing but pytest: `pytest packages/icil-policy`.
+- The policy sandbox is `src/icil_orchestrator/submissions/` (resolve, fetch, checks, image,
+  container, check) and `docker/policy-base/Dockerfile`, built from the repository root by
+  `icil-orchestrator submission build-base`, which prints the digest to pin as
+  `spec.submission.base_image.digest` (null until pinned; `submission check --base-image` names
+  one meanwhile). `pytest -m container` builds the base and the replay example's image and looks
+  around inside a running policy container: Docker with the nvidia runtime and a GPU, so not CI.
+  Every docker call goes through `submissions.docker.Docker`; the pure tests stand `FakeDocker` in,
+  which runs the real server on the host in the container's place, and record the shared
+  directory's tmpfs mount instead of making it (the container tests mount it for real, as root).
+  Containers carry `icil.orchestrator=policy` and their owner's pid, start time and pid namespace;
+  `PolicyContainer.start` reaps those whose owner has ended, and `submission prune` removes the
+  `icil-submission` images no container uses.
 
 ## Rules
 
