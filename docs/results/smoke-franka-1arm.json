@@ -1,0 +1,433 @@
+{
+  "benchmark": {
+    "icil_policy_sha256": {
+      "base_image": "c30d1bd2aa9c67b54bc9618832f26c64f9978f00e396baa32949325b5877969d",
+      "orchestrator": "c30d1bd2aa9c67b54bc9618832f26c64f9978f00e396baa32949325b5877969d /root/robotensor/wt/orchestrator-duel/packages/icil-policy/src/icil_policy",
+      "simulator_env": "c30d1bd2aa9c67b54bc9618832f26c64f9978f00e396baa32949325b5877969d /root/robotensor/wt/orchestrator-policy-protocol/packages/icil-policy/src/icil_policy"
+    },
+    "icil_policy_simulator_env": "0.1.0.dev0",
+    "pin": {
+      "api_version": 1,
+      "distribution": "robotwin-icil-competition",
+      "repo": "robotensor/ICIL-robotwin-benchmark",
+      "version": "0.1.0.dev0",
+      "wheel_sha256": "984a74b937aceb7a0a5c31401fc5b6d8ad80cb62d69d3b8b85179874ab41a628"
+    },
+    "source_sha256_plugin": "0871e858ad2eff22eaf1c8ff77cef482e2b9f118fabf08f3379e50301ae9f74f",
+    "source_sha256_simulator_env": "0871e858ad2eff22eaf1c8ff77cef482e2b9f118fabf08f3379e50301ae9f74f",
+    "wheels": {
+      "robotwin_icil-0.1.0.dev0-py3-none-any.whl": {
+        "sha256": "3eefe190daf86eb932bcdbe21df4ca5bce6b5266b04c7c4c09a664193b64b17b"
+      },
+      "robotwin_icil_competition-0.1.0.dev0-py3-none-any.whl": {
+        "sha256": "984a74b937aceb7a0a5c31401fc5b6d8ad80cb62d69d3b8b85179874ab41a628"
+      }
+    }
+  },
+  "commits": {
+    "benchmark": {
+      "branch": "HEAD",
+      "dirty": false,
+      "head": "98a7ffd3140d0977b38d48c85a3eeb5706ca15a8",
+      "path": "/root/robotensor/ICIL-robotwin-benchmark"
+    },
+    "benchmark_wheels_built_from": "98a7ffd3140d0977b38d48c85a3eeb5706ca15a8",
+    "dashboard": {
+      "branch": "orchestrator-contest",
+      "dirty": false,
+      "head": "0854d32d825b0ac6e3eaf3590e6c7d42c29ac1cd",
+      "path": "/root/robotensor/wt/dashboard-contest"
+    },
+    "orchestrator": {
+      "branch": "duel",
+      "dirty": false,
+      "head": "7e79f8407cc3a2b13e53c9345964a13a172e7ff5",
+      "path": "/root/robotensor/wt/orchestrator-duel"
+    },
+    "robotwin": "96c1feab536306b50c26af200044fcdf126e8904"
+  },
+  "dashboard": {
+    "duel_page_clips": "all 9 of the duel's clips (demo, challenger and king for 3 units) are named on /duel/<event_id> and served by /media/<sha256>.mp4 as video/mp4 (HTTP 200)",
+    "live_note": "Read from /api/live/stream with a reconnecting client started at 04:47:37Z, after the daemon took the entry at 04:46:37Z; fetching and checking (cached images) had already passed. The dashboard accepted 29 live POSTs (HTTP 200); the one 401 is run.sh's check that a POST without the token is refused.",
+    "live_phases_seen": [
+      {
+        "at": "04:47:37Z",
+        "phase": "materializing"
+      },
+      {
+        "at": "04:48:43Z",
+        "phase": "evaluating",
+        "side": "challenger"
+      },
+      {
+        "at": "04:50:37Z",
+        "phase": "evaluating",
+        "side": "king"
+      },
+      {
+        "at": "04:53:54Z",
+        "phase": "done"
+      }
+    ],
+    "pages_http_200": [
+      "/",
+      "/tracks/franka-1arm",
+      "/tracks/franka-1arm/live",
+      "/duel/99290d12422f53e8b0c2ddf5d1a29e34b720d9af55f0976c0754f566ef451b16",
+      "/duel/8763baede350095d2407b338bb882d3316171695bb00719c601e35d25e7c7d7e"
+    ],
+    "server": "next dev on 127.0.0.1:20320 from robofluent/ICIL-competition-dashboard orchestrator-contest, ICIL_STORE=smoke6/store"
+  },
+  "images": {
+    "base": "sha256:351eaad18a318b342249de1731a5e091aa0887948534402286acd33b88a8d3f8",
+    "sides": {
+      "duel": {
+        "challenger": {
+          "base_image_digest": "sha256:351eaad18a318b342249de1731a5e091aa0887948534402286acd33b88a8d3f8",
+          "commit": "396110b15c9f2ca0c81dd12af53d875e98eed757",
+          "image": "sha256:6de4fdeddd962a5168bea7a2da3a35b36f2eb4c8f6bd6f348bdb36fefbf28818",
+          "repo": "robofluent/icil-example-replay-policy",
+          "revision": "396110b15c9f2ca0c81dd12af53d875e98eed757",
+          "runtime": "docker"
+        },
+        "king": {
+          "base_image_digest": "sha256:351eaad18a318b342249de1731a5e091aa0887948534402286acd33b88a8d3f8",
+          "commit": "d15b0b8ff67cb1698dec96efe1485d21e2df864b",
+          "image": "sha256:cd950392a8b6432747b8848f3cb0dc616cd4728ef9e5981f32f5122a6c0dd497",
+          "repo": "robofluent/icil-example-zero-policy",
+          "revision": "d15b0b8ff67cb1698dec96efe1485d21e2df864b",
+          "runtime": "docker"
+        }
+      },
+      "genesis": {
+        "king": {
+          "base_image_digest": "sha256:351eaad18a318b342249de1731a5e091aa0887948534402286acd33b88a8d3f8",
+          "commit": "d15b0b8ff67cb1698dec96efe1485d21e2df864b",
+          "image": "sha256:cd950392a8b6432747b8848f3cb0dc616cd4728ef9e5981f32f5122a6c0dd497",
+          "repo": "robofluent/icil-example-zero-policy",
+          "revision": "d15b0b8ff67cb1698dec96efe1485d21e2df864b",
+          "runtime": "docker"
+        }
+      }
+    }
+  },
+  "issue": "robotensor/ICIL-competition-orchestrator#6",
+  "machine": {
+    "cpu": "Intel(R) Core(TM) Ultra 9 285K",
+    "cpus": 24,
+    "docker": "27.3.1",
+    "gpus": [
+      {
+        "driver": "580.173.02",
+        "memory": "32607 MiB",
+        "name": "NVIDIA GeForce RTX 5090"
+      }
+    ],
+    "hostname": "c52b5c851485",
+    "kernel": "7.0.0-31-generic",
+    "memory_bytes": 66749763584,
+    "python_orchestrator": "3.10.21",
+    "python_simulator": "3.10.21"
+  },
+  "outcome": {
+    "duel": {
+      "block": 2,
+      "challenger": {
+        "key": "37dbefc023461b28",
+        "repo": "robofluent/icil-example-replay-policy",
+        "revision": "396110b15c9f2ca0c81dd12af53d875e98eed757"
+      },
+      "challenger_scores": {
+        "average": 1.0,
+        "franka_pick_and_place": 1.0,
+        "franka_press_push": 1.0,
+        "franka_stacking": 1.0
+      },
+      "dethroned": true,
+      "duel_id": "c8becebea9b76bf87d186ae0cd8ea6da9f92c261e0dec9f766cbba5897dea436",
+      "event_id": "8763baede350095d2407b338bb882d3316171695bb00719c601e35d25e7c7d7e",
+      "every_unit_same_prompt_sha256_on_both_sides": true,
+      "finished_at": "2026-09-14T04:53:53Z",
+      "kind": "duel",
+      "king": {
+        "key": "f65b923cf477ca19",
+        "repo": "robofluent/icil-example-zero-policy",
+        "revision": "d15b0b8ff67cb1698dec96efe1485d21e2df864b"
+      },
+      "king_scores": {
+        "average": 0.0,
+        "franka_pick_and_place": 0.0,
+        "franka_press_push": 0.0,
+        "franka_stacking": 0.0
+      },
+      "losses": 0,
+      "new_king": {
+        "key": "37dbefc023461b28",
+        "repo": "robofluent/icil-example-replay-policy",
+        "revision": "396110b15c9f2ca0c81dd12af53d875e98eed757"
+      },
+      "notes": [
+        "Crown rule: margin-met (+100.00 points against a margin of 3)."
+      ],
+      "run_dir": "/root/robotensor/smoke6/runs/franka_1arm/8763baede350095d",
+      "runtime": "docker",
+      "scoring": {
+        "delta_points": 100.0,
+        "max_void_fraction": 0.2,
+        "reason": "margin-met",
+        "score_margin": 3.0,
+        "void_fraction": 0.0
+      },
+      "sides": {
+        "challenger": {
+          "action_type": "qpos",
+          "base_image_digest": "sha256:351eaad18a318b342249de1731a5e091aa0887948534402286acd33b88a8d3f8",
+          "commit": "396110b15c9f2ca0c81dd12af53d875e98eed757",
+          "image": "sha256:6de4fdeddd962a5168bea7a2da3a35b36f2eb4c8f6bd6f348bdb36fefbf28818",
+          "key": "37dbefc023461b28",
+          "policy": "replay.policy:ReplayPolicy",
+          "refused": null,
+          "repo": "robofluent/icil-example-replay-policy",
+          "revision": "396110b15c9f2ca0c81dd12af53d875e98eed757",
+          "runtime": "docker",
+          "units": 3,
+          "void": 0,
+          "wall_seconds": 114.334
+        },
+        "king": {
+          "action_type": "qpos",
+          "base_image_digest": "sha256:351eaad18a318b342249de1731a5e091aa0887948534402286acd33b88a8d3f8",
+          "commit": "d15b0b8ff67cb1698dec96efe1485d21e2df864b",
+          "image": "sha256:cd950392a8b6432747b8848f3cb0dc616cd4728ef9e5981f32f5122a6c0dd497",
+          "key": "f65b923cf477ca19",
+          "policy": "zero.policy:ZeroPolicy",
+          "refused": null,
+          "repo": "robofluent/icil-example-zero-policy",
+          "revision": "d15b0b8ff67cb1698dec96efe1485d21e2df864b",
+          "runtime": "docker",
+          "units": 3,
+          "void": 0,
+          "wall_seconds": 195.215
+        }
+      },
+      "started_at": "2026-09-14T04:46:37Z",
+      "ties": 0,
+      "units": [
+        {
+          "challenger_success": true,
+          "king_success": false,
+          "outcome": "challenger",
+          "prompt_sha256": "d220e0a5e6a54b2997532256bb98a3e3094fae0600c848464c01869938168e57",
+          "prompt_sha256_by_side_run": {
+            "challenger": "d220e0a5e6a54b2997532256bb98a3e3094fae0600c848464c01869938168e57",
+            "king": "d220e0a5e6a54b2997532256bb98a3e3094fae0600c848464c01869938168e57"
+          },
+          "prompt_sha256_same": true,
+          "skill": "franka_pick_and_place",
+          "task": "place_empty_cup",
+          "unit_id": "fp-000",
+          "void": false
+        },
+        {
+          "challenger_success": true,
+          "king_success": false,
+          "outcome": "challenger",
+          "prompt_sha256": "643552a85256566ac94b547c96ceb9861ca9b54331d05602961c37e2ddc2e2c6",
+          "prompt_sha256_by_side_run": {
+            "challenger": "643552a85256566ac94b547c96ceb9861ca9b54331d05602961c37e2ddc2e2c6",
+            "king": "643552a85256566ac94b547c96ceb9861ca9b54331d05602961c37e2ddc2e2c6"
+          },
+          "prompt_sha256_same": true,
+          "skill": "franka_stacking",
+          "task": "stack_bowls_two",
+          "unit_id": "fs-001",
+          "void": false
+        },
+        {
+          "challenger_success": true,
+          "king_success": false,
+          "outcome": "challenger",
+          "prompt_sha256": "8f1dfb2953b28f2bf5a9a083a57d420dbe85d2ff65540bfba144aee673af94bf",
+          "prompt_sha256_by_side_run": {
+            "challenger": "8f1dfb2953b28f2bf5a9a083a57d420dbe85d2ff65540bfba144aee673af94bf",
+            "king": "8f1dfb2953b28f2bf5a9a083a57d420dbe85d2ff65540bfba144aee673af94bf"
+          },
+          "prompt_sha256_same": true,
+          "skill": "franka_press_push",
+          "task": "press_stapler",
+          "unit_id": "fu-002",
+          "void": false
+        }
+      ],
+      "void": 0,
+      "wall_seconds": 436.122,
+      "wins": 3
+    },
+    "genesis": {
+      "block": 1,
+      "challenger": null,
+      "challenger_scores": null,
+      "dethroned": false,
+      "duel_id": "c5c8809d74495faa14c0e1456e8f061ac9c4b79beac3866c80a8ffb93e06e0ab",
+      "event_id": "99290d12422f53e8b0c2ddf5d1a29e34b720d9af55f0976c0754f566ef451b16",
+      "every_unit_same_prompt_sha256_on_both_sides": true,
+      "finished_at": "2026-09-14T04:46:06Z",
+      "kind": "genesis",
+      "king": {
+        "key": "f65b923cf477ca19",
+        "repo": "robofluent/icil-example-zero-policy",
+        "revision": "d15b0b8ff67cb1698dec96efe1485d21e2df864b"
+      },
+      "king_scores": {
+        "average": 0.0,
+        "franka_pick_and_place": 0.0,
+        "franka_press_push": 0.0,
+        "franka_stacking": 0.0
+      },
+      "losses": 0,
+      "new_king": null,
+      "notes": [
+        "The first entrant took the empty throne, scored on its own units."
+      ],
+      "run_dir": "/root/robotensor/smoke6/runs/franka_1arm/99290d12422f53e8",
+      "runtime": "docker",
+      "scoring": {
+        "delta_points": null,
+        "max_void_fraction": 0.2,
+        "reason": "genesis",
+        "score_margin": 3.0,
+        "void_fraction": 0.0
+      },
+      "sides": {
+        "king": {
+          "action_type": "qpos",
+          "base_image_digest": "sha256:351eaad18a318b342249de1731a5e091aa0887948534402286acd33b88a8d3f8",
+          "commit": "d15b0b8ff67cb1698dec96efe1485d21e2df864b",
+          "image": "sha256:cd950392a8b6432747b8848f3cb0dc616cd4728ef9e5981f32f5122a6c0dd497",
+          "key": "f65b923cf477ca19",
+          "policy": "zero.policy:ZeroPolicy",
+          "refused": null,
+          "repo": "robofluent/icil-example-zero-policy",
+          "revision": "d15b0b8ff67cb1698dec96efe1485d21e2df864b",
+          "runtime": "docker",
+          "units": 3,
+          "void": 0,
+          "wall_seconds": 189.452
+        }
+      },
+      "started_at": "2026-09-14T04:41:08Z",
+      "ties": 3,
+      "units": [
+        {
+          "challenger_success": null,
+          "king_success": false,
+          "outcome": "tie",
+          "prompt_sha256": "188815231bc94bf22222a7d2c93302290861217deb8d04c8f2ef1fa4f1e0a210",
+          "prompt_sha256_by_side_run": {
+            "challenger": "188815231bc94bf22222a7d2c93302290861217deb8d04c8f2ef1fa4f1e0a210"
+          },
+          "prompt_sha256_same": true,
+          "skill": "franka_pick_and_place",
+          "task": "place_empty_cup",
+          "unit_id": "fp-000",
+          "void": false
+        },
+        {
+          "challenger_success": null,
+          "king_success": false,
+          "outcome": "tie",
+          "prompt_sha256": "4923ef35387dd241eac4c6b467beff52b87f64c8a837eea83241324c25973462",
+          "prompt_sha256_by_side_run": {
+            "challenger": "4923ef35387dd241eac4c6b467beff52b87f64c8a837eea83241324c25973462"
+          },
+          "prompt_sha256_same": true,
+          "skill": "franka_stacking",
+          "task": "stack_bowls_two",
+          "unit_id": "fs-001",
+          "void": false
+        },
+        {
+          "challenger_success": null,
+          "king_success": false,
+          "outcome": "tie",
+          "prompt_sha256": "2ffbe6428346813458329e7edd32f130c63a40c69d2200fd41dff5c6fd031b45",
+          "prompt_sha256_by_side_run": {
+            "challenger": "2ffbe6428346813458329e7edd32f130c63a40c69d2200fd41dff5c6fd031b45"
+          },
+          "prompt_sha256_same": true,
+          "skill": "franka_press_push",
+          "task": "click_bell",
+          "unit_id": "fu-002",
+          "void": false
+        }
+      ],
+      "void": 0,
+      "wall_seconds": 298.702,
+      "wins": 0
+    },
+    "replay_dethroned_zero": true,
+    "store_verify": [
+      "validator_key: a35e1944d975cd5e99a641c5f692e2ba2706f222f1f4fb8044aa325058a175cc",
+      "records=2 events=2 media=15 OK"
+    ]
+  },
+  "policy_gpus": "0",
+  "size": "smoke",
+  "spec": {
+    "fingerprint": "677c6d24f59d3321ba3212edb4adcc51cd213ac2e0ac33f220038ff2b95b70f9",
+    "note": "smoke6/spec.json is orchestrator-duel 7e79f84's spec.json with three pins (benchmark version and wheel sha256, base image digest). smoke-duel later changed only _skills_comment, which moves the spec fingerprint but no number.",
+    "path": "/root/robotensor/smoke6/spec.json",
+    "sha256": "4299d69460a853e2b3c7f5185b583505ca44f3b99023e22a1f4bceef3fae3be5",
+    "spec_version": 7
+  },
+  "track": "franka_1arm",
+  "wall_seconds": {
+    "duel_event": 436.122,
+    "genesis_event": 298.702,
+    "steps": [
+      {
+        "end": "2026-09-14T04:39:57Z",
+        "exit": 0,
+        "seconds": 1.956,
+        "start": "2026-09-14T04:39:55Z",
+        "step": "a"
+      },
+      {
+        "end": "2026-09-14T04:39:58Z",
+        "exit": 0,
+        "seconds": 0.794,
+        "start": "2026-09-14T04:39:57Z",
+        "step": "preflight"
+      },
+      {
+        "end": "2026-09-14T04:40:24Z",
+        "exit": 0,
+        "seconds": 7.137,
+        "start": "2026-09-14T04:40:16Z",
+        "step": "e"
+      },
+      {
+        "end": "2026-09-14T04:46:06Z",
+        "exit": 0,
+        "seconds": 300.694,
+        "start": "2026-09-14T04:41:06Z",
+        "step": "b"
+      },
+      {
+        "end": "2026-09-14T04:53:53Z",
+        "exit": 0,
+        "seconds": 439.116,
+        "start": "2026-09-14T04:46:34Z",
+        "step": "c"
+      },
+      {
+        "end": "2026-09-14T04:54:07Z",
+        "exit": 0,
+        "seconds": 0.281,
+        "start": "2026-09-14T04:54:07Z",
+        "step": "d"
+      }
+    ]
+  },
+  "written_at": "2026-09-14T04:54:08Z"
+}
