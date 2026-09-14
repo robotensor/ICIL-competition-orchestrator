@@ -674,7 +674,7 @@ class Orchestrator:
             wall_seconds=_seconds_since(duel.started_at),
             sides=sides,
             demonstration=spec.demonstration(track),
-            prompts=duel.prompts.manifest() if duel.prompts else [],
+            prompts=self._prompts_published(duel),
             notes=[_note(req.kind, scoring)]
             + ([f"king forfeit: {duel.forfeit}"] if duel.forfeit else []),
         )
@@ -702,6 +702,17 @@ class Orchestrator:
         moved = "moves" if record.get("dethroned") or req.kind == "genesis" else "stays"
         self._post(duel, force=True, phase="done", message=f"the crown {moved}: {reason}")
         return result
+
+    def _prompts_published(self, duel: _Duel) -> list[dict[str, Any]]:
+        """The event's `prompts`: every prompt both sides ran from, by sha256, with the unit's
+        demonstration clip only where the store holds it (`media.demo_video`) - a signed event
+        never names a clip the store does not have."""
+        if duel.prompts is None:
+            return []
+        return [
+            {**entry, "demo_video": duel.row(str(entry["unit_id"])).get("demo_video")}
+            for entry in duel.prompts.manifest()
+        ]
 
     def _republished(self, req: DuelRequest, record: dict[str, Any]) -> DuelResult:
         """A duel an earlier run published before it stopped: nothing is fetched, run or published

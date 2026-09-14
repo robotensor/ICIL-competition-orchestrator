@@ -94,6 +94,8 @@ def test_the_replay_challenger_dethrones_the_zero_king_on_identical_prompts(
     king = read_results(run_dir / "king")
     prompts = {p["unit_id"]: p["sha256"] for p in event["prompts"]}
     assert len(event["units"]) == 3 == len(prompts)
+    clips = {p["unit_id"]: p["demo_video"] for p in event["prompts"]}
+    assert clips == {u["unit_id"]: u["demo_video"] for u in event["units"]}
     for unit in event["units"]:
         sha = unit["prompt_sha256"]
         assert sha and sha == unit["prompt"]["sha256"] == prompts[unit["unit_id"]]
@@ -156,6 +158,28 @@ def test_the_replay_challenger_dethrones_the_zero_king_on_identical_prompts(
         SchemaCheck(load_schema()).check("LiveFrame", frame, "frame", report)
     assert report.errors == []
     assert live.frames[-1]["units"][0]["challenger_video"], "clips reach the live view"
+
+
+def test_an_event_names_no_demonstration_clip_the_store_does_not_hold(
+    spec_doc, write_spec, store, tmp_path
+):
+    from conftest import fake_spec_doc
+
+    doc = fake_spec_doc(spec_doc)
+    doc["budgets"]["act_timeout_s"] = 2.0
+    doc["media"]["demo_video"] = False
+    spec = write_spec(doc, name="no-demo-clips.json")
+    store.spec = spec
+    crowned(store, spec, ZERO_REF)
+    result = orchestrator(spec, store, tmp_path).run(
+        DuelRequest(TRACK, REPLAY_REF, ZERO_REF, "smoke", block=2)
+    )
+    assert result.published, result.reason
+    event = event_of(store, result.record)
+    assert [p["demo_video"] for p in event["prompts"]] == [None, None, None]
+    assert all(p["sha256"] for p in event["prompts"])
+    assert all(u["demo_video"] is None for u in event["units"])
+    verified(store, spec)
 
 
 def test_the_zero_challenger_does_not_take_the_replay_kings_crown(duel_spec, store, tmp_path):
