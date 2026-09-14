@@ -26,6 +26,7 @@ reads `error` from a refusal and nothing else of it; `key`, `revision`, `entry`,
 from __future__ import annotations
 
 import hmac
+import io
 import ipaddress
 import json
 import logging
@@ -34,8 +35,10 @@ import re
 import socket
 import sys
 import threading
+import time
 import traceback
 from collections.abc import Mapping
+from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -75,8 +78,32 @@ DEFAULT_SOURCE = "admin"
 #: listens, rather than timing the form out on an entry that may yet be queued after it gave up.
 RESOLVE_TIMEOUT_S = 5.0
 
-#: Seconds a connection may take to send its request, and may sit idle between two.
+#: Seconds a request has to arrive whole - request line, headers and body - from its first byte, and
+#: seconds a connection may sit idle before a request or between two. Past it the connection is
+#: closed (a late body is answered 408 first). A deadline for the request, not for each read, so a
+#: client sending a byte every few seconds holds nothing for longer.
 REQUEST_TIMEOUT_S = 10.0
+
+#: A request line and its headers together. The dashboard's are a few hundred bytes; http.server
+#: alone would buffer a hundred lines of 65 KB each for one connection, before any token is seen.
+MAX_HEAD_BYTES = 16 * 1024
+
+#: Connections served at once, each on its own thread. One past it is closed as it is accepted.
+MAX_CONNECTIONS = 64
+
+#: Connections the kernel holds while the accept loop catches up (socketserver's default of 5
+#: reset a burst of simultaneous submits).
+LISTEN_BACKLOG = 64
+
+#: Seconds a refused request's body is waited for, so that a client still sending it reads the
+#: refusal rather than a reset. No longer: a client declaring more than it sends holds nothing.
+DISCARD_WAIT_S = 1.0
+
+#: Bytes asked of the socket per read.
+RECEIVE_BYTES = 16 * 1024
+
+#: The blank line that ends a request's head.
+HEAD_END = re.compile(rb"\r?\n\r?\n")
 
 #: A branch, a tag or a commit sha, as a Hub revision: printable ASCII with no space.
 REVISION_RE = re.compile(r"[\x21-\x7e]{1,255}")
@@ -142,6 +169,7 @@ class AdminServer:
         store: Store | None = None,
         api: Any = None,
         request_timeout_s: float = REQUEST_TIMEOUT_S,
+        max_connections: int = MAX_CONNECTIONS,
     ) -> None:
         if not token or not token.strip():
             raise ValueError("the admin token is empty; the intake does not serve without one")
@@ -154,9 +182,10 @@ class AdminServer:
         #: Queueing and publishing the snapshot, one request at a time within this process; the
         #: queue file's own lock stands between this process and any other.
         self._lock = threading.Lock()
-        server_class = _IPv6Server if ":" in host else ThreadingHTTPServer
-        self.httpd = server_class((host, port), _handler(self, request_timeout_s))
-        self.httpd.daemon_threads = True
+        server_class = _IPv6Server if ":" in host else _Server
+        self.httpd = server_class(
+            (host, port), _handler(self, request_timeout_s), max_connections=max_connections
+        )
         self.host = str(self.httpd.server_address[0])
         self.port = int(self.httpd.server_address[1])
 
@@ -342,7 +371,42 @@ class AdminServer:
         self.httpd.server_close()
 
 
-class _IPv6Server(ThreadingHTTPServer):
+class _Server(ThreadingHTTPServer):
+    """A thread per connection, at most `max_connections` of them; one more is closed at once."""
+
+    daemon_threads = True
+    request_queue_size = LISTEN_BACKLOG
+
+    def __init__(self, address: Any, handler: Any, *, max_connections: int) -> None:
+        self._slots = threading.BoundedSemaphore(max_connections)
+        self._max_connections = max_connections
+        self._warned_at = float("-inf")
+        super().__init__(address, handler)
+
+    def process_request(self, request: Any, client_address: Any) -> None:
+        if not self._slots.acquire(blocking=False):
+            if time.monotonic() - self._warned_at > 60:
+                self._warned_at = time.monotonic()
+                log.warning(
+                    "%d connections are open; closing new ones as they arrive",
+                    self._max_connections,
+                )
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._slots.release()
+            raise
+
+    def process_request_thread(self, request: Any, client_address: Any) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._slots.release()
+
+
+class _IPv6Server(_Server):
     address_family = socket.AF_INET6
 
 
@@ -374,10 +438,110 @@ def _handler(server: AdminServer, timeout_s: float) -> type[BaseHTTPRequestHandl
 
         do_POST = do_PUT = do_PATCH = do_DELETE = do_GET
 
+        # -- reading: one deadline per request, and a bounded head -----------------------------
+
+        def setup(self) -> None:
+            super().setup()
+            #: Bytes received and not yet taken: the rest of a head, a body, a next request.
+            self._pending = bytearray()
+            self._deadline = 0.0
+            self._body_read = False
+
+        def handle_one_request(self) -> None:
+            """http.server's, except that the head is read here, under the request's deadline and
+            within `MAX_HEAD_BYTES`, and handed to `parse_request` whole. Its own reads time each
+            recv alone and take a hundred 65 KB header lines."""
+            self._body_read = False
+            try:
+                head = self._read_head()
+            except Refused as exc:
+                self.command, self.path, self.requestline = "-", "-", ""
+                self.request_version = "HTTP/1.1"
+                self.close_connection = True
+                try:
+                    self._reply(exc.status, exc.body(), exc.headers, True)
+                except OSError:
+                    pass
+                return
+            except TimeoutError:
+                if self._pending:
+                    self.log_error("request timed out before its headers ended")
+                self.close_connection = True
+                return
+            except OSError:
+                self.close_connection = True
+                return
+            if head is None:
+                self.close_connection = True
+                return
+            self.connection.settimeout(timeout_s)
+            split = head.index(b"\n") + 1
+            self.raw_requestline = head[:split]
+            socket_file, self.rfile = self.rfile, io.BytesIO(head[split:])
+            try:
+                parsed = self.parse_request()
+            finally:
+                self.rfile = socket_file
+            if not parsed:
+                return
+            method = getattr(self, f"do_{self.command}", None)
+            if method is None:
+                self.send_error(
+                    HTTPStatus.NOT_IMPLEMENTED, f"Unsupported method ({self.command!r})"
+                )
+                return
+            try:
+                method()
+                self.wfile.flush()
+            except TimeoutError:
+                self.close_connection = True
+
+        def _read_head(self) -> bytes | None:
+            """The request line and headers through their blank line; None for a connection that
+            closed, or sat idle for `timeout_s`, before a request began. Its first byte starts the
+            request's deadline, which its body is read under too."""
+            self._deadline = time.monotonic() + timeout_s
+            started = bool(self._pending)
+            while True:
+                end = HEAD_END.search(self._pending)
+                if end is not None and end.end() <= MAX_HEAD_BYTES:
+                    head = bytes(self._pending[: end.end()])
+                    del self._pending[: end.end()]
+                    return head
+                if end is not None or len(self._pending) >= MAX_HEAD_BYTES:
+                    raise Refused(
+                        431, f"The request line and headers are over {MAX_HEAD_BYTES} bytes."
+                    )
+                chunk = self._receive(self._deadline)
+                if not chunk:
+                    return None
+                if not started:
+                    started = True
+                    self._deadline = time.monotonic() + timeout_s
+                self._pending += chunk
+
+        def _receive(self, deadline: float) -> bytes:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("the request did not arrive in time")
+            self.connection.settimeout(remaining)
+            return self.connection.recv(RECEIVE_BYTES)
+
+        def _take(self, length: int, deadline: float) -> bytes:
+            """`length` bytes: what has arrived, then the socket until `deadline`. Fewer when the
+            client closes first."""
+            while len(self._pending) < length:
+                chunk = self._receive(deadline)
+                if not chunk:
+                    break
+                self._pending += chunk
+            taken = bytes(self._pending[:length])
+            del self._pending[:length]
+            return taken
+
         # -- one request ----------------------------------------------------------------------
 
         def _handle(self) -> None:
-            self._body_read = False
             close = False
             headers: dict[str, str] = {}
             try:
@@ -432,11 +596,15 @@ def _handler(server: AdminServer, timeout_s: float) -> type[BaseHTTPRequestHandl
                     f"The body is {length} bytes; a submission is at most {MAX_BODY_BYTES}.",
                     "body",
                 )
+            self._body_read = True
             try:
-                raw = self.rfile.read(length)
+                raw = self._take(length, self._deadline)
             except TimeoutError:
                 raise Refused(408, "The body did not arrive in time.", "body") from None
-            self._body_read = True
+            except OSError:
+                raise Refused(
+                    400, "The connection failed before the body arrived.", "body"
+                ) from None
             if len(raw) != length:
                 raise Refused(400, "The body ended before its Content-Length.", "body")
             try:
@@ -449,19 +617,15 @@ def _handler(server: AdminServer, timeout_s: float) -> type[BaseHTTPRequestHandl
                 raise Refused(400, "The body is not valid JSON.", "body") from None
 
         def _discard_body(self) -> None:
+            """A refused request's body, read and dropped for up to `DISCARD_WAIT_S`."""
             if self._body_read or "Transfer-Encoding" in self.headers:
                 return
             length = (self.headers.get("Content-Length") or "").strip()
             if not CONTENT_LENGTH_RE.fullmatch(length) or int(length) > DISCARD_BYTES:
                 return
             self._body_read = True
-            remaining = int(length)
             try:
-                while remaining > 0:
-                    chunk = self.rfile.read(min(remaining, 16 * 1024))
-                    if not chunk:
-                        break
-                    remaining -= len(chunk)
+                self._take(int(length), min(self._deadline, time.monotonic() + DISCARD_WAIT_S))
             except OSError:
                 self.close_connection = True
 
@@ -469,6 +633,8 @@ def _handler(server: AdminServer, timeout_s: float) -> type[BaseHTTPRequestHandl
             self, status: int, body: dict[str, Any], headers: Mapping[str, str], close: bool
         ) -> None:
             data = (json.dumps(body) + "\n").encode("utf-8")
+            # The reads may have left the socket a fraction of a second; a write gets its own.
+            self.connection.settimeout(timeout_s)
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(data)))

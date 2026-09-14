@@ -5,12 +5,15 @@ from __future__ import annotations
 import http.client
 import json
 import logging
+import select
 import socket
 import threading
+import time
 
 import httpx
 import pytest
 
+from icil_orchestrator import admin
 from icil_orchestrator.admin import MAX_BODY_BYTES, AdminServer
 from icil_orchestrator.cli import main
 from icil_orchestrator.ids import SubmissionRef, is_commit_sha
@@ -97,6 +100,29 @@ def headers_only(server, method, path, headers):
         return response.status, json.loads(response.read())
     finally:
         conn.close()
+
+
+def connect(server) -> socket.socket:
+    return socket.create_connection((server.host, server.port), timeout=5)
+
+
+def until_closed(sock, seconds, *, drip=False) -> tuple[float | None, bytes]:
+    """Seconds until the server closes `sock`, and what it answered first; None for the seconds if
+    it is still open after `seconds`. With `drip`, a byte is sent every 0.1 s meanwhile."""
+    start = time.monotonic()
+    answer = b""
+    while time.monotonic() - start < seconds:
+        try:
+            if drip and not answer:
+                sock.sendall(b"a")
+            if select.select([sock], [], [], 0.1)[0]:
+                chunk = sock.recv(65536)
+                if not chunk:
+                    return time.monotonic() - start, answer
+                answer += chunk
+        except OSError:
+            return time.monotonic() - start, answer
+    return None, answer
 
 
 def queued(paths):
@@ -276,6 +302,102 @@ def test_a_body_that_does_not_arrive_in_time_is_refused(serve, paths):
         {"Authorization": f"Bearer {TOKEN}", "Content-Length": "40"},
     )
     assert status == 408 and queued(paths) == []
+
+
+def test_a_request_sent_a_byte_at_a_time_is_closed_at_its_deadline(serve, paths):
+    """The deadline is the request's, not each read's: a byte every 0.1 s does not keep it open."""
+    server = serve(request_timeout_s=0.5)
+    with connect(server) as sock:
+        sock.sendall(b"POST /admin/submissions HTTP/1.1\r\nX-Slow: ")
+        elapsed, answer = until_closed(sock, 4, drip=True)
+    assert elapsed is not None and elapsed < 2, "a header sent a byte at a time held the connection"
+    with connect(server) as sock:
+        head = f"POST /admin/submissions HTTP/1.1\r\nAuthorization: Bearer {TOKEN}\r\n"
+        sock.sendall(f"{head}Content-Length: 40\r\n\r\n".encode())
+        elapsed, answer = until_closed(sock, 4, drip=True)
+    assert elapsed is not None and elapsed < 2, "a body sent a byte at a time held the connection"
+    assert answer.startswith(b"HTTP/1.1 408") and queued(paths) == []
+
+
+def test_a_head_past_its_limit_is_refused_without_waiting_for_its_end(server):
+    with connect(server) as sock:
+        sock.sendall(b"GET /admin/health HTTP/1.1\r\nX-Big: " + b"a" * admin.MAX_HEAD_BYTES)
+        elapsed, answer = until_closed(sock, 3)
+    assert elapsed is not None and answer.startswith(b"HTTP/1.1 431"), answer[:80]
+
+
+def test_a_refusal_waits_only_briefly_for_a_body_that_does_not_come(serve):
+    server = serve(request_timeout_s=5)
+    with connect(server) as sock:
+        # No token, and 100 bytes declared of which 2 are sent.
+        sock.sendall(b"POST /admin/submissions HTTP/1.1\r\nContent-Length: 100\r\n\r\n{}")
+        elapsed, answer = until_closed(sock, 4)
+    assert answer.startswith(b"HTTP/1.1 401")
+    assert elapsed is not None and elapsed < admin.DISCARD_WAIT_S + 1
+    # A client that does send its body reads the refusal, not a reset.
+    assert (
+        call(server, "POST", "/admin/submissions", {"repo": "org/policy"}, token="nope")[0] == 401
+    )
+
+
+def test_connections_past_the_cap_are_closed_as_they_arrive(serve):
+    server = serve(max_connections=2)
+    idle = [connect(server), connect(server)]
+    try:
+        time.sleep(0.3)
+        with connect(server) as sock:
+            sock.sendall(f"GET {HEALTH} HTTP/1.1\r\nAuthorization: Bearer {TOKEN}\r\n\r\n".encode())
+            elapsed, answer = until_closed(sock, 3)
+        assert elapsed is not None and answer == b"", answer[:80]
+        idle.pop().close()
+        deadline = time.monotonic() + 5
+        while True:
+            try:
+                assert call(server, "GET", HEALTH)[0] == 200
+                break
+            except (OSError, http.client.HTTPException):
+                assert time.monotonic() < deadline, "a closed connection did not free its slot"
+                time.sleep(0.05)
+    finally:
+        for sock in idle:
+            sock.close()
+
+
+def test_a_burst_of_submissions_is_accepted_rather_than_reset(server, paths):
+    """socketserver listens with a backlog of 5; a burst of simultaneous connections was reset."""
+    count = admin.MAX_CONNECTIONS
+    ready = threading.Barrier(count)
+    outcomes: list[object] = []
+
+    def submit() -> None:
+        ready.wait()
+        try:
+            outcomes.append(call(server, "POST", "/admin/submissions", {"repo": "org/policy"})[0])
+        except Exception as exc:  # noqa: BLE001 - the outcome is what is asserted
+            outcomes.append(type(exc).__name__)
+
+    threads = [threading.Thread(target=submit) for _ in range(count)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(30)
+    assert outcomes == [200] * count
+    assert len(queued(paths)) == 1
+
+
+def test_one_connection_carries_request_after_request(server):
+    conn = http.client.HTTPConnection(server.host, server.port, timeout=10)
+    auth = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
+    try:
+        for _ in range(2):
+            conn.request("POST", "/admin/submissions", body=b'{"repo": "org/policy"}', headers=auth)
+            response = conn.getresponse()
+            assert response.status == 200 and json.loads(response.read())["key"]
+            conn.request("GET", HEALTH, headers=auth)
+            response = conn.getresponse()
+            assert response.status == 200 and json.loads(response.read())["ok"] is True
+    finally:
+        conn.close()
 
 
 def test_the_hub_refusing_is_422_with_its_reason_and_an_outage_503(server, hub, paths):
