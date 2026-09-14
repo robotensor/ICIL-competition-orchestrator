@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
+import http.client
 import json
+import logging
+import os
+import signal
+import socket
 import subprocess
 import sysconfig
+import threading
+import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -192,6 +200,158 @@ def test_the_daemon_serves_the_queue_once_per_step(duel_spec, store, hub, tmp_pa
     assert head["king"] == REPLAY_REF.as_dict() and head["block"] == 2
     snapshot = json.loads((root / "tracks" / TRACK / "queue.json").read_text())
     assert snapshot["entries"] == [] and snapshot["in_progress"] is None
+
+
+ADMIN_TOKEN = "tok-daemon-7c2e91d04b5a-never-in-a-log"
+ADMIN = ["--admin-token-env", "ICIL_TEST_ADMIN_TOKEN"]
+
+
+def free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def closed(port: int) -> bool:
+    try:
+        socket.create_connection(("127.0.0.1", port), timeout=2).close()
+    except ConnectionRefusedError:
+        return True
+    return False
+
+
+def admin_call(port: int, method: str, path: str, body: Any = None) -> tuple[int, dict]:
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    try:
+        headers = {"Authorization": f"Bearer {ADMIN_TOKEN}"}
+        data = None if body is None else json.dumps(body).encode()
+        if data is not None:
+            headers["Content-Type"] = "application/json"
+        conn.request(method, path, body=data, headers=headers)
+        response = conn.getresponse()
+        return response.status, json.loads(response.read())
+    finally:
+        conn.close()
+
+
+def test_the_daemon_takes_what_its_intake_queues(
+    duel_spec, store, hub, tmp_path, monkeypatch, capsys, caplog
+):
+    """`daemon --admin`: a submission posted to the intake goes on the daemon's own queue, the loop
+    takes it and crowns it on the empty track, and a signal stops the intake with the loop."""
+    root, _ = store
+    caplog.set_level(logging.INFO, logger="icil_orchestrator.admin")
+    hub.add(REPLAY_REF.repo, REPLAY_REF.revision, {"icil.yaml": 80}, "main")
+    monkeypatch.setattr("icil_orchestrator.admin.HubApi", lambda: hub)
+    monkeypatch.setenv("ICIL_TEST_ADMIN_TOKEN", ADMIN_TOKEN)
+    port = free_port()
+    queue_file = tmp_path / "queue" / f"{TRACK}.json"
+    seen: dict[str, Any] = {}
+    returned = threading.Event()
+
+    def submit_then_stop() -> None:
+        deadline = time.monotonic() + 120
+        try:
+            while not returned.is_set() and time.monotonic() < deadline:
+                try:
+                    seen["health"] = admin_call(port, "GET", "/admin/health")
+                    break
+                except OSError:
+                    time.sleep(0.05)
+            else:
+                return
+            submission = {"repo": REPLAY_REF.repo, "revision": "main", "track": TRACK}
+            seen["submitted"] = admin_call(port, "POST", "/admin/submissions", submission)
+            while not returned.is_set() and time.monotonic() < deadline:
+                king = (Store(root, duel_spec).head(TRACK) or {}).get("king")
+                state = json.loads(queue_file.read_text()) if queue_file.exists() else {}
+                if king and not state.get("entries") and not state.get("in_progress"):
+                    seen["king"] = king
+                    return
+                time.sleep(0.05)
+        finally:
+            if not returned.is_set():
+                # SIGINT rather than SIGTERM: were the daemon gone, it interrupts the test run
+                # instead of killing it.
+                os.kill(os.getpid(), signal.SIGINT)
+
+    helper = threading.Thread(target=submit_then_stop, daemon=True)
+    helper.start()
+    try:
+        code = run(
+            duel_spec,
+            store,
+            tmp_path,
+            "daemon",
+            "--idle-sleep",
+            "0.05",
+            "--admin",
+            "--admin-port",
+            str(port),
+            *ADMIN,
+        )
+    finally:
+        returned.set()
+        helper.join(10)
+    err = capsys.readouterr().err
+    assert code == 128 + signal.SIGINT, err
+    assert seen["health"] == (
+        200,
+        {
+            "ok": True,
+            "spec_version": duel_spec.version,
+            "tracks": [TRACK],
+            "queue_lengths": {TRACK: 0},
+        },
+    )
+    status, body = seen["submitted"]
+    assert status == 200 and body["queued"] and body["position"] == 1, body
+    assert body["revision"] == REPLAY_REF.revision and body["key"] == REPLAY_REF.key
+    assert seen.get("king") == REPLAY_REF.as_dict(), "the daemon did not take the entry"
+    assert Store(root, duel_spec).head(TRACK)["block"] == 1
+    snapshot = json.loads((root / "tracks" / TRACK / "queue.json").read_text())
+    assert snapshot["entries"] == [] and snapshot["in_progress"] is None
+    assert closed(port), "the intake outlived its daemon"
+    assert f"admin intake listening on http://127.0.0.1:{port}" in caplog.text
+    assert f"accepted submission key={REPLAY_REF.key}" in caplog.text
+
+
+def test_the_daemons_intake_needs_its_token_and_stops_with_the_daemon(
+    duel_spec, store, tmp_path, monkeypatch, capsys
+):
+    root, _ = store
+    port = free_port()
+    daemon_once = ["daemon", "--once", "--admin", "--admin-port", str(port), *ADMIN]
+    monkeypatch.delenv("ICIL_TEST_ADMIN_TOKEN", raising=False)
+    assert run(duel_spec, store, tmp_path, *daemon_once) == 2
+    assert "ICIL_TEST_ADMIN_TOKEN is not set" in capsys.readouterr().err
+    monkeypatch.setenv("ICIL_TEST_ADMIN_TOKEN", "dev-token")
+    assert run(duel_spec, store, tmp_path, *daemon_once) == 2
+    err = capsys.readouterr().err
+    assert "must be 32 or more" in err and "dev-token" not in err
+
+    monkeypatch.setenv("ICIL_TEST_ADMIN_TOKEN", ADMIN_TOKEN)
+    assert run(duel_spec, store, tmp_path, *daemon_once) == 0
+    assert closed(port), "the intake outlived a daemon that ran its round"
+    with store_lock(root):
+        assert run(duel_spec, store, tmp_path, *daemon_once) == 1
+    assert "another orchestrator is publishing" in capsys.readouterr().err
+    assert closed(port), "the intake outlived a daemon that could not take its store"
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", port))  # and its port is free again
+
+
+def test_the_daemons_intake_defaults_are_the_intake_defaults():
+    from icil_orchestrator import admin
+    from icil_orchestrator.cli import build_parser
+
+    args = build_parser().parse_args(["daemon", "--store", "s", "--run-dir", "r"])
+    assert args.admin is False
+    assert (args.admin_host, args.admin_port, args.admin_token_env) == (
+        admin.DEFAULT_HOST,
+        admin.DEFAULT_PORT,
+        admin.DEFAULT_TOKEN_ENV,
+    )
 
 
 def test_what_the_duel_command_refuses(duel_spec, store, tmp_path, capsys):

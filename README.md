@@ -16,8 +16,8 @@ arrays.
 
 **Status:** in progress. The first milestone plugs RoboTwin and launches a 1-arm Franka competition
 with one sensorimotor demonstration per episode. The contract, benchmark discovery, the signed
-store, the queue, live frames, the policy protocol, the policy sandbox and duels are in place; the
-first smoke duel on RoboTwin's `franka_1arm` suite is next.
+store, the queue and its HTTP intake, live frames, the policy protocol, the policy sandbox and duels
+are in place; the first smoke duel on RoboTwin's `franka_1arm` suite is next.
 
 ```bash
 uv venv --python 3.10 .venv && uv pip install -e ".[dev]" -e packages/icil-policy
@@ -32,6 +32,11 @@ icil-orchestrator store mirror store/ --repo owner/dataset
 icil-orchestrator queue --store store/ add owner/policy main --duel-size smoke   # resolved to its commit
 icil-orchestrator queue list
 
+python -c 'import secrets; print(secrets.token_urlsafe(32))'   # an admin token, made once
+read -rs ICIL_ADMIN_TOKEN && export ICIL_ADMIN_TOKEN           # pasted, so not in shell history
+icil-orchestrator admin serve --store store/   # the dashboard's submit form posts here:
+                                               # 127.0.0.1:8799, bearer token
+
 icil-orchestrator submission build-base                  # docker/policy-base, prints its digest
 icil-orchestrator submission check owner/policy@main --base-image sha256:<hex>   # resolve, fetch,
                                                          # manifest, build, run, hello; reported
@@ -42,11 +47,18 @@ icil-orchestrator duel --track franka_1arm --challenger owner/policy@main --size
     --store store/ --run-dir runs/ --base-image sha256:<hex>   # one duel, or genesis, published
 icil-orchestrator daemon --store store/ --run-dir runs/ --queue queue/ \
     --live-url https://dashboard --live-token-env ICIL_LIVE_TOKEN   # serve the queues
+icil-orchestrator daemon --store store/ --run-dir runs/ --queue queue/ --admin   # and the intake,
+                                               # as admin serve does, in the same process
 ```
 
 A submission is a Hugging Face repository at a commit: `queue add` resolves a branch or a tag to
 its sha once, through the Hub, confirms a sha it is given, and everything published hangs off that
-sha. `submission check` fetches it into `cache/<sha>/` (git-ignored), reads its `icil.yaml` as a
+sha. The commit must be one a branch or a tag of the repository holds, at its tip or in its
+history: the Hub serves a pull request's commits by sha too, and anyone on the Hub can open a pull
+request, so a commit only a pull request holds - or one no branch holds any more - is refused, and
+so is a ref under `refs/`. The Hub has no cheaper ancestry check than listing histories, so a sha
+that is not a tip costs a history page or two per branch and tag.
+`submission check` fetches it into `cache/<sha>/` (git-ignored), reads its `icil.yaml` as a
 plain file, builds its image `FROM` the pinned base by digest with its checkout copied in and its
 requirements installed at build time (bounded by `--build-timeout`), runs it under
 `spec.submission.sandbox` - no network, a read-only root, `/tmp` a nosuid,nodev tmpfs of
@@ -127,6 +139,36 @@ adds nothing to it.
 
 Deploy the dashboard before this orchestrator: its live ingest must accept the `materializing`
 phase, which every duel reports between `checking` and `evaluating`, or those frames are refused.
+
+`admin serve` is the intake the dashboard's dev-mode submit form posts to (the dashboard's
+`ICIL_ADMIN_URL` and `ICIL_ADMIN_TOKEN`): `GET /admin/health` answers
+`{ok, spec_version, tracks, queue_lengths}`, and `POST /admin/submissions` takes
+`{repo, revision, track, duel_size, source}`, resolves the revision as `queue add` does (null is the
+repository's default branch; a ref under `refs/`, and a commit only a pull request holds, are
+refused), queues the entry in `--queue` and publishes the track's queue snapshot to `--store`. It
+answers with the entry's `key`, commit `revision`, `entry`, `position` and `accepted_at`; a submission already
+waiting answers with the place it has and queues nothing, or 409 if it waits at another duel size.
+It is for organizers on a private network, not for competitors and not for the internet: plain
+HTTP, bound to `127.0.0.1` unless `--host` says otherwise, and every request carries exactly one
+`Authorization: Bearer <token>`. The token is read from the environment variable `--token-env`
+names (`ICIL_ADMIN_TOKEN` by default) and never from the command line; it must be 32 or more
+printable ASCII characters with no space, it is compared in constant time and never logged, and
+without it the server does not start. A request has 10 s to arrive whole, with headers of at most
+16 KB and a JSON body of at most 8 KB with a `Content-Length` (chunked is refused); at most 64
+connections are served at once. An unknown field, track or duel size is refused before the Hub is
+asked. The Hub refusing a revision is a 422 with its reason, a Hub that cannot be asked a 503. The
+Hub is given 5 s for each step of its request and resolving 5 s in all: past that nothing is queued
+and the answer is 503, because the dashboard, waiting `ICIL_ADMIN_TIMEOUT_MS` (6 s by default), has
+already reported a timeout.
+
+`daemon --admin` serves the same intake beside the duel loop, in the daemon's process and on its
+queues, with `admin serve`'s defaults (`--admin-host`, `--admin-port`, `--admin-token-env`). It
+binds before the daemon takes the store, so a port in use stops the daemon at once, and it serves
+only once the store is held. An accepted entry's queue snapshot is written to the store at once,
+even while a duel runs, and goes to the mirror with the daemon's next push. It stops with the
+daemon: after `--once`, when the store cannot be taken, and on SIGTERM or SIGINT. `admin serve`
+beside a running daemon queues on the same files, but cannot publish into the store the daemon
+holds, so its snapshot waits until the daemon next takes or settles an entry.
 
 `store init` writes the store's ed25519 signing key to `keys/orchestrator.ed25519` (mode 0600)
 unless `--key` says otherwise. It is the only thing that can publish as this store, so keep it out

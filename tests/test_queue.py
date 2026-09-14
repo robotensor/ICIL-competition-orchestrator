@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 
 import pytest
 
@@ -26,6 +27,42 @@ def test_queue_replace_moves_to_back_and_persists(tmp_path):
     q2.finish()
     assert Queue(tmp_path / "q.json").state.in_progress is None
     assert q2.remove(e1.key) and not q2.remove(e1.key)
+
+
+def test_offer_keeps_a_waiting_submission_where_it_is(tmp_path):
+    q = Queue(tmp_path / "q.json")
+    first, p1, new1 = q.offer("a/x", "1" * 40, duel_size="light", source="admin", now="t1")
+    second, p2, new2 = q.offer("b/y", "2" * 40)
+    assert (p1, new1, p2, new2) == (1, True, 2, True)
+    assert first.source == "admin" and first.accepted_at == "t1"
+    again, p3, new3 = q.offer("a/x", "1" * 40, duel_size="smoke", source="other", now="t2")
+    assert (p3, new3) == (1, False) and again == first, "the waiting entry changed"
+    assert [e.key for e in Queue(tmp_path / "q.json").entries()] == [first.key, second.key]
+    with pytest.raises(ValueError, match="resolved commit sha"):
+        q.offer("a/x", "main")
+
+
+def test_a_reader_does_not_swap_out_the_state_a_writer_is_saving(tmp_path, monkeypatch):
+    """The intake's handler threads share one Queue: a health check reading it while another thread
+    offers a submission must not have that thread save the file without the entry it added."""
+    path = tmp_path / "q.json"
+    q = Queue(path)
+    q.offer("org/first", "1" * 40)
+    save = Queue.save
+    readers: list[threading.Thread] = []
+
+    def save_while_a_reader_reads(self):
+        if not readers:
+            readers.append(threading.Thread(target=q.entries))
+            readers[0].start()
+            readers[0].join(0.3)  # a reader that does not wait has reloaded the file by now
+        save(self)
+
+    monkeypatch.setattr(Queue, "save", save_while_a_reader_reads)
+    entry, position, queued = q.offer("org/second", "2" * 40)
+    readers[0].join(5)
+    assert (entry.repo, position, queued) == ("org/second", 2, True)
+    assert [e.repo for e in Queue(path).entries()] == ["org/first", "org/second"]
 
 
 def test_the_snapshot_is_the_schema_4_shape_the_dashboard_reads(tmp_path):

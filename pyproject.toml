@@ -46,4 +46,5 @@ markers = [
   "sim: needs a plugged benchmark's simulator (assets, GPU)",
   "container: needs Docker and builds or runs a policy container",
   "slow: takes minutes",
+  "network: asks the real Hugging Face Hub; skipped when it cannot be reached",
 ]

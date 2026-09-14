@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 
 import pytest
 
@@ -353,3 +354,78 @@ def test_one_daemon_per_store(duel_spec, store, tmp_path):
     with store_lock(store.root):
         with pytest.raises(RuntimeError, match="another orchestrator is publishing"):
             daemon(duel_spec, store, tmp_path).run(once=True)
+
+
+def test_what_serves_beside_the_loop_starts_once_the_store_is_held(
+    duel_spec, store, queues, tmp_path
+):
+    """The intake starts once its daemon holds the store and has published the queues, never beside
+    another daemon, and never for a daemon that could not take its store."""
+    add(queues, ZERO_REF)
+    started: list[list[str]] = []
+
+    def serving() -> None:
+        with pytest.raises(RuntimeError, match="another orchestrator is publishing"):
+            with store_lock(store.root):
+                pass
+        snapshot = json.loads((store.root / "tracks" / TRACK / "queue.json").read_text())
+        started.append([e["key"] for e in snapshot["entries"]])
+
+    with store_lock(store.root):
+        with pytest.raises(RuntimeError, match="another orchestrator is publishing"):
+            daemon(duel_spec, store, tmp_path).run(once=True, serving=serving)
+    assert started == [], "it started beside another daemon"
+    daemon(duel_spec, store, tmp_path).run(once=True, serving=serving)
+    assert started == [[ZERO_REF.key]]
+
+
+class RecordingMirror:
+    """A mirror that keeps what it was asked to push."""
+
+    def __init__(self) -> None:
+        self.pushed: list[list[str]] = []
+
+    def push(self, files, message="publish"):
+        self.pushed.append(list(files))
+
+
+def test_a_snapshot_published_without_the_mirror_goes_with_the_next_push(
+    duel_spec, store, queues, tmp_path
+):
+    """The intake publishes from its request threads, which must not wait on a push to the Hub: the
+    snapshot is written at once, and the daemon's next push carries it."""
+    mirror = RecordingMirror()
+    served = daemon(duel_spec, store, tmp_path, mirror=mirror)
+    add(queues, ZERO_REF)
+    served.publish_queue(TRACK, mirror=False)
+    snapshot = json.loads((store.root / "tracks" / TRACK / "queue.json").read_text())
+    assert [e["key"] for e in snapshot["entries"]] == [ZERO_REF.key] and mirror.pushed == []
+    served.publish_queue(TRACK)
+    assert mirror.pushed == [[f"tracks/{TRACK}/queue.json"]]
+
+
+def test_a_snapshot_computed_first_is_never_written_over_a_newer_one(
+    duel_spec, store, tmp_path, monkeypatch
+):
+    """The daemon and the intake's threads publish the same track: a snapshot computed before the
+    intake queued and published, and written after, would leave the new entry unpublished."""
+    served = daemon(duel_spec, store, tmp_path)
+    write = Store.write_queue
+    intake: list[threading.Thread] = []
+
+    def queue_and_publish() -> None:
+        served.queues[TRACK].offer(REPLAY_REF.repo, REPLAY_REF.revision)
+        served.publish_queue(TRACK, mirror=False)
+
+    def write_while_the_intake_publishes(self, track, snapshot):
+        if not intake:
+            intake.append(threading.Thread(target=queue_and_publish))
+            intake[0].start()
+            intake[0].join(0.3)  # an intake that does not wait has published by now
+        write(self, track, snapshot)
+
+    monkeypatch.setattr(Store, "write_queue", write_while_the_intake_publishes)
+    served.publish_queue(TRACK, mirror=False)
+    intake[0].join(5)
+    snapshot = json.loads((store.root / "tracks" / TRACK / "queue.json").read_text())
+    assert [e["key"] for e in snapshot["entries"]] == [REPLAY_REF.key]

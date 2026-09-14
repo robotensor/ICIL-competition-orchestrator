@@ -45,7 +45,9 @@ runnable policy code and weights, run in a sandboxed container.
   directory's tmpfs mount instead of making it (the container tests mount it for real, as root).
   Containers carry `icil.orchestrator=policy` and their owner's pid, start time and pid namespace;
   `PolicyContainer.start` reaps those whose owner has ended, and `submission prune` removes the
-  `icil-submission` images no container uses.
+  `icil-submission` images no container uses. A new queue entry (`queue add`, the intake) is
+  resolved by `resolve.resolve_for_queue`: only a commit a branch or a tag holds, never a pull
+  request's alone. `resolve` itself, which duels and `submission check` use, does not look.
 - The duel is `src/icil_orchestrator/duel/` (runtime, materialize, side, score, orchestrate) and
   `daemon.py`, run by `icil-orchestrator duel` and `daemon`. A duel reaches a policy only through
   `duel.runtime.PolicyRuntime`; `duel/docker_runtime.py` is the one module of it that imports
@@ -58,6 +60,22 @@ runnable policy code and weights, run in a sandboxed container.
   `tests/duel_helpers.py`, and the example policies; `tests/test_duel_signals.py` signals and
   kills a real `duel` process; the container test (`tests/test_duel_container.py`) runs a smoke
   duel through Docker.
+- `icil-orchestrator admin serve --store DIR [--queue DIR] [--host 127.0.0.1] [--port 8799]
+  [--token-env ICIL_ADMIN_TOKEN]` is the dashboard's submit intake (`src/icil_orchestrator/admin.py`,
+  standard library HTTP only). Its contract is the dashboard's `lib/dev.ts` and
+  `app/api/dev/submit/route.ts`: the request they send and the fields they read back (`error` from a
+  refusal; `key`, `revision`, `entry`, `position`, `accepted_at`, `message` from an acceptance), so a
+  change on either side is a change on both. The dashboard's receipt shows the duel size it sent, so
+  a resubmission at another size is refused (409), never answered 200. The token comes only from
+  the environment, is 32 or more characters and never reaches a log. Handler threads share the
+  track queues, so `Queue` holds a thread lock beside its file lock. Its tests stand `FakeHub` in;
+  the ones marked `network` ask the real Hub and skip when it cannot be reached.
+- `daemon --admin [--admin-host] [--admin-port] [--admin-token-env]` serves the same `AdminServer`
+  on its own thread beside the duel loop, sharing the daemon's `Queues`: bound in `cli._daemon`,
+  started by `Daemon.run(serving=...)` once the store is held, publishing through
+  `Daemon.publish_queue(track, mirror=False)` (a lock keeps a stale snapshot from landing last),
+  and shut down in `_daemon`'s `finally`, signals included. `tests/test_cli_duel.py` runs it end to
+  end on the local runtime and stops it with SIGINT.
 
 ## Rules
 

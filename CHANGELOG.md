@@ -157,4 +157,38 @@
 - (feat): `Queue.take` takes an entry off the queue and marks its duel in progress in one write.
 - (test): the fake benchmark writes a prompt of named arrays and drives the served policy through
   `RemotePolicy`, so the replay example wins and the zero example loses.
+- (feat): `icil-orchestrator admin serve`, the submission intake the dashboard's dev-mode form
+  posts to: `GET /admin/health` (`spec_version`, `tracks`, `queue_lengths`) and
+  `POST /admin/submissions` (`repo`, `revision` or null for the default branch, `track`,
+  `duel_size`, `source`), answered with the entry's `key`, commit `revision`, `entry`, `position`
+  and `accepted_at`. Standard library HTTP on `127.0.0.1:8799` by default, for organizers on a
+  private network; the bearer token comes from the variable `--token-env` names, is compared in
+  constant time and never logged, and the server does not start without one. A body is at most
+  8 KB with a `Content-Length` (chunked is refused); an unknown field, track or duel size is
+  refused before the Hub is asked; the Hub refusing a revision is 422 with its reason and a Hub
+  that cannot be asked 503. A submission already waiting answers with its place and queues nothing
+  (`Queue.offer`), and every accepted one is logged with its key, repo, sha and source.
+- (fix): the submission intake after review. A health check no longer drops an entry being
+  queued: `Queue` holds a thread lock beside its file lock. A request has 10 s to arrive whole, its
+  headers at most 16 KB; a refusal waits at most 1 s for a body; at most 64 connections are served
+  at once, with a listen backlog of 64. A log line escapes control characters and is scrubbed of
+  the token before it is cut. The token must be 32 or more printable ASCII characters, and a
+  request naming `Authorization` twice is 401. A revision under `refs/` is refused, a resubmission
+  at another duel size is 409, and an entry whose resolution took more than 5 s in all is not
+  queued (503). The README's example keeps the token out of shell history.
+- (feat): `icil-orchestrator daemon --admin [--admin-host 127.0.0.1] [--admin-port 8799]
+  [--admin-token-env ICIL_ADMIN_TOKEN]` serves the submission intake on its own thread beside the
+  duel loop, on the daemon's queues. It binds before the daemon takes the store (a port in use or a
+  missing token exits 2), serves once the store is held, writes an accepted entry's queue snapshot
+  at once through the daemon (`Daemon.publish_queue(mirror=False)`, pushed with the daemon's next
+  push), and stops with the daemon: after `--once`, when the store cannot be taken, and on SIGTERM
+  or SIGINT. Stopping an intake that never served no longer hangs.
+- (fix): `queue add` and the intake queue only a commit a branch or a tag of the repository holds,
+  at its tip or in its history (`submissions.resolve.resolve_for_queue`). A pull request's commit
+  named by its sha was queued, though anyone on the Hub can open a pull request on a public
+  repository and the Hub serves its commits like the owner's; `queue add` also refuses a ref under
+  `refs/` by name. The check lists the branches and tags in one call, then each one's history until
+  one holds the commit - the Hub has no cheaper ancestry check - bounded at the intake by its 5 s
+  budget and each call's timeout. A commit no branch holds any more is refused too; `resolve`
+  alone, which duels and `submission check` use, is unchanged.
 - (chore): scaffold the orchestrator: package, pure test suite, CI and the repository's rules.

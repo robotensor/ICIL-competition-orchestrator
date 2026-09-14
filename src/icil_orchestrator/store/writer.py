@@ -25,6 +25,7 @@ import logging
 import os
 import shutil
 import tempfile
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -117,6 +118,9 @@ class Store:
         self.spec = spec
         self.signer = signer
         self.touched: set[str] = set()
+        #: The daemon's duel loop and the intake's request threads both write a store, and one
+        #: file touched between a drain's copy and its clear would miss the push.
+        self._touched_lock = threading.Lock()
 
     # ---------------------------------------------------------------- paths
     def track_dir(self, track: str) -> Path:
@@ -139,7 +143,8 @@ class Store:
         return self.root / "media" / bucket / f"{sha}.{ext}"
 
     def _touch(self, path: Path) -> None:
-        self.touched.add(str(path.relative_to(self.root)))
+        with self._touched_lock:
+            self.touched.add(str(path.relative_to(self.root)))
 
     def touch(self, path: Path) -> None:
         """Mark `path`, a file of this store, as one the next mirror push must carry again."""
@@ -384,6 +389,7 @@ class Store:
         return self.media_path(sha, ext).exists()
 
     def drain_touched(self) -> list[str]:
-        out = sorted(self.touched)
-        self.touched.clear()
+        with self._touched_lock:
+            out = sorted(self.touched)
+            self.touched.clear()
         return out

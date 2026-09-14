@@ -15,6 +15,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import threading
 from collections.abc import Sequence
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
@@ -61,25 +62,33 @@ class QueueState:
 class Queue:
     def __init__(self, path: str | Path):
         self.path = Path(path)
+        #: Held over every load into `state` and every change saved from it. Threads can share one
+        #: Queue (the intake's handlers do): a reader replacing `state` between a writer's change
+        #: and its save would have the writer save the file without that change.
+        self._thread_lock = threading.RLock()
         self.state = self._load()
 
     @contextmanager
     def _locked(self):
-        """Exclusive across processes for one queue file, held over load, change and save."""
+        """Exclusive across processes and threads for one queue file, over load, change and save."""
         lock = self.path.with_name(self.path.name + ".lock")
         lock.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o644)
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX)
-            self.state = self._load()
-            yield
-            self.save()
-        finally:
-            os.close(fd)
+        with self._thread_lock:
+            fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o644)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX)
+                self.state = self._load()
+                yield
+                self.save()
+            finally:
+                os.close(fd)
 
     def reload(self) -> QueueState:
-        self.state = self._load()
-        return self.state
+        """The file as it is now. The state returned is never changed afterwards: a writer loads its
+        own, so a caller can read it after another thread has moved on."""
+        with self._thread_lock:
+            self.state = self._load()
+            return self.state
 
     def _load(self) -> QueueState:
         try:
@@ -141,6 +150,40 @@ class Queue:
             self.state.entries.append(entry)
             position = len(self.state.entries)
         return entry, position
+
+    def offer(
+        self,
+        repo: str,
+        revision: str,
+        *,
+        duel_size: str | None = None,
+        source: str = "",
+        now: str | None = None,
+    ) -> tuple[QueueEntry, int, bool]:
+        """`add`, except that a submission already waiting keeps its entry and its place.
+
+        For an intake that can be sent the same entry twice - a retried request, a second click -
+        where moving it to the back would cost it the place it had. Returns the entry, its position
+        and whether it was queued now (False: it was already waiting, and nothing changed).
+        """
+        ref = SubmissionRef.resolved(repo, revision)
+        with self._locked():
+            waiting = [i for i, e in enumerate(self.state.entries) if e.key == ref.key]
+            if not waiting:
+                self.state.entries.append(
+                    QueueEntry(
+                        key=ref.key,
+                        repo=repo,
+                        revision=revision,
+                        commit_block=self.state.block,
+                        duel_size=duel_size,
+                        accepted_at=now or now_iso(),
+                        source=source,
+                    )
+                )
+            index = waiting[0] if waiting else len(self.state.entries) - 1
+            entry = self.state.entries[index]
+        return entry, index + 1, not waiting
 
     def remove(self, key: str) -> bool:
         with self._locked():
@@ -249,20 +292,20 @@ class Queue:
         *,
         now: str | None = None,
     ) -> dict[str, Any]:
-        self.reload()
+        state = self.reload()
         return {
             "schema": schema,
             "track": track,
-            "block": self.state.block,
+            "block": state.block,
             "written_at": now or now_iso(),
             "king": king.as_dict() if king else None,
             "in_progress": (
                 {
                     k: v
-                    for k, v in asdict(self.state.in_progress).items()
+                    for k, v in asdict(state.in_progress).items()
                     if k in ("event_id", "challenger", "started_at")
                 }
-                if self.state.in_progress
+                if state.in_progress
                 else None
             ),
             "entries": [
@@ -278,7 +321,7 @@ class Queue:
                     "skip_model_config_check": False,
                     "accepted_at": e.accepted_at,
                 }
-                for i, e in enumerate(self.state.entries)
+                for i, e in enumerate(state.entries)
             ],
         }
 
