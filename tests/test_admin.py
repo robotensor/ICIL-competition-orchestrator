@@ -449,6 +449,22 @@ def test_the_token_never_reaches_a_log(server, caplog, capfd):
     assert "[redacted]" in logged, "the request lines were not logged at all"
 
 
+def test_a_log_line_moves_no_cursor_and_keeps_no_part_of_the_token(server, caplog):
+    caplog.set_level(logging.INFO)
+    # Without a token: clear the screen, move up a line, turn red; set the terminal's title.
+    for path in (b"/admin/\x1b[2J\x1b[1A\x1b[31mhealth", b"/admin/\x1b]0;pwned\x07"):
+        with connect(server) as sock:
+            sock.sendall(b"GET " + path + b" HTTP/1.1\r\n\r\n")
+            until_closed(sock, 3)
+    # A token in the path, across where a log line's path used to be cut.
+    call(server, "GET", "/admin/" + "a" * 181 + TOKEN)
+    lines = [r.getMessage() for r in caplog.records if r.name == "icil_orchestrator.admin"]
+    assert any("\\x1b[2J" in line for line in lines), lines
+    controls = [line for line in lines if any(ch < " " or "\x7f" <= ch < "\xa0" for ch in line)]
+    assert controls == []
+    assert TOKEN[:12] not in caplog.text, "the start of the token was logged"
+
+
 def test_no_token_no_server(spec, hub, paths):
     for token in ("", "   "):
         with pytest.raises(ValueError, match="does not serve without"):

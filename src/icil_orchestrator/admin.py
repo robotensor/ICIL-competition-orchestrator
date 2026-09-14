@@ -110,8 +110,12 @@ REVISION_RE = re.compile(r"[\x21-\x7e]{1,255}")
 SOURCE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,63}")
 CONTENT_LENGTH_RE = re.compile(r"[0-9]{1,16}")
 
-#: A log line is scrubbed of the token and cut to this length.
+#: A log line is scrubbed of the token, escaped, and then cut to this length.
 MAX_LOG_CHARS = 2000
+
+#: Control characters, written `\xNN` in a log line: a client's path must not reach an operator's
+#: terminal as an escape sequence (http.server escapes them too, in the method this module replaces).
+LOG_ESCAPES = {code: f"\\x{code:02x}" for code in (*range(0x20), *range(0x7F, 0xA0))}
 
 
 class Refused(Exception):
@@ -651,7 +655,7 @@ def _handler(server: AdminServer, timeout_s: float) -> type[BaseHTTPRequestHandl
 
         def log_request(self, code: int | str = "-", size: int | str = "-") -> None:
             path = (getattr(self, "path", "") or "-").split("?", 1)[0]
-            self._log("%s %s %s %s", self.client_address[0], self.command, path[:200], int(code))
+            self._log("%s %s %s %s", self.client_address[0], self.command, path, int(code))
 
         def log_error(self, format: str, *args: Any) -> None:
             self._log(format, *args)
@@ -660,8 +664,11 @@ def _handler(server: AdminServer, timeout_s: float) -> type[BaseHTTPRequestHandl
             self._log(format, *args)
 
         def _log(self, format: str, *args: Any) -> None:
+            """The whole line scrubbed of the token before anything cuts it, which could leave a
+            token's first characters behind, then its control characters escaped."""
             if log.isEnabledFor(logging.INFO):
-                log.info("%s", server.scrub(format % args)[:MAX_LOG_CHARS])
+                line = server.scrub(format % args).translate(LOG_ESCAPES)
+                log.info("%s", line[:MAX_LOG_CHARS])
 
     return Handler
 
