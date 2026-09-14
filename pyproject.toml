@@ -9,13 +9,21 @@ description = "Orchestration layer of the RoboTensor one-demonstration ICIL comp
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
-dependencies = []
+dependencies = ["pynacl>=1.5", "jsonschema>=4.20", "huggingface_hub>=0.25"]
+
+[project.scripts]
+icil-orchestrator = "icil_orchestrator.cli:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff==0.16.7"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/icil_orchestrator"]
+
+# The contract travels with the wheel, so an installed orchestrator reads the spec it was built with.
+[tool.hatch.build.targets.wheel.force-include]
+"spec.json" = "icil_orchestrator/data/spec.json"
+"store-schema.json" = "icil_orchestrator/data/store-schema.json"
 
 [tool.ruff]
 line-length = 100
