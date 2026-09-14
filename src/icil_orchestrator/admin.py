@@ -81,10 +81,15 @@ FIELDS = ("repo", "revision", "track", "duel_size", "source")
 #: The source an entry is queued with when the request names none (`queue add` queues with "cli").
 DEFAULT_SOURCE = "admin"
 
-#: Seconds the Hub is given for each step of resolving a revision (connect, send, read). Under the
-#: dashboard's default wait, so a Hub that hangs is answered as unavailable while the form still
-#: listens, rather than timing the form out on an entry that may yet be queued after it gave up.
+#: Seconds the Hub is given for each step of resolving a revision (connect, send, read), so a Hub
+#: that stops answering is answered as unavailable. Each step, not all of them: a Hub answering
+#: slowly in pieces can take longer in all, which `RESOLVE_BUDGET_S` bounds.
 RESOLVE_TIMEOUT_S = 5.0
+
+#: Seconds resolving a submission may take in all. Past it the entry is not queued and the answer is
+#: 503: the dashboard waits `ICIL_ADMIN_TIMEOUT_MS`, 6 s unless set, and has reported a timeout by
+#: then, so an entry queued afterwards is one nobody saw accepted.
+RESOLVE_BUDGET_S = 5.0
 
 #: Seconds a request has to arrive whole - request line, headers and body - from its first byte, and
 #: seconds a connection may sit idle before a request or between two. Past it the connection is
@@ -182,6 +187,7 @@ class AdminServer:
         api: Any = None,
         request_timeout_s: float = REQUEST_TIMEOUT_S,
         max_connections: int = MAX_CONNECTIONS,
+        resolve_budget_s: float = RESOLVE_BUDGET_S,
     ) -> None:
         if not token or not token.strip():
             raise ValueError("the admin token is empty; the intake does not serve without one")
@@ -194,6 +200,7 @@ class AdminServer:
         self.queues = queues
         self.store = store
         self.api = api if api is not None else HubApi()
+        self.resolve_budget_s = resolve_budget_s
         self._token = token
         self._token_bytes = token.encode("utf-8", "surrogateescape")
         #: Queueing and publishing the snapshot, one request at a time within this process; the
@@ -238,7 +245,16 @@ class AdminServer:
     def submit(self, body: Any) -> dict[str, Any]:
         """Queue what `body` names and say where it is, or raise `Refused` with nothing queued."""
         repo, revision, track, duel_size, source = self.validate(body)
+        started = time.monotonic()
         sha = self.resolve(repo, revision)
+        took = time.monotonic() - started
+        if took > self.resolve_budget_s:
+            raise Refused(
+                503,
+                f"The Hub took {took:.1f} s to resolve {repo}@{revision or 'its default branch'}, "
+                f"past the {self.resolve_budget_s:g} s a submission is given; nothing was queued. "
+                "Submit it again.",
+            )
         with self._lock:
             entry, position, queued = self.queues[track].offer(
                 repo, sha, duel_size=duel_size, source=source

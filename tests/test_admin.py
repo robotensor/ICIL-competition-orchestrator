@@ -464,6 +464,26 @@ def test_the_hub_refusing_is_422_with_its_reason_and_an_outage_503(server, hub, 
     assert queued(paths) == []
 
 
+def test_nothing_is_queued_once_resolving_outlasted_its_budget(serve, hub, paths):
+    """The Hub's timeout is per step of its request, so resolving can outlast the dashboard's wait.
+    An entry resolved past its budget is not queued: the form has already reported a timeout."""
+    server = serve(resolve_budget_s=0.2)
+    answer = hub.repo_info
+
+    def slow(*args, **kwargs):
+        time.sleep(0.5)
+        return answer(*args, **kwargs)
+
+    hub.repo_info = slow
+    status, body, _ = call(
+        server, "POST", "/admin/submissions", {"repo": "org/policy", **DASHBOARD}
+    )
+    assert status == 503 and body["ok"] is False and "nothing was queued" in body["error"], body
+    assert queued(paths) == []
+    hub.repo_info = answer
+    assert call(server, "POST", "/admin/submissions", {"repo": "org/policy", **DASHBOARD})[0] == 200
+
+
 def test_the_token_never_reaches_a_log(server, caplog, capfd):
     caplog.set_level(logging.DEBUG)
     call(server, "GET", "/admin/health")
