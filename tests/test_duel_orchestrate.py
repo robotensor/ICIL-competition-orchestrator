@@ -308,14 +308,57 @@ def test_a_duel_killed_after_it_published_does_not_publish_twice(duel_spec, stor
             if any("/index-" in f for f in files):
                 raise Crash("killed right after appending the record")
 
+    class Recording:
+        def __init__(self):
+            self.pushed: list[str] = []
+
+        def push(self, files):
+            self.pushed.extend(files)
+
     store.drain_touched()
     with pytest.raises(Crash):
         orchestrator(duel_spec, store, tmp_path, mirror=DiesOnPublish()).run(req)
     assert len(store.iter_index(TRACK)) == 2
-    result = orchestrator(duel_spec, store, tmp_path).run(req)
-    assert result.published and result.record["seq"] == 2
+    # A restarted process: nothing of what the killed one meant to push is in memory.
+    restarted = Store(store.root, duel_spec, store.signer)
+    fresh, mirror = FakePolicyRuntime(duel_spec), Recording()
+    result = orchestrator(duel_spec, restarted, tmp_path, fresh, mirror=mirror).run(req)
+    assert result.published and result.record["seq"] == 2 and result.reason == "margin-met"
     assert len(store.iter_index(TRACK)) == 2
+    assert fresh.prepared == [] and fresh.serves == [], "a published duel was run again"
+    eid = req.event_id(duel_spec)
+    assert {f"events/{TRACK}/{eid}.json", f"tracks/{TRACK}/index-0000.jsonl"} <= set(mirror.pushed)
+    assert f"tracks/{TRACK}/head.json" in mirror.pushed
+    assert sum(f.startswith("media/") for f in mirror.pushed) == 9, (
+        "the duel's clips were not pushed"
+    )
     verified(store, duel_spec)
+
+
+def test_a_duel_killed_between_its_index_line_and_its_head_heals_the_head_when_resumed(
+    duel_spec, store, tmp_path, monkeypatch
+):
+    crowned(store, duel_spec, ZERO_REF)
+    req = DuelRequest(TRACK, REPLAY_REF, ZERO_REF, "smoke", block=2)
+    write_head = store.write_head
+
+    def killed(track, **fields):
+        if fields["event_id"] == req.event_id(duel_spec):
+            raise Crash("killed between the index line and the head")
+        return write_head(track, **fields)
+
+    monkeypatch.setattr(store, "write_head", killed)
+    with pytest.raises(Crash):
+        orchestrator(duel_spec, store, tmp_path).run(req)
+    assert len(store.iter_index(TRACK)) == 2 and store.head(TRACK)["king"] == ZERO_REF.as_dict()
+
+    restarted = Store(store.root, duel_spec, store.signer)
+    result = orchestrator(duel_spec, restarted, tmp_path).run(req)
+    assert result.published and result.record["dethroned"] is True
+    head = restarted.head(TRACK)
+    assert (head["seq"], head["event_id"]) == (2, req.event_id(duel_spec))
+    assert head["king"] == REPLAY_REF.as_dict(), "the dethroned king still holds the head"
+    verified(restarted, duel_spec)
 
 
 def test_a_duel_resumed_after_its_king_lost_the_crown_is_moved_aside_unpublished(

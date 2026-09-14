@@ -20,9 +20,11 @@ this host lives in `<run_root>/<track>/<event_id[:16]>/`:
     failed.txt                    why the last attempt stopped, for a duel that did not finish
 
 **Resuming.** Every stage is resumable from that directory: prompts are re-used after their hash
-is checked, a side runs only the units its results file does not hold, and publishing first looks
-for its own event id in the index, so a duel killed at any point and run again finishes with each
-unit run once per side and at most one record. Once `outcome.json` exists, running the duel again
+is checked, a side runs only the units its results file does not hold, and a duel first looks for
+its own event id in the index, so a duel killed at any point and run again finishes with each unit
+run once per side and at most one record. One found there is not run again: its head is rebuilt
+from the index (a kill between the index line and the head's rewrite leaves the old king in it)
+and its files are pushed to the mirror again. Once `outcome.json` exists, running the duel again
 returns it.
 
 **What stops a duel, and what that means.**
@@ -352,8 +354,10 @@ class Orchestrator:
         if decided is not None:
             log.info("duel %s was already decided: %s", decided.event_id[:16], decided.status)
             return decided
-        if self._published(req.track, req.event_id(self.spec)) is None:
-            self._check_crown(req)
+        existing = self._published(req.track, req.event_id(self.spec))
+        if existing is not None:
+            return self._republished(req, existing)
+        self._check_crown(req)
         run_dir = self.run_dir(req)
         # The duel's budget is spent by work, not by the time a stopped orchestrator was down.
         spent = _work_seconds(run_dir)
@@ -620,8 +624,9 @@ class Orchestrator:
         track, skills, margin = req.track, spec.skills(req.track), spec.score_margin(req.track)
         self._post(duel, force=True, phase="publishing", side=None, message="publishing the record")
         existing = self._published(track, duel.event_id)
-        if existing is None:
-            self._check_crown(req, duel)
+        if existing is not None:
+            return self._republished(req, existing)
+        self._check_crown(req, duel)
         if req.kind == "genesis":
             units = [_as_king(u) for u in duel.units]
             reason = "genesis"
@@ -640,53 +645,49 @@ class Orchestrator:
             new_king = req.challenger if dethroned else None
             sides = duel.sides
             scoring = verdict.as_dict()
-        if existing is not None:
-            log.info("duel %s was already published as seq %s", duel.event_id[:16], existing["seq"])
-            record = existing
-        else:
-            record = index_record(
-                schema=int(spec.store["schema"]),
-                event_id=duel.event_id,
-                kind=req.kind,
-                track=track,
-                block=req.block,
-                finished_at=now_iso(),
-                king=king,
-                challenger=challenger,
-                king_scores=king_scores,
-                challenger_scores=challenger_scores,
-                score_margin=margin,
-                dethroned=dethroned,
-                new_king=new_king,
-                tally=unit_tally(units),
-                media_count=len(media_shas(units)),
-                duel_size=duel.size,
-                duel_id=duel.duel_id,
-            )
-            event = duel_event(
-                record,
-                spec_version=spec.version,
-                spec_fingerprint=spec.fingerprint,
-                units=units,
-                units_per_skill=spec.units_per_skill(track, duel.size),
-                started_at=duel.started_at,
-                wall_seconds=_seconds_since(duel.started_at),
-                sides=sides,
-                demonstration=spec.demonstration(track),
-                prompts=duel.prompts.manifest() if duel.prompts else [],
-                notes=[_note(req.kind, scoring)]
-                + ([f"king forfeit: {duel.forfeit}"] if duel.forfeit else []),
-            )
-            event["runtime"] = self.runtime.name
-            event["scoring"] = {
-                **scoring,
-                "void_fraction": score.void_fraction(units),
-                "max_void_fraction": spec.max_void_fraction(track),
-            }
-            event["benchmarks"] = self._benchmark_info(duel)
-            self.store.write_event(track, event)
-            record["seq"] = self.store.append(track, record)
-            self.push_touched()
+        record = index_record(
+            schema=int(spec.store["schema"]),
+            event_id=duel.event_id,
+            kind=req.kind,
+            track=track,
+            block=req.block,
+            finished_at=now_iso(),
+            king=king,
+            challenger=challenger,
+            king_scores=king_scores,
+            challenger_scores=challenger_scores,
+            score_margin=margin,
+            dethroned=dethroned,
+            new_king=new_king,
+            tally=unit_tally(units),
+            media_count=len(media_shas(units)),
+            duel_size=duel.size,
+            duel_id=duel.duel_id,
+        )
+        event = duel_event(
+            record,
+            spec_version=spec.version,
+            spec_fingerprint=spec.fingerprint,
+            units=units,
+            units_per_skill=spec.units_per_skill(track, duel.size),
+            started_at=duel.started_at,
+            wall_seconds=_seconds_since(duel.started_at),
+            sides=sides,
+            demonstration=spec.demonstration(track),
+            prompts=duel.prompts.manifest() if duel.prompts else [],
+            notes=[_note(req.kind, scoring)]
+            + ([f"king forfeit: {duel.forfeit}"] if duel.forfeit else []),
+        )
+        event["runtime"] = self.runtime.name
+        event["scoring"] = {
+            **scoring,
+            "void_fraction": score.void_fraction(units),
+            "max_void_fraction": spec.max_void_fraction(track),
+        }
+        event["benchmarks"] = self._benchmark_info(duel)
+        self.store.write_event(track, event)
+        record["seq"] = self.store.append(track, record)
+        self.push_touched()
         result = DuelResult(
             status="published",
             kind=req.kind,
@@ -700,6 +701,42 @@ class Orchestrator:
         atomic_write_json(duel.run_dir / OUTCOME_FILE, result.as_dict())
         moved = "moves" if record.get("dethroned") or req.kind == "genesis" else "stays"
         self._post(duel, force=True, phase="done", message=f"the crown {moved}: {reason}")
+        return result
+
+    def _republished(self, req: DuelRequest, record: dict[str, Any]) -> DuelResult:
+        """A duel an earlier run published before it stopped: nothing is fetched, run or published
+        again. Its head is rebuilt from the index - a kill between the index line and the head's
+        rewrite leaves the head naming the king before it, whom the next duel would face - and its
+        files are pushed to the mirror again, since a kill before the push leaves them off it."""
+        track, eid = req.track, str(record["event_id"])
+        log.info(
+            "duel %s is published as seq %s already; healing its head", eid[:16], record["seq"]
+        )
+        self.store.rebuild_head(track)
+        event = self.store.event(track, eid) or {}
+        units = [u for u in event.get("units") or [] if isinstance(u, dict)]
+        paths = [
+            self.store.event_path(track, eid),
+            self.store.index_part_path(track, self.store.part_of(int(record["seq"]))),
+            self.store.head_path(track),
+            *(self.store.media_path(sha, self.spec.video_format) for sha in media_shas(units)),
+        ]
+        for path in paths:
+            if path.is_file():
+                self.store.touch(path)
+        self.push_touched()
+        scoring = event.get("scoring") if isinstance(event.get("scoring"), dict) else {}
+        result = DuelResult(
+            status="published",
+            kind=str(record.get("kind") or req.kind),
+            event_id=eid,
+            duel_id=req.duel_id(self.spec),
+            reason=str(scoring.get("reason") or record.get("kind")),
+            run_dir=self.run_dir(req),
+            record=record,
+            units=units,
+        )
+        atomic_write_json(self.run_dir(req) / OUTCOME_FILE, result.as_dict())
         return result
 
     def _refused(self, duel: _Duel, reason: str) -> DuelResult:
