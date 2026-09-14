@@ -58,6 +58,14 @@ runnable policy code and weights, run in a sandboxed container.
   `tests/duel_helpers.py`, and the example policies; `tests/test_duel_signals.py` signals and
   kills a real `duel` process; the container test (`tests/test_duel_container.py`) runs a smoke
   duel through Docker.
+- `icil-orchestrator admin serve --store DIR [--queue DIR] [--host 127.0.0.1] [--port 8799]
+  [--token-env ICIL_ADMIN_TOKEN]` is the dashboard's submit intake (`src/icil_orchestrator/admin.py`,
+  standard library HTTP only). Its contract is the dashboard's `lib/dev.ts` and
+  `app/api/dev/submit/route.ts`: the request they send and the fields they read back (`error` from a
+  refusal; `key`, `revision`, `entry`, `position`, `accepted_at`, `message` from an acceptance), so a
+  change on either side is a change on both. The token comes only from the environment and never
+  reaches a log. Its tests stand `FakeHub` in; the one marked `network` asks the real Hub and skips
+  when it cannot be reached.
 
 ## Rules
 

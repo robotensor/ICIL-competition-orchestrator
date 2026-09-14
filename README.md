@@ -16,8 +16,8 @@ arrays.
 
 **Status:** in progress. The first milestone plugs RoboTwin and launches a 1-arm Franka competition
 with one sensorimotor demonstration per episode. The contract, benchmark discovery, the signed
-store, the queue, live frames, the policy protocol, the policy sandbox and duels are in place; the
-first smoke duel on RoboTwin's `franka_1arm` suite is next.
+store, the queue and its HTTP intake, live frames, the policy protocol, the policy sandbox and duels
+are in place; the first smoke duel on RoboTwin's `franka_1arm` suite is next.
 
 ```bash
 uv venv --python 3.10 .venv && uv pip install -e ".[dev]" -e packages/icil-policy
@@ -31,6 +31,9 @@ icil-orchestrator store mirror store/ --repo owner/dataset
 
 icil-orchestrator queue --store store/ add owner/policy main --duel-size smoke   # resolved to its commit
 icil-orchestrator queue list
+
+ICIL_ADMIN_TOKEN=<secret> icil-orchestrator admin serve --store store/   # the dashboard's submit form
+                                                         # posts here: 127.0.0.1:8799, bearer token
 
 icil-orchestrator submission build-base                  # docker/policy-base, prints its digest
 icil-orchestrator submission check owner/policy@main --base-image sha256:<hex>   # resolve, fetch,
@@ -127,6 +130,22 @@ adds nothing to it.
 
 Deploy the dashboard before this orchestrator: its live ingest must accept the `materializing`
 phase, which every duel reports between `checking` and `evaluating`, or those frames are refused.
+
+`admin serve` is the intake the dashboard's dev-mode submit form posts to (the dashboard's
+`ICIL_ADMIN_URL` and `ICIL_ADMIN_TOKEN`): `GET /admin/health` answers
+`{ok, spec_version, tracks, queue_lengths}`, and `POST /admin/submissions` takes
+`{repo, revision, track, duel_size, source}`, resolves the revision as `queue add` does (null is the
+repository's default branch), queues the entry in `--queue` and publishes the track's queue snapshot
+to `--store`. It answers with the entry's `key`, commit `revision`, `entry`, `position` and
+`accepted_at`; a submission already waiting answers with the place it has and queues nothing. It is
+for organizers on a private network, not for competitors and not for the internet: plain HTTP,
+bound to `127.0.0.1` unless `--host` says otherwise, and every request carries
+`Authorization: Bearer <token>`. The token is read from the environment variable `--token-env`
+names (`ICIL_ADMIN_TOKEN` by default) and never from the command line; it is compared in constant
+time, never logged, and without it the server does not start. A body is JSON of at most 8 KB with a
+`Content-Length` (chunked is refused), and an unknown field, track or duel size is refused before the
+Hub is asked. The Hub refusing a revision is a 422 with its reason, a Hub that cannot be asked a
+503; it is given 5 s, inside the dashboard's default `ICIL_ADMIN_TIMEOUT_MS` of 6 s.
 
 `store init` writes the store's ed25519 signing key to `keys/orchestrator.ed25519` (mode 0600)
 unless `--key` says otherwise. It is the only thing that can publish as this store, so keep it out

@@ -155,4 +155,15 @@
 - (feat): `Queue.take` takes an entry off the queue and marks its duel in progress in one write.
 - (test): the fake benchmark writes a prompt of named arrays and drives the served policy through
   `RemotePolicy`, so the replay example wins and the zero example loses.
+- (feat): `icil-orchestrator admin serve`, the submission intake the dashboard's dev-mode form
+  posts to: `GET /admin/health` (`spec_version`, `tracks`, `queue_lengths`) and
+  `POST /admin/submissions` (`repo`, `revision` or null for the default branch, `track`,
+  `duel_size`, `source`), answered with the entry's `key`, commit `revision`, `entry`, `position`
+  and `accepted_at`. Standard library HTTP on `127.0.0.1:8799` by default, for organizers on a
+  private network; the bearer token comes from the variable `--token-env` names, is compared in
+  constant time and never logged, and the server does not start without one. A body is at most
+  8 KB with a `Content-Length` (chunked is refused); an unknown field, track or duel size is
+  refused before the Hub is asked; the Hub refusing a revision is 422 with its reason and a Hub
+  that cannot be asked 503. A submission already waiting answers with its place and queues nothing
+  (`Queue.offer`), and every accepted one is logged with its key, repo, sha and source.
 - (chore): scaffold the orchestrator: package, pure test suite, CI and the repository's rules.
