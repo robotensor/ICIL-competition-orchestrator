@@ -28,6 +28,19 @@ def test_queue_replace_moves_to_back_and_persists(tmp_path):
     assert q2.remove(e1.key) and not q2.remove(e1.key)
 
 
+def test_offer_keeps_a_waiting_submission_where_it_is(tmp_path):
+    q = Queue(tmp_path / "q.json")
+    first, p1, new1 = q.offer("a/x", "1" * 40, duel_size="light", source="admin", now="t1")
+    second, p2, new2 = q.offer("b/y", "2" * 40)
+    assert (p1, new1, p2, new2) == (1, True, 2, True)
+    assert first.source == "admin" and first.accepted_at == "t1"
+    again, p3, new3 = q.offer("a/x", "1" * 40, duel_size="smoke", source="other", now="t2")
+    assert (p3, new3) == (1, False) and again == first, "the waiting entry changed"
+    assert [e.key for e in Queue(tmp_path / "q.json").entries()] == [first.key, second.key]
+    with pytest.raises(ValueError, match="resolved commit sha"):
+        q.offer("a/x", "main")
+
+
 def test_the_snapshot_is_the_schema_4_shape_the_dashboard_reads(tmp_path):
     q = Queue(tmp_path / "q.json")
     q.add("org/policy", "3" * 40, duel_size="smoke", now="2026-09-13T10:00:00Z")
