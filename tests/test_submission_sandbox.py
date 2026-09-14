@@ -27,12 +27,14 @@ from icil_orchestrator.submissions.container import (
     PREPARE_HOME,
     SHARED_DIR_BYTES,
     SHARED_DIR_INODES,
+    SHARED_DIR_SOURCE,
     TMPFS_HARDENING,
     Owner,
     PolicyContainer,
     can_bound_shared_dir,
     container_argv,
     is_socket,
+    mount_shared_dir,
     policy_environment,
     prepare_socket_dir,
     reap_orphans,
@@ -280,6 +282,27 @@ def test_the_shared_directory_is_a_bounded_tmpfs_for_the_containers_lifetime(
         is None
     )
     assert can_bound_shared_dir() == (os.geteuid() == 0)
+
+
+def test_nothing_written_to_the_shared_tmpfs_runs(monkeypatch, tmp_path):
+    """The policy writes its socket and log to the shared directory, and nothing else it writes
+    there may run: the tmpfs is mounted nosuid, nodev and noexec, which the bind mount into the
+    container keeps (the container tests read it from /proc/mounts), so the spec's tmpfs is the
+    only place code a policy writes runs from. `mount_shared_dir` is the real one, imported before
+    the pure suite stands a recorder in; only the `mount` command is caught."""
+    calls: list[list[str]] = []
+    monkeypatch.setattr("icil_orchestrator.submissions.container._mount_command", calls.append)
+    mount_shared_dir(tmp_path, 1000, 1001)
+    ((*command, options, source, target),) = calls
+    assert (command, source, target) == (
+        ["mount", "-t", "tmpfs", "-o"],
+        SHARED_DIR_SOURCE,
+        str(tmp_path),
+    )
+    flags = options.split(",")
+    assert {"nosuid", "nodev", "noexec"} <= set(flags), options
+    assert {f"size={SHARED_DIR_BYTES}", f"nr_inodes={SHARED_DIR_INODES}"} <= set(flags), options
+    assert {"uid=1000", "gid=1001", "mode=0700"} <= set(flags), options
 
 
 def test_only_a_socket_itself_counts_as_listening(tmp_path):

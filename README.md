@@ -46,7 +46,8 @@ plain file, builds its image `FROM` the pinned base by digest with its checkout 
 requirements installed at build time (bounded by `--build-timeout`), runs it under
 `spec.submission.sandbox` - no network, a read-only root, `/tmp` a nosuid,nodev tmpfs of
 `tmpfs_bytes` that may run code, a non-root user, memory with no swap, cpu and pid limits, one
-directory shared for the socket (a small tmpfs when the orchestrator is root) - and says `hello`.
+directory shared for the socket (a small noexec tmpfs when the orchestrator is root) - and says
+`hello`.
 A step that fails is the submission's rejection with the reason or the harness's error, and the
 container is removed either way; a container whose process was killed is removed by the next
 start. `--local DIR` takes a directory in the Hub's place. See

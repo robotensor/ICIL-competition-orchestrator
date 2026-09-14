@@ -83,6 +83,9 @@
   `devel` (nvcc and the CUDA headers) with build-essential and python3.10-dev: 9.49 GB, where the
   runtime base was 3.52 GB. Submission code already runs natively in its container, so exec on a
   capped nosuid,nodev tmpfs removes a speed bump, not a boundary: no network, the read-only root,
-  the non-root user and the limits are unchanged. `tests/test_submission_jit.py` serves a policy
-  that compiles C on its first act and, under `slow`, one whose act runs `torch.compile` on the CPU.
+  the non-root user and the limits are unchanged. The shared socket directory's tmpfs is now
+  mounted `nosuid,nodev,noexec` as well, so the spec's tmpfs is the only place code a policy
+  writes can run from. `tests/test_submission_jit.py` serves a policy that compiles C on its
+  first act and, under `slow`, one whose act runs `torch.compile` on the CPU, and walks every
+  mount inside to check where the sandbox user can write and run code.
 - (chore): scaffold the orchestrator: package, pure test suite, CI and the repository's rules.

@@ -72,14 +72,17 @@ every submission build (`icil_orchestrator.submissions.image.ensure_base`).
   the server starts, and points `TMPDIR`, `TRITON_CACHE_DIR`, `TORCHINDUCTOR_CACHE_DIR` and
   `TORCH_EXTENSIONS_DIR` into it (`container.policy_environment`). So a policy may compile at run
   time - `torch.compile`, Triton, cffi, `torch.utils.cpp_extension`, its own `gcc -shared` - and
-  load what it built. The same compile into any other path meets the read-only root, and
-  `/dev/shm`, the other tmpfs Docker gives a container, stays `noexec`. Its contents count against
+  load what it built. It is the only place it can: a compile into the root filesystem (`/`,
+  `/submission`, `/usr`, `/opt`) meets the read-only root, and `/dev/shm` (the other tmpfs Docker
+  gives a container) and `/run/icil` take the file but are `noexec`, so it will not load
+  (`tests/test_submission_jit.py` walks every mount to check). Its contents count against
   `memory_bytes` and go with the container.
 - `/run/icil`: the socket and the server's log, shared with the host. When the orchestrator runs as
   root it is a tmpfs of 64 MiB and 64 entries (`container.SHARED_DIR_BYTES`,
-  `SHARED_DIR_INODES`); as another user it is a plain directory with no cap. Neither is mounted
-  `noexec`, `nosuid` or `nodev`; with no capabilities and no new privileges, a setuid file or a
-  device node there is inert.
+  `SHARED_DIR_INODES`) mounted `nosuid,nodev,noexec` (`SHARED_DIR_HARDENING`), which the bind
+  mount into the container keeps. As another user it is a plain directory with no cap, mounted
+  with whatever options the host's filesystem there has, so it may run code; with no capabilities
+  and no new privileges, a setuid file or a device node there is still inert.
 - No network, no swap (`memory_bytes` is the total), no capabilities, no setuid escalation, and the
   spec's cpu and pid limits.
 

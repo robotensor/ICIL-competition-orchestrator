@@ -5,8 +5,9 @@ sandbox's /tmp is a tmpfs that may run what is written there - nosuid, nodev and
 `sandbox.tmpfs_bytes` - with HOME, TMPDIR and the compilers' caches pointed into it. These tests
 serve competitor repositories that compile (`tests/fixtures/jit_policy`, and under `slow`
 `tests/fixtures/torch_compile_policy`) through the real sandbox and `RemotePolicy`, and check that
-the relaxation is exactly /tmp: the same compile anywhere else meets the read-only root. The
-network, the user, the limits and what a policy cannot see are `test_submission_container.py`'s.
+the spec's tmpfs is the only place code a policy writes can run from: elsewhere the root is
+read-only, or the mount (/dev/shm, the shared socket directory) is noexec. The network, the user,
+the limits and what a policy cannot see are `test_submission_container.py`'s.
 
 Containers are named `icil-jit-*`, and the images built here are removed when the module ends.
 """
@@ -22,7 +23,11 @@ import numpy as np
 import pytest
 
 from icil_orchestrator.submissions.checks import check_repository
-from icil_orchestrator.submissions.container import PolicyContainer, policy_environment
+from icil_orchestrator.submissions.container import (
+    SOCKET_DIR,
+    PolicyContainer,
+    policy_environment,
+)
 from icil_orchestrator.submissions.docker import Docker, DockerError
 from icil_orchestrator.submissions.fetch import LocalFetcher, RepoCache
 from icil_orchestrator.submissions.image import (
@@ -51,6 +56,51 @@ done = subprocess.run(
 if done.returncode:
     sys.exit("compile failed: " + done.stderr)
 print(ctypes.CDLL(target).cjit_one())
+"""
+
+#: Run inside a container: the mount points where the user it runs as can put code and run it,
+#: as a sorted JSON list. A mount counts when /proc/mounts has it neither `ro` nor `noexec` and, on
+#: that filesystem alone (as `find -xdev`), a directory takes a new file or a file of the user's own
+#: can be written.
+WRITABLE_AND_EXECUTABLE = r"""
+import json, os, stat
+mine = os.getuid()
+found = set()
+for line in open("/proc/mounts"):
+    fields = line.split()
+    point = fields[1].encode().decode("unicode_escape")
+    flags = fields[3].split(",")
+    if "ro" in flags or "noexec" in flags:
+        continue
+    try:
+        top = os.lstat(point)
+    except OSError:
+        continue
+    if not stat.S_ISDIR(top.st_mode):
+        if top.st_uid == mine and os.access(point, os.W_OK):
+            found.add(point)
+        continue
+    for root, dirs, files in os.walk(point):
+        if os.access(root, os.W_OK | os.X_OK):
+            found.add(point)
+            break
+        kept = []
+        for name in dirs:
+            try:
+                if os.lstat(os.path.join(root, name)).st_dev == top.st_dev:
+                    kept.append(name)
+            except OSError:
+                pass
+        dirs[:] = kept
+        for name in files:
+            path = os.path.join(root, name)
+            try:
+                info = os.lstat(path)
+            except OSError:
+                continue
+            if stat.S_ISREG(info.st_mode) and info.st_uid == mine and os.access(path, os.W_OK):
+                found.add(point)
+print(json.dumps(sorted(found)))
 """
 
 
@@ -144,13 +194,14 @@ def test_a_policy_that_compiles_c_on_its_first_act_answers_with_it(spec, jit):
     assert library in maps.stdout, "the server, the container's first process, has it mapped"
 
 
-def test_the_same_compile_anywhere_but_tmp_meets_the_read_only_root(
+def test_the_same_compile_anywhere_but_tmp_is_not_written_or_not_run(
     spec, docker, build, jit, tmp_path
 ):
-    """The relaxation is exactly /tmp. The policy compiling into /submission - its own checkout,
-    owned by its user - fails at act, and the served session goes on; by hand, the root and the
-    image's directories refuse the shared object, /tmp takes it and loads it, and /dev/shm, the
-    other tmpfs Docker gives a container, takes it and refuses to run it."""
+    """The policy compiling into /submission - its own checkout, owned by its user - fails at act,
+    and the served session goes on. By hand: the root and the image's directories refuse the
+    shared object, /tmp takes it and loads it, and /dev/shm (the other tmpfs Docker gives a
+    container) and /run/icil (the socket directory, which the policy may write) take it and refuse
+    to run it."""
     outside = shutil.copytree(JIT_POLICY, tmp_path / "outside")
     (outside / "icil.yaml").write_text(
         "api: 1\npolicy: cjit.policy:CJitPolicy\nkwargs:\n  build_dir: /submission\n"
@@ -173,24 +224,44 @@ def test_the_same_compile_anywhere_but_tmp_meets_the_read_only_root(
         assert "Read-only file system" in done.stderr, (target, done.stderr)
     scratch = python(jit, COMPILE_AND_LOAD, f"{policy_environment(spec)['TMPDIR']}/one.so")
     assert scratch.returncode == 0 and scratch.stdout.strip() == "1", scratch.stderr
-    shm = python(jit, COMPILE_AND_LOAD, "/dev/shm/one.so")
-    assert shm.returncode != 0 and "compile failed" not in shm.stderr, shm.stderr
-    assert "failed to map segment from shared object" in shm.stderr, shm.stderr
+    assert jit.bounded, "the container tests run as root, so the socket directory is a tmpfs"
+    for target in ("/dev/shm/one.so", f"{SOCKET_DIR}/one.so"):
+        done = python(jit, COMPILE_AND_LOAD, target)
+        assert done.returncode != 0 and "compile failed" not in done.stderr, (target, done.stderr)
+        assert "failed to map segment from shared object" in done.stderr, (target, done.stderr)
+
+
+def test_the_specs_tmpfs_is_the_only_place_the_policy_can_write_code_and_run_it(spec, jit):
+    """Every mount inside, walked as the sandbox user: those neither read-only nor noexec where it
+    can create or rewrite a file are exactly `sandbox.tmpfs` (none when `tmpfs_exec` is false)."""
+    sandbox = spec.submission["sandbox"]
+    found = python(jit, WRITABLE_AND_EXECUTABLE)
+    assert found.returncode == 0, found.stderr
+    expected = sorted(sandbox["tmpfs"]) if sandbox["tmpfs_exec"] else []
+    assert json.loads(found.stdout) == expected
 
 
 def test_tmp_is_a_nosuid_nodev_tmpfs_of_the_specs_size_that_runs_code(spec, jit):
     """What /proc/mounts says inside: every `sandbox.tmpfs` path a tmpfs, nosuid and nodev, exec
-    as the spec says, of `tmpfs_bytes`; and the environment and home the container starts with."""
+    as the spec says, of `tmpfs_bytes`, and the socket directory nosuid, nodev and noexec; and the
+    environment and home the container starts with."""
     sandbox = spec.submission["sandbox"]
     mounts = inside(jit, "cat", "/proc/mounts").stdout.splitlines()
-    for path in sandbox["tmpfs"]:
+
+    def flags_at(path: str) -> list[str]:
         (line,) = [m for m in mounts if m.split()[1:2] == [path]]
         _, _, kind, options, *_ = line.split()
-        flags = options.split(",")
-        assert kind == "tmpfs" and "rw" in flags, line
-        assert "nosuid" in flags and "nodev" in flags, line
-        assert ("noexec" not in flags) is sandbox["tmpfs_exec"], line
-        assert f"size={sandbox['tmpfs_bytes'] >> 10}k" in flags, line
+        assert kind == "tmpfs", line
+        return options.split(",")
+
+    for path in sandbox["tmpfs"]:
+        flags = flags_at(path)
+        assert "rw" in flags and "nosuid" in flags and "nodev" in flags, flags
+        assert ("noexec" not in flags) is sandbox["tmpfs_exec"], flags
+        assert f"size={sandbox['tmpfs_bytes'] >> 10}k" in flags, flags
+    assert jit.bounded
+    shared = flags_at(SOCKET_DIR)
+    assert {"rw", "nosuid", "nodev", "noexec"} <= set(shared), shared
     environ = json.loads(python(jit, "import json, os\nprint(json.dumps(dict(os.environ)))").stdout)
     served = inside(jit, "cat", "/proc/1/environ").stdout.split("\0")
     for key, value in policy_environment(spec).items():

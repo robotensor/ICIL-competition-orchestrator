@@ -29,8 +29,8 @@ What the container can reach is its own image and one directory, shared for
 the Unix socket and the server's log: mode 0700 on the host and owned by the sandbox user, so the
 policy can create the socket and nobody else on the host can open it. The policy can write there,
 so the directory is a tmpfs of `SHARED_DIR_BYTES` mounted on the host by the orchestrator (root)
-for the container's lifetime: a policy that fills it fills nothing else, and the log is copied out
-before the tmpfs goes. Nothing of the store, the queue, the prompts or the other side is mounted,
+for the container's lifetime, nosuid, nodev and noexec: a policy that fills it fills nothing else,
+nothing it writes there runs, and the log is copied out before the tmpfs goes. Nothing of the store, the queue, the prompts or the other side is mounted,
 and the only variable that crosses is the authkey, by name: `docker run --env NAME` takes the
 value from the docker client's environment, so it is never on a command line.
 
@@ -105,6 +105,10 @@ SHARED_DIR_BYTES = 64 << 20
 SHARED_DIR_INODES = 64
 #: What the tmpfs is listed under in the host's mount table.
 SHARED_DIR_SOURCE = "icil-policy"
+#: The shared tmpfs holds a socket and a log, so nothing written there runs, and a setuid bit or
+#: a device file means nothing; the bind mount into the container keeps these flags. The spec's
+#: tmpfs is then the only place code a policy writes can run from.
+SHARED_DIR_HARDENING = ("nosuid", "nodev", "noexec")
 #: Labels on every container: the process that started it (`Owner`) and its shared directory on
 #: the host, so a container whose owner is gone can be found and reaped with its tmpfs.
 OWNER_PID_LABEL = "icil.owner.pid"
@@ -284,8 +288,14 @@ def can_bound_shared_dir() -> bool:
 
 
 def mount_shared_dir(directory: Path, uid: int, gid: int) -> None:
-    """A tmpfs of `SHARED_DIR_BYTES` at `directory`, owned by the sandbox user, mode 0700."""
-    options = f"size={SHARED_DIR_BYTES},nr_inodes={SHARED_DIR_INODES},uid={uid},gid={gid},mode=0700"
+    """A tmpfs of `SHARED_DIR_BYTES` at `directory`, owned by the sandbox user, mode 0700, with
+    `SHARED_DIR_HARDENING`."""
+    options = ",".join(
+        (
+            f"size={SHARED_DIR_BYTES},nr_inodes={SHARED_DIR_INODES},uid={uid},gid={gid},mode=0700",
+            *SHARED_DIR_HARDENING,
+        )
+    )
     _mount_command(["mount", "-t", "tmpfs", "-o", options, SHARED_DIR_SOURCE, str(directory)])
 
 
