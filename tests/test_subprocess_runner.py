@@ -7,6 +7,7 @@ real result file, so the path under test is the one a duel takes - not a mock of
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import time
@@ -299,6 +300,34 @@ def test_by_default_the_benchmark_sees_an_allow_listed_environment(fake, tmp_pat
     assert seen[AUTHKEY_ENV] == AUTHKEY and seen["PATH"] and seen["LC_ALL"] == "C.UTF-8"
     kept = runner.benchmark_environment({"PATH": "/bin", "MUJOCO_GL": "egl", "X": "1"}, "K", ("X",))
     assert kept == {"PATH": "/bin", "MUJOCO_GL": "egl", "X": "1"}
+
+
+def test_the_benchmark_is_given_robotwins_interpreter_and_denoiser_but_no_secret(
+    fake, tmp_path, monkeypatch
+):
+    """RoboTwin's commands read the simulator environment's interpreter and the denoiser a host
+    must render with from these two variables, in the subprocess as where its argv is built."""
+    monkeypatch.setenv("ROBOTWIN_ICIL_PYTHON", "/opt/robotwin/bin/python")
+    monkeypatch.setenv("ROBOTWIN_ICIL_DENOISER", "none")
+    monkeypatch.setenv("HF_TOKEN", "hf_publish_secret")
+    monkeypatch.setenv(AUTHKEY_ENV, AUTHKEY)
+    outcome = runner.run_unit(
+        fake,
+        unit(0),
+        prompt="/prompts/p.npz",
+        out_dir=tmp_path / "u",
+        policy_address="/tmp/icil-test-policy.sock",
+        authkey_env=AUTHKEY_ENV,
+        timeout_s=30,
+    )
+    assert not outcome.void, outcome.error
+    given = (tmp_path / "u" / "given.json").read_text()
+    seen = json.loads(given)["environ"]
+    assert seen["ROBOTWIN_ICIL_PYTHON"] == "/opt/robotwin/bin/python"
+    assert seen["ROBOTWIN_ICIL_DENOISER"] == "none"
+    assert "HF_TOKEN" not in seen and "hf_publish_secret" not in given
+    monkeypatch.delenv("ROBOTWIN_ICIL_DENOISER")
+    assert "ROBOTWIN_ICIL_DENOISER" not in runner.benchmark_environment(os.environ, AUTHKEY_ENV)
 
 
 def test_a_unit_with_no_materialized_prompt_is_void_rather_than_run(fake, tmp_path):

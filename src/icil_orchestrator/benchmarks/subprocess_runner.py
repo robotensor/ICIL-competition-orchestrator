@@ -45,11 +45,15 @@ LOG_FILE = "benchmark.log"
 TAIL_CHARS = 400
 
 #: What a benchmark subprocess inherits from the orchestrator when no environment is given: the
-#: locale, the paths an interpreter needs, and what a GPU simulator reads to find its device and
-#: display. Never the credentials that publish results (HF_TOKEN, the live token): the benchmark
-#: parses a hostile policy's replies, and a bug there must not hand out write access to the record.
+#: locale, the paths an interpreter needs, what a GPU simulator reads to find its device and
+#: display, and the RoboTwin benchmark's own settings - the simulator environment's interpreter and
+#: the denoiser a host's cameras must render with - neither of which is a secret. Never the
+#: credentials that publish results (HF_TOKEN, the live token): the benchmark parses a hostile
+#: policy's replies, and a bug there must not hand out write access to the record.
 ENV_ALLOW = frozenset(
     {
+        "ROBOTWIN_ICIL_PYTHON",
+        "ROBOTWIN_ICIL_DENOISER",
         "PATH",
         "HOME",
         "USER",
