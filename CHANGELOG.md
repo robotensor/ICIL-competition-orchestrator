@@ -61,8 +61,10 @@
   64 MiB, 64-entry tmpfs mounted by the orchestrator when root, so a policy cannot fill the host's
   disk through it, and only a socket itself (not a link at its name) counts as listening. The
   build is bounded (`submission check --build-timeout`, 1800 s by default until `spec.budgets`
-  carries a build budget) and one past it is a rejection; a build whose pip could not reach its
-  index is the harness's error, not a rejection. The session kept after `hello` is bounded by
+  carries a build budget). A build that fails or runs past it is a rejection once the
+  orchestrator's own index probe (pip in the base, with nothing of the submission, never cached)
+  gets through, whatever the build printed, and the harness's error when the probe cannot reach
+  the index either. The session kept after `hello` is bounded by
   `act_timeout_s`. A file the Hub declares no size for is not downloaded; a missing branch or
   repository is rejected with the Hub's words for it; `queue add` confirms a commit sha on the Hub
   too; `--local` holds the ref to a repo id. Containers are labelled with the process that started

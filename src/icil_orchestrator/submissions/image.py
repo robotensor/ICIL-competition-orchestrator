@@ -20,10 +20,25 @@ package), the image id recorded with a side is then exactly the code that ran, a
 mounts nothing of the host but its socket directory. Under `--read-only` `/submission` is as
 unwritable as a read-only mount. The cost is disk: a checkout of up to `max_repo_bytes` is also a
 layer, so images stay until `submission prune` (`prune_submission_images`) removes them.
+
+**Whose failure a failed build is.** The requirements do not install: the submission's doing, a
+rejection. Or pip could not reach its index: the network's or the index's, an error to try again.
+The build's log cannot tell the two apart, because the submission writes it: a `setup.py` can
+print pip's words for a broken connection. So the log decides nothing. After a build fails or
+runs out of time the orchestrator runs its own probe (`probe_index`): a build from the same base
+with nothing of the submission in it, never cached, in which pip downloads `pip` from the index it
+is configured with. If the probe gets through, the index was reachable and the failure is a
+rejection, whatever the log says. If it does not, nobody can tell, and the build is the harness's
+error. The probe starts after the submission's build has ended, so nothing of the submission runs
+beside it. Requirements that name an index of their own (`--index-url`) are the submission's to
+keep reachable. What a submission can still do is make the index refuse this host during its own
+build, and so turn its rejection into an error: that gains it a retry, never a verdict or a run.
 """
 
 from __future__ import annotations
 
+import secrets
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,17 +59,14 @@ SUBMISSION_DIR = "/submission"
 SUBMISSION_IMAGE = "icil-submission"
 #: Build arguments the base Dockerfile takes, from the spec's sandbox user.
 UID_ARG, GID_ARG = "POLICY_UID", "POLICY_GID"
-#: What pip prints when it cannot reach an index. A build that failed this way failed for the
-#: harness's reason - the network, PyPI - and is an error to try again, not the submission's
-#: rejection to publish. A package that does not exist ends in the same final ERROR lines; what
-#: tells the two apart is the retrying on a broken connection before them.
-PIP_TRANSPORT_FAILURES = (
-    "after connection broken by",
-    "Temporary failure in name resolution",
-    "NewConnectionError",
-    "ReadTimeoutError",
-    "Max retries exceeded with url",
-)
+#: The repository the index probe's throwaway image is tagged under, removed once it is built.
+INDEX_PROBE_IMAGE = "icil-index-probe"
+#: What the probe downloads: pip itself, which the index pip is configured with has.
+INDEX_PROBE_REQUIREMENT = "pip"
+#: How long the probe may take: pip's own retries against a network that drops packets, and more.
+INDEX_PROBE_TIMEOUT_S = 180.0
+#: How much of the probe's log an error quotes.
+INDEX_PROBE_TAIL_CHARS = 500
 
 
 @dataclass(frozen=True)
@@ -73,6 +85,15 @@ class BuiltImage:
     tag: str
     image_id: str
     base: BaseImage
+    seconds: float
+
+
+@dataclass(frozen=True)
+class IndexProbe:
+    """What `probe_index` found: whether pip in the base reached its index, and what it said."""
+
+    reachable: bool
+    detail: str
     seconds: float
 
 
@@ -147,9 +168,48 @@ def submission_tag(ref: SubmissionRef) -> str:
     return f"{SUBMISSION_IMAGE}:{ref.key}-{ref.revision}"
 
 
-def transport_failed(log: str) -> bool:
-    """Whether a failed build's log says pip could not reach an index (`PIP_TRANSPORT_FAILURES`)."""
-    return any(marker in log for marker in PIP_TRANSPORT_FAILURES)
+def index_probe_dockerfile(base: BaseImage) -> str:
+    """The probe's whole Dockerfile: the base and one pip download, nothing of any submission."""
+    download = (
+        "python -m pip download --no-deps --only-binary :all: --no-cache-dir "
+        f"--dest /tmp/icil-index-probe {INDEX_PROBE_REQUIREMENT}"
+    )
+    return (
+        f"# the orchestrator's index probe, from {base.digest}\n"
+        f"FROM {base.tag}\n"
+        f"RUN {download} && rm -rf /tmp/icil-index-probe\n"
+    )
+
+
+def probe_index(
+    docker: Docker, base: BaseImage, *, timeout_s: float = INDEX_PROBE_TIMEOUT_S
+) -> IndexProbe:
+    """Whether pip, in a build from `base` with an empty context, reaches the index it is
+    configured with: the orchestrator's own look at the network a submission's build had, which
+    no submission can write to. Never cached, so every probe goes to the index; its image is
+    removed. Docker itself failing is a `SubmissionError`, as anywhere else."""
+    ensure_base(docker, base)
+    tag = f"{INDEX_PROBE_IMAGE}:{secrets.token_hex(6)}"
+    started = time.monotonic()
+    with tempfile.TemporaryDirectory(prefix="icil-index-probe-") as context:
+        try:
+            docker.build(
+                Path(context),
+                index_probe_dockerfile(base),
+                tag=tag,
+                timeout_s=timeout_s,
+                no_cache=True,
+            )
+        except BuildFailed as exc:
+            detail = exc.log[-INDEX_PROBE_TAIL_CHARS:]
+            return IndexProbe(False, detail, round(time.monotonic() - started, 3))
+        except BuildTimedOut as exc:
+            detail = f"pip download {INDEX_PROBE_REQUIREMENT} did not finish in {exc.timeout_s:g}s"
+            return IndexProbe(False, detail, round(time.monotonic() - started, 3))
+    docker.remove_image(tag)
+    seconds = round(time.monotonic() - started, 3)
+    detail = f"pip download {INDEX_PROBE_REQUIREMENT} worked in {seconds:g}s"
+    return IndexProbe(True, detail, seconds)
 
 
 def submission_dockerfile(base: BaseImage, manifest: Manifest, spec: Any) -> str:
@@ -178,9 +238,11 @@ def build_submission_image(
     timeout_s: float | None = None,
 ) -> BuiltImage:
     """`checkout` as an image FROM `base`, tagged by `ref`. A build that fails - the requirements
-    do not install - or is not done within `timeout_s` is a rejection with the reason: what the
-    requirements do at install time is the submission's, like what its policy does at start. A
-    base that is not there, or an index pip could not reach, is not."""
+    do not install - or is not done within `timeout_s` is a rejection with the reason, once
+    `probe_index` has reached the index: what the requirements do at install time is the
+    submission's, like what its policy does at start. A base that is not there, or a probe that
+    cannot reach the index either, is the harness's error; what the build printed decides
+    nothing (see the module docstring)."""
     ensure_base(docker, base)
     dockerfile = submission_dockerfile(base, manifest, spec)
     tag = submission_tag(ref)
@@ -193,19 +255,21 @@ def build_submission_image(
     try:
         image_id = docker.build(checkout, dockerfile, tag=tag, timeout_s=timeout_s)
     except BuildFailed as exc:
-        if transport_failed(exc.log):
-            raise SubmissionError(
-                f"{installing} could not reach its index, which is not the submission's doing; "
-                f"try again later:\n{exc.log}"
-            ) from None
-        raise SubmissionRejected("build", f"{installing} failed:\n{exc.log}") from None
+        failed, log = f"{installing} failed", f":\n{exc.log}"
     except BuildTimedOut as exc:
-        raise SubmissionRejected(
-            "build", f"{installing} did not finish within {exc.timeout_s:g}s"
-        ) from None
-    return BuiltImage(
-        tag=tag, image_id=image_id, base=base, seconds=round(time.monotonic() - started, 3)
-    )
+        failed, log = f"{installing} did not finish within {exc.timeout_s:g}s", ""
+    else:
+        return BuiltImage(
+            tag=tag, image_id=image_id, base=base, seconds=round(time.monotonic() - started, 3)
+        )
+    probe = probe_index(docker, base)
+    if not probe.reachable:
+        raise SubmissionError(
+            f"{failed}, and the orchestrator's own probe could not reach the index either, so "
+            f"the failure is not known to be the submission's; try again later. The probe: "
+            f"{probe.detail}\nThe build{log or ': (no log, it was stopped)'}"
+        )
+    raise SubmissionRejected("build", failed + log)
 
 
 def prune_submission_images(docker: Docker) -> tuple[list[str], dict[str, str]]:

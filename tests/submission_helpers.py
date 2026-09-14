@@ -19,6 +19,7 @@ from icil_orchestrator.submissions.docker import (
     ContainerInfo,
     ContainerState,
 )
+from icil_orchestrator.submissions.image import INDEX_PROBE_IMAGE
 
 SHA_A = "a" * 40
 SHA_B = "b" * 40
@@ -112,11 +113,38 @@ def write_policy_repo(root: Path, policy: str = "pkg.policy:Policy", **manifest:
 FAKE_BASE_DIGEST = "sha256:" + "b" * 64
 
 
+def pip_unreachable_log(requirement: str) -> str:
+    """What pip prints when it cannot reach its index - and what any `setup.py` can print."""
+    return (
+        "WARNING: Retrying (Retry(total=0, connect=None, read=None, redirect=None, status=None))"
+        " after connection broken by 'NewConnectionError('<pip._vendor.urllib3.connection."
+        "HTTPSConnection object at 0x7f>: Failed to establish a new connection: [Errno -3] "
+        f"Temporary failure in name resolution')': /simple/{requirement}/\n"
+        "ERROR: Could not find a version that satisfies the requirement "
+        f"{requirement} (from versions: none)\n"
+        f"ERROR: No matching distribution found for {requirement}"
+    )
+
+
+@dataclass(frozen=True)
+class ProbeBuild:
+    """One index probe as `FakeDocker.build` saw it, its context's entries listed at the time."""
+
+    context: Path
+    contents: list[str]
+    dockerfile: str
+    tag: str
+    no_cache: bool
+    timeout_s: float | None
+
+
 @dataclass
 class FakeDocker:
     """`Docker` without Docker: builds are recorded and given an id, and `run` starts
     `python -m icil_policy.serve` on the host, with the image's checkout in place of /submission
-    and the mounted directory in place of /run/icil, so the start-and-hello path runs for real."""
+    and the mounted directory in place of /run/icil, so the start-and-hello path runs for real.
+    An index probe (a build tagged `INDEX_PROBE_IMAGE`) is kept apart in `probes`, and reaches
+    the index while `index_reachable` says so."""
 
     images: dict[str, str] = field(default_factory=dict)
     contexts: dict[str, Path] = field(default_factory=dict)
@@ -136,6 +164,10 @@ class FakeDocker:
     build_seconds: float = 0.0
     #: The timeout each build was given.
     build_timeouts: list[float | None] = field(default_factory=list)
+    #: Every index probe, in order; not in `builds`, and `build_failure` does not touch them.
+    probes: list[ProbeBuild] = field(default_factory=list)
+    #: Whether an index probe gets through; when not, it fails with pip's words for it.
+    index_reachable: bool = True
 
     # -- images
     def image_id(self, ref):
@@ -144,7 +176,18 @@ class FakeDocker:
     def find_image(self, image_id):
         return next((ref for ref, found in self.images.items() if found == image_id), None)
 
-    def build(self, context, dockerfile, *, tag, build_args=None, timeout_s=None):
+    def build(self, context, dockerfile, *, tag, build_args=None, timeout_s=None, no_cache=False):
+        if tag.startswith(f"{INDEX_PROBE_IMAGE}:"):
+            contents = sorted(os.listdir(context))
+            self.probes.append(
+                ProbeBuild(Path(context), contents, dockerfile, tag, no_cache, timeout_s)
+            )
+            if not self.index_reachable:
+                raise BuildFailed(tag, pip_unreachable_log("pip"))
+            self.images[tag] = (
+                "sha256:" + hashlib.sha256(f"{tag}\n{dockerfile}".encode()).hexdigest()
+            )
+            return self.images[tag]
         self.builds.append((Path(context), dockerfile, tag, dict(build_args or {})))
         self.build_timeouts.append(timeout_s)
         if self.build_failure is not None:

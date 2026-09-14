@@ -17,7 +17,7 @@ from icil_orchestrator.cli import main
 from icil_orchestrator.ids import is_commit_sha
 from icil_orchestrator.submissions.check import BUILD_TIMEOUT_S, STEPS, check_submission
 from icil_orchestrator.submissions.fetch import LocalFetcher, RepoCache
-from submission_helpers import FAKE_BASE_DIGEST, FakeDocker
+from submission_helpers import FAKE_BASE_DIGEST, FakeDocker, pip_unreachable_log
 
 EXAMPLE = Path(__file__).resolve().parents[1] / "packages/icil-policy/examples/replay_policy"
 
@@ -138,6 +138,49 @@ def test_check_rejects_requirements_that_do_not_install_and_runs_nothing(
     statuses = [line.split()[1] for line in out.splitlines() if line.split()[:1][0] in STEPS]
     assert statuses == ["ok", "ok", "ok", "rejected", "skipped", "skipped"]
     assert fake_docker.runs == [] and fake_docker.removed == []
+
+
+def test_check_rejects_a_build_that_prints_pips_network_failure_when_the_index_answers(
+    sandbox_spec, fake_docker, tmp_path, capsys
+):
+    """What a build printed is the submission's: pip's words for an unreachable index in its log
+    do not make its rejection a retryable error while the orchestrator's own probe gets through."""
+    fake_docker.build_failure = pip_unreachable_log("numpy")
+    code = check(
+        sandbox_spec,
+        tmp_path,
+        "local/spoof@main",
+        "--local",
+        str(shutil.copytree(EXAMPLE, tmp_path / "spoof")),
+        "--base-image",
+        FAKE_BASE_DIGEST,
+    )
+    out = capsys.readouterr().out
+    assert code == 1 and out.strip().endswith(": REJECTED at build"), out
+    assert "Temporary failure in name resolution" in out and "try again" not in out
+    assert len(fake_docker.probes) == 1 and fake_docker.runs == []
+
+
+def test_check_is_an_error_when_the_probe_cannot_reach_the_index_either(
+    sandbox_spec, fake_docker, tmp_path, capsys
+):
+    fake_docker.build_failure = "ERROR: No matching distribution found for numpy"
+    fake_docker.index_reachable = False
+    code = check(
+        sandbox_spec,
+        tmp_path,
+        "local/replay_policy@main",
+        "--local",
+        str(EXAMPLE),
+        "--base-image",
+        FAKE_BASE_DIGEST,
+        "--json",
+    )
+    report = json.loads(capsys.readouterr().out)
+    assert code == 2 and report["verdict"] == "error", report
+    build = report["steps"][3]
+    assert build["status"] == "error" and "try again later" in build["detail"]
+    assert report["side"]["verdict"] == "error" and fake_docker.runs == []
 
 
 def test_check_rejects_requirements_that_never_finish_installing_at_build(

@@ -11,17 +11,28 @@ from icil_orchestrator.submissions import SubmissionError, SubmissionRejected
 from icil_orchestrator.submissions.checks import check_repository
 from icil_orchestrator.submissions.image import (
     BASE_DOCKERFILE,
+    INDEX_PROBE_IMAGE,
+    INDEX_PROBE_REQUIREMENT,
+    INDEX_PROBE_TAIL_CHARS,
+    INDEX_PROBE_TIMEOUT_S,
     BaseImage,
     base_image,
     build_base_image,
     build_submission_image,
     ensure_base,
+    index_probe_dockerfile,
+    probe_index,
     sandbox_user,
     submission_dockerfile,
     submission_tag,
-    transport_failed,
 )
-from submission_helpers import FAKE_BASE_DIGEST, SHA_A, FakeDocker, write_policy_repo
+from submission_helpers import (
+    FAKE_BASE_DIGEST,
+    SHA_A,
+    FakeDocker,
+    pip_unreachable_log,
+    write_policy_repo,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -127,29 +138,83 @@ def test_requirements_that_do_not_install_reject_the_submission_with_the_reason(
     assert info.value.reason.startswith("installing requirements.txt failed:")
     assert "No matching distribution found for icil-no-such-package" in info.value.reason
     assert docker.runs == [], "nothing ran"
+    assert len(docker.probes) == 1, "the orchestrator's own probe reached the index first"
 
 
-def test_an_index_pip_could_not_reach_is_the_harness_problem_not_a_rejection(
+def test_the_index_probe_is_pip_in_the_base_with_nothing_of_any_submission(spec, docker, base):
+    with pytest.raises(SubmissionError, match="is not on this host"):
+        probe_index(docker, base)
+    docker.images["x:y"] = FAKE_BASE_DIGEST
+    probe = probe_index(docker, base)
+    assert probe.reachable and probe.detail.startswith("pip download pip worked in")
+    (seen,) = docker.probes
+    assert seen.dockerfile == index_probe_dockerfile(base)
+    lines = seen.dockerfile.splitlines()
+    assert lines[1] == f"FROM {base.tag}" and len(lines) == 3
+    assert lines[2].startswith("RUN python -m pip download --no-deps ")
+    assert f" {INDEX_PROBE_REQUIREMENT} && rm -rf " in lines[2]
+    assert not any(line.split()[0] in ("COPY", "ADD") for line in lines[1:]), "nothing copied in"
+    assert seen.contents == [] and not seen.context.exists(), "an empty context, gone after"
+    assert seen.no_cache, "a cached step would pass with no network"
+    assert seen.timeout_s == INDEX_PROBE_TIMEOUT_S
+    assert seen.tag.startswith(f"{INDEX_PROBE_IMAGE}:") and seen.tag not in docker.images
+    probe_index(docker, base)
+    assert docker.probes[1].tag != seen.tag, "two probes never share a tag"
+
+    docker.index_reachable = False
+    probe = probe_index(docker, base)
+    assert not probe.reachable and "Temporary failure in name resolution" in probe.detail
+    assert len(probe.detail) <= INDEX_PROBE_TAIL_CHARS
+
+
+def test_a_build_that_prints_pips_network_failure_is_rejected_when_the_index_answers(
     spec, docker, base, ref, tmp_path
 ):
-    """PyPI down or the build's network gone ends in the same final ERROR lines as a package that
-    does not exist; the retrying before them says which, and only the second is published."""
+    """The build's log is the submission's to write: a `setup.py` that prints pip's words for a
+    broken connection and fails is a rejection, because the orchestrator's own probe, which the
+    submission has no part in, reached the index."""
+    root = write_policy_repo(tmp_path / "repo", requirements="requirements.txt")
+    (root / "requirements.txt").write_text("./spoof\n")
+    docker.images["x:y"] = FAKE_BASE_DIGEST
+    docker.build_failure = pip_unreachable_log("numpy")
+    with pytest.raises(SubmissionRejected) as info:
+        build_submission_image(docker, spec, root, check_repository(root, spec), ref, base)
+    assert info.value.step == "build"
+    assert info.value.reason.startswith("installing requirements.txt failed:")
+    assert "Temporary failure in name resolution" in info.value.reason
+    (probe,) = docker.probes
+    assert probe.context != root and probe.contents == []
+    assert docker.runs == []
+
+
+@pytest.mark.parametrize("how", ["fails", "runs out of time"])
+def test_a_build_is_the_harness_error_when_the_probe_cannot_reach_the_index_either(
+    how, spec, docker, base, ref, tmp_path
+):
+    """Whatever the build printed - here only the final ERROR lines, which a package that does
+    not exist ends in too - with the index out of the probe's reach nobody can tell whose failure
+    it was, and it is not published."""
     root = write_policy_repo(tmp_path / "repo", requirements="requirements.txt")
     (root / "requirements.txt").write_text("numpy\n")
     docker.images["x:y"] = FAKE_BASE_DIGEST
-    docker.build_failure = (
-        "WARNING: Retrying (Retry(total=0, connect=None, read=None, redirect=None, status=None))"
-        " after connection broken by 'NewConnectionError('<pip._vendor.urllib3.connection."
-        "HTTPSConnection object at 0x7f>: Failed to establish a new connection: [Errno -3] "
-        "Temporary failure in name resolution')': /simple/numpy/\n"
-        "ERROR: Could not find a version that satisfies the requirement numpy (from versions: "
-        "none)\nERROR: No matching distribution found for numpy"
-    )
-    with pytest.raises(SubmissionError, match="could not reach its index.*try again later") as e:
-        build_submission_image(docker, spec, root, check_repository(root, spec), ref, base)
-    assert not isinstance(e.value, SubmissionRejected) and "name resolution" in str(e.value)
-    assert transport_failed(docker.build_failure)
-    assert not transport_failed("ERROR: No matching distribution found for icil-no-such-package")
+    if how == "fails":
+        docker.build_failure = "ERROR: No matching distribution found for numpy"
+    else:
+        docker.build_seconds = 100.0
+    docker.index_reachable = False
+    with pytest.raises(
+        SubmissionError, match="own probe could not reach the index either.*try again later"
+    ) as e:
+        build_submission_image(
+            docker, spec, root, check_repository(root, spec), ref, base, timeout_s=25.0
+        )
+    assert not isinstance(e.value, SubmissionRejected)
+    assert "Temporary failure in name resolution" in str(e.value), "the probe's own words"
+    if how == "fails":
+        assert "No matching distribution found for numpy" in str(e.value)
+    else:
+        assert "did not finish within 25s" in str(e.value)
+    assert len(docker.probes) == 1 and docker.runs == []
 
 
 def test_requirements_that_never_finish_installing_reject_the_submission_at_build(

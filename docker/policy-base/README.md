@@ -65,7 +65,12 @@ every submission build (`icil_orchestrator.submissions.image.ensure_base`).
   spec's cpu and pid limits.
 
 The image build, where the requirements install with network, is bounded by `submission check
---build-timeout` (1800 s by default); a build past it is a rejection at build. Checked images stay
+--build-timeout` (1800 s by default). A build that fails or runs past it is followed by the
+orchestrator's own probe (`image.probe_index`). The probe is a build from the base with an empty
+context, never cached, in which pip downloads `pip`. If the probe gets through, the failure is
+the submission's rejection at build, whatever its log says, since a `setup.py` can print pip's
+network errors. If the probe cannot reach the index either, the failure is the harness's error,
+to try again. Checked images stay
 until `icil-orchestrator submission prune`, which removes every `icil-submission` image no
 container was made from. BuildKit's own cache is shared with every other build on the host and
 is left to `docker builder prune`.
