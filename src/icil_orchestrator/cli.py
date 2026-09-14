@@ -6,10 +6,13 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import signal
 import sys
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 #: Where `store init` keeps the signing key unless told otherwise. Never inside the store: the
 #: store is mirrored, and a key in it would be published.
@@ -327,7 +330,59 @@ def _logging() -> None:
     )
 
 
+class Terminated(KeyboardInterrupt):
+    """SIGTERM or SIGINT, raised where the duel or the daemon was when it arrived."""
+
+    def __init__(self, signum: int) -> None:
+        self.signum = int(signum)
+        super().__init__(signal.Signals(self.signum).name)
+
+
+@contextmanager
+def _terminable() -> Iterator[None]:
+    """SIGTERM and SIGINT raise `Terminated` in the main thread, so what was running unwinds
+    through its `finally` blocks - the unit's policy server or container, the benchmark's process
+    group, the socket directory - before the process exits. Python's default for SIGTERM is to
+    die on the spot, which leaves all of those running. A second signal while that unwinding
+    happens is ignored; SIGKILL still ends the process, and the next start reaps what it left."""
+
+    def stop(signum: int, frame: Any) -> None:
+        for name in (signal.SIGTERM, signal.SIGINT):
+            signal.signal(name, signal.SIG_IGN)
+        raise Terminated(signum)
+
+    previous = {name: signal.signal(name, stop) for name in (signal.SIGTERM, signal.SIGINT)}
+    try:
+        yield
+    finally:
+        for name, handler in previous.items():
+            signal.signal(name, handler)
+
+
+def _until_terminated(
+    command: Callable[[argparse.Namespace], int], args: argparse.Namespace
+) -> int:
+    try:
+        with _terminable():
+            return command(args)
+    except Terminated as exc:
+        print(
+            f"stopped by {exc}: the unit that was running was torn down; the same command resumes "
+            "the duel where it stopped",
+            file=sys.stderr,
+        )
+        return 128 + exc.signum
+
+
 def cmd_duel(args: argparse.Namespace) -> int:
+    return _until_terminated(_duel, args)
+
+
+def cmd_daemon(args: argparse.Namespace) -> int:
+    return _until_terminated(_daemon, args)
+
+
+def _duel(args: argparse.Namespace) -> int:
     from .duel.orchestrate import DuelFailed, DuelRequest
     from .duel.runtime import RuntimeUnavailable, SubmissionRefused
     from .ids import SubmissionRef
@@ -407,7 +462,7 @@ def cmd_duel(args: argparse.Namespace) -> int:
     return 0 if result.published else 1
 
 
-def cmd_daemon(args: argparse.Namespace) -> int:
+def _daemon(args: argparse.Namespace) -> int:
     from .daemon import Daemon
     from .queue import Queues
 
