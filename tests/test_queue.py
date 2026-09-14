@@ -102,6 +102,12 @@ def test_one_queue_per_track(tmp_path):
         Queues(tmp_path / "file", ["franka_1arm"])
 
 
+def test_a_block_claimed_outside_the_queue_moves_its_counter_past_the_head(tmp_path):
+    q = Queue(tmp_path / "q.json")
+    assert q.claim_block(4) == 5 and Queue(tmp_path / "q.json").block == 5
+    assert q.claim_block(2) == 6, "a claim went back below the counter"
+
+
 def test_a_stale_duel_goes_back_to_the_head_as_the_entry_it_was_taken_from(tmp_path):
     q = Queue(tmp_path / "q.json")
     first, _ = q.add("a/x", "1" * 40, duel_size="light", now="2026-09-13T09:00:00Z", source="cli")

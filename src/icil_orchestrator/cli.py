@@ -331,6 +331,7 @@ def cmd_duel(args: argparse.Namespace) -> int:
     from .duel.orchestrate import DuelFailed, DuelRequest
     from .duel.runtime import RuntimeUnavailable, SubmissionRefused
     from .ids import SubmissionRef
+    from .queue import Queues
     from .store.writer import store_lock
 
     spec = _spec(args)
@@ -358,21 +359,27 @@ def cmd_duel(args: argparse.Namespace) -> int:
         print(f"resolved {repo}@{revision} to {challenger.revision}", file=sys.stderr)
     store = orchestrator.store
     try:
+        # A daemon holds this lock for its whole life, so a duel here never runs beside one.
         with store_lock(store.root):
             head = store.head(track) or {}
             king = SubmissionRef.from_dict(head.get("king"))
             if king is not None and king.key == challenger.key:
                 print(f"error: {challenger.entry} already holds the crown", file=sys.stderr)
                 return 2
+            queue = Queues(args.queue, spec.tracks)[track]
+            head_block = int(head.get("block") or 0)
+            # Numbered from the queue's counter, as the daemon numbers its duels, so the two never
+            # share a run directory. The last block handed out is reused only for this very duel
+            # left unfinished there: running a failed duel again resumes it.
             req = DuelRequest(
-                track=track,
-                challenger=challenger,
-                king=king,
-                size=args.size,
-                block=int(head.get("block") or 0) + 1,
+                track, challenger, king, args.size, block=max(queue.block, head_block)
             )
+            if req.block <= head_block or not orchestrator.holds_request(req):
+                req = DuelRequest(
+                    track, challenger, king, args.size, block=queue.claim_block(head_block)
+                )
             result = orchestrator.run(req)
-    except (DuelFailed, RuntimeError) as exc:
+    except (DuelFailed, RuntimeError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     record = result.record or {}
@@ -421,6 +428,11 @@ def cmd_daemon(args: argparse.Namespace) -> int:
 
 
 def _add_duel_args(p: argparse.ArgumentParser) -> None:
+    p.add_argument(
+        "--queue",
+        default="queue",
+        help="queue directory, one file per track; its block counter numbers every duel",
+    )
     p.add_argument("--store", required=True, help="the store to publish to (`store init`)")
     p.add_argument(
         "--run-dir",
@@ -592,7 +604,6 @@ def build_parser() -> argparse.ArgumentParser:
     dm = sub.add_parser(
         "daemon", help="serve the queues: resume, genesis, duel, publish, mirror; one per store"
     )
-    dm.add_argument("--queue", default="queue", help="queue directory, one file per track")
     dm.add_argument("--once", action="store_true", help="one step for every track, then exit")
     dm.add_argument(
         "--idle-sleep", type=float, default=15.0, help="seconds to wait when every queue is empty"

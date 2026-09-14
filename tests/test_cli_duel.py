@@ -12,7 +12,8 @@ import pytest
 from duel_helpers import REPLAY, REPLAY_REF, ZERO, ZERO_REF
 from icil_orchestrator.cli import main
 from icil_orchestrator.duel.side import read_results
-from icil_orchestrator.store.writer import Store
+from icil_orchestrator.queue import Queues
+from icil_orchestrator.store.writer import Store, store_lock
 from submission_helpers import FakeHub
 
 TRACK = "franka_1arm"
@@ -35,7 +36,7 @@ def hub(monkeypatch):
     return fake
 
 
-def run(spec, store, tmp_path, command: str, *args: str) -> int:
+def run(spec, store, tmp_path, command: str, *args: str, zero: Path = ZERO) -> int:
     root, key = store
     return main(
         [
@@ -46,6 +47,8 @@ def run(spec, store, tmp_path, command: str, *args: str) -> int:
             str(root),
             "--run-dir",
             str(tmp_path / "runs"),
+            "--queue",
+            str(tmp_path / "queue"),
             "--key",
             str(key),
             "--runtime",
@@ -53,10 +56,57 @@ def run(spec, store, tmp_path, command: str, *args: str) -> int:
             "--local",
             f"{REPLAY_REF.repo}={REPLAY}",
             "--local",
-            f"{ZERO_REF.repo}={ZERO}",
+            f"{ZERO_REF.repo}={zero}",
             *args,
         ]
     )
+
+
+ZERO_AT = f"{ZERO_REF.repo}@{ZERO_REF.revision}"
+REPLAY_AT = f"{REPLAY_REF.repo}@{REPLAY_REF.revision}"
+
+
+def test_a_duel_by_hand_is_numbered_from_the_queue_and_never_shares_the_daemons_run(
+    duel_spec, store, hub, tmp_path, capsys
+):
+    assert run(duel_spec, store, tmp_path, "duel", "--challenger", ZERO_AT) == 0
+    capsys.readouterr()
+    # The king's directory is missing: the duel fails for the harness, undecided, at block 2.
+    code = run(duel_spec, store, tmp_path, "duel", "--challenger", REPLAY_AT, zero=tmp_path / "no")
+    assert code == 2 and "fetching the king" in capsys.readouterr().err
+    by_hand = [d for d in (tmp_path / "runs" / TRACK).iterdir() if (d / "failed.txt").is_file()]
+    assert len(by_hand) == 1 and Queues(tmp_path / "queue", duel_spec.tracks)[TRACK].block == 2
+
+    queue = ["--spec", str(duel_spec.path), "queue", "--queue", str(tmp_path / "queue")]
+    assert main([*queue, "add", REPLAY_REF.repo, REPLAY_REF.revision]) == 0
+    assert run(duel_spec, store, tmp_path, "daemon", "--once") == 0
+    records = Store(store[0], duel_spec).iter_index(TRACK)
+    assert [(r["kind"], r["block"]) for r in records] == [("genesis", 1), ("duel", 3)]
+    assert records[1]["event_id"][:16] != by_hand[0].name, "the daemon ran in the hand duel's run"
+    assert (by_hand[0] / "failed.txt").is_file()
+
+
+def test_a_failed_duel_by_hand_run_again_resumes_at_its_block(duel_spec, store, tmp_path, capsys):
+    assert run(duel_spec, store, tmp_path, "duel", "--challenger", ZERO_AT) == 0
+    capsys.readouterr()
+    code = run(duel_spec, store, tmp_path, "duel", "--challenger", REPLAY_AT, zero=tmp_path / "no")
+    assert code == 2
+    capsys.readouterr()
+    assert run(duel_spec, store, tmp_path, "duel", "--challenger", REPLAY_AT) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["status"] == "published" and not (Path(out["run_dir"]) / "failed.txt").exists()
+    assert len(list((tmp_path / "runs" / TRACK).iterdir())) == 2, "the failed duel was not resumed"
+    assert Queues(tmp_path / "queue", duel_spec.tracks)[TRACK].block == 2
+
+
+def test_the_duel_command_refuses_while_a_daemon_holds_the_store(
+    duel_spec, store, tmp_path, capsys
+):
+    with store_lock(store[0]):
+        assert run(duel_spec, store, tmp_path, "duel", "--challenger", ZERO_AT) == 2
+    assert "another orchestrator is publishing" in capsys.readouterr().err
+    assert not (tmp_path / "runs").exists()
+    assert Queues(tmp_path / "queue", duel_spec.tracks)[TRACK].block == 0
 
 
 def test_a_smoke_duel_publishes_every_unit_with_one_prompt_hash_for_both_sides(

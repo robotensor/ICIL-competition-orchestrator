@@ -218,6 +218,15 @@ class Queue:
             block = self.state.block
         return block
 
+    def claim_block(self, floor: int = 0) -> int:
+        """The next block - one past both this counter and `floor`, the head's - for a duel no entry
+        of this queue asked for (one run on the command line). The counter moves to it, so no duel
+        the daemon runs later is numbered the same, and none shares its run directory."""
+        with self._locked():
+            self.state.block = max(self.state.block, int(floor)) + 1
+            block = self.state.block
+        return block
+
     def set_block(self, block: int) -> int:
         """For a rebuilt or seeded queue: the block a new entry is stamped with."""
         with self._locked():

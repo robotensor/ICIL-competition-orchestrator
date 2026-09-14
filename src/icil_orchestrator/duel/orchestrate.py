@@ -284,13 +284,19 @@ class Orchestrator:
         wanted = req.as_dict(self.spec)
         existing = read_json(path)
         if isinstance(existing, dict):
-            mine = {k: v for k, v in existing.items() if k != "started_at"}
-            if mine != wanted:
+            if not self.holds_request(req):
                 raise DuelFailed(f"{path} holds another duel's request")
             return existing
         doc = {**wanted, "started_at": now_iso()}
         atomic_write_json(path, doc)
         return doc
+
+    def holds_request(self, req: DuelRequest) -> bool:
+        """Whether `req`'s run directory was started for exactly this duel."""
+        doc = read_json(self.run_dir(req) / REQUEST_FILE)
+        if not isinstance(doc, dict):
+            return False
+        return {k: v for k, v in doc.items() if k != "started_at"} == req.as_dict(self.spec)
 
     def outcome(self, req: DuelRequest) -> DuelResult | None:
         doc = read_json(self.run_dir(req) / OUTCOME_FILE)
