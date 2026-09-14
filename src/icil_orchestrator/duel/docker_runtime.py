@@ -15,23 +15,28 @@ adapter and nothing else in `duel/`:
   yields; the benchmark subprocess says `hello`. The container is removed when the unit is over,
   and its log is copied into the unit's directory first.
 
+A unit's container runs exactly as the sandbox runs any policy: `PolicyContainer.start` builds its
+`docker run` (`run_argv`: the scratch tmpfs that may run code, `HOME` and the JIT caches in it, the
+socket directory's own noexec tmpfs, the limits) and nothing here adds to it or wraps the client.
+
 The submission code's two errors become the seam's: `SubmissionRejected` is `SubmissionRefused`
 (the submission's own fault, with its step and reason), `SubmissionError` is `RuntimeUnavailable`.
 
-Every container is labelled with the store and the run root it serves (`bind`), besides the
-sandbox's own label, so that `reap` - called by the orchestrator on start, holding the store's
-lock - can remove the containers an orchestrator of the same store killed outright left running,
-and no one else's.
+Every container carries the sandbox's labels, the process that started it among them
+(`submissions.container.Owner`), and every container's start removes those whose process is gone
+(`reap_orphans`). `reap` does the same when the orchestrator starts, holding the store's lock, so
+what an orchestrator killed outright left running is gone before any unit runs; a container a
+live process holds is never touched.
 
-Whose a container's end is comes from `docker inspect`: a container that exited non-zero, or that
-the kernel killed for its sandbox's memory limit (`State.OOMKilled`), ended by its policy's doing;
-a container Docker no longer knows (removed from outside, or Docker itself gone) did not. `docker
-run` failing is Docker's failure too. Nothing here removes a container before its end is read.
+Whose a container's end is comes from `Docker.state` (`docker inspect`): a container that exited
+non-zero, or that the kernel killed for its sandbox's memory limit (`State.OOMKilled`), ended by its
+policy's doing; a container Docker no longer knows (removed from outside, or Docker itself gone)
+did not. `docker run` failing is Docker's failure too. Nothing here removes a container before its
+end is read.
 """
 
 from __future__ import annotations
 
-import logging
 import os
 import secrets
 import shutil
@@ -45,7 +50,7 @@ from typing import Any
 from ..ids import SubmissionRef
 from ..submissions import SubmissionError, SubmissionRejected
 from ..submissions.checks import check_repository
-from ..submissions.container import AUTHKEY_ENV, PolicyContainer, is_socket
+from ..submissions.container import AUTHKEY_ENV, PolicyContainer, is_socket, reap_orphans
 from ..submissions.docker import ContainerState, Docker
 from ..submissions.fetch import HubFetcher, LocalFetcher, RepoCache
 from ..submissions.image import base_image, build_submission_image
@@ -62,8 +67,6 @@ from .runtime import (
     copy_log,
 )
 
-log = logging.getLogger(__name__)
-
 CONTAINER_PREFIX = "icil-duel"
 #: In the unit's directory once the unit is over: the server's log and what the policy printed.
 LOG_FILE = "policy.log"
@@ -72,24 +75,6 @@ MAX_LOG_BYTES = 16 << 20
 POLL_S = 0.1
 #: How long a container whose client has gone gets to stop on its own before its state is read.
 EXIT_GRACE_S = 10.0
-#: The labels naming what a container was started for: the store's root and the run root.
-STORE_LABEL = "icil.duel.store"
-RUNS_LABEL = "icil.duel.runs"
-
-
-class _Labelled:
-    """A docker client that adds `labels` to every `docker run` and is otherwise the client."""
-
-    def __init__(self, docker: Any, labels: Mapping[str, str]) -> None:
-        self._docker = docker
-        self._labels = dict(labels)
-
-    def run(self, args: Any, *, env: Mapping[str, str] | None = None) -> str:
-        extra = [a for k, v in sorted(self._labels.items()) for a in ("--label", f"{k}={v}")]
-        return self._docker.run([*extra, *args], env=env)
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._docker, name)
 
 
 class DockerPolicyRuntime:
@@ -118,41 +103,17 @@ class DockerPolicyRuntime:
         self.hub_api = hub_api
         self.build_timeout_s = build_timeout_s
         self.start_timeout_s = float(spec.budgets["policy_start_seconds"])
-        #: Put on every container this runtime starts; empty until `bind`.
-        self.labels: dict[str, str] = {}
 
     # -- the seam ---------------------------------------------------------------------------
 
     def bind(self, *, store: Path, runs: Path) -> None:
-        self.labels = {
-            STORE_LABEL: str(Path(store).resolve()),
-            RUNS_LABEL: str(Path(runs).resolve()),
-        }
+        """Nothing to mark: the sandbox labels every container with the process that starts it."""
 
     def reap(self) -> list[str]:
-        """Remove every `icil-duel-*` container labelled with this runtime's store and run root:
-        with the store's lock held, none of them is a duel still running. Best effort: a Docker
-        that cannot list them reaps nothing, and the duel that follows says why."""
-        run = getattr(self.docker, "_run", None)
-        if not self.labels or run is None:
-            return []
-        filters = [
-            a for k, v in sorted(self.labels.items()) for a in ("--filter", f"label={k}={v}")
-        ]
-        try:
-            done = run(
-                ["ps", "--all", *filters, "--format", "{{.Names}}"], check=False, timeout_s=60
-            )
-        except SubmissionError as exc:
-            log.warning("could not list the containers a killed orchestrator left: %s", exc)
-            return []
-        if done.returncode != 0:
-            log.warning("could not list the containers a killed orchestrator left: %s", done.stderr)
-            return []
-        names = [n for n in done.stdout.split() if n.startswith(f"{CONTAINER_PREFIX}-")]
-        for name in names:
-            self.docker.remove(name)
-        return names
+        """Remove every policy container whose owner process is gone, with its shared tmpfs
+        (`reap_orphans`); the names removed. Best effort: a Docker that cannot list them reaps
+        nothing, and the duel that follows says why."""
+        return reap_orphans(self.docker)
 
     def resolve(self, repo: str, revision: str) -> SubmissionRef:
         with _mapped():
@@ -229,7 +190,7 @@ class DockerPolicyRuntime:
         sockets = Path(tempfile.mkdtemp(prefix=f"{CONTAINER_PREFIX}-"))
         container = PolicyContainer(
             self.spec,
-            _Labelled(self.docker, self.labels),  # type: ignore[arg-type]
+            self.docker,
             image,
             name=f"{CONTAINER_PREFIX}-{ref.key}-{secrets.token_hex(3)}",
             socket_dir=sockets,

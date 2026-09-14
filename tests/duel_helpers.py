@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import os
 import signal
-import subprocess
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -110,29 +109,13 @@ def harness_voiding(units: set[str], side: str = "challenger"):
 
 @dataclass
 class InspectingFakeDocker(FakeDocker):
-    """`FakeDocker`, whose `state` says which containers the kernel killed for their memory limit,
-    answering the `docker ps` the duel's adapter asks to reap."""
+    """`FakeDocker`, whose `state` says which containers the kernel killed for their memory limit."""
 
     #: Containers the kernel killed for their memory limit.
     oom_killed: set[str] = field(default_factory=set)
 
     def state(self, name):
         return replace(super().state(name), oom_killed=name in self.oom_killed)
-
-    def _run(self, args, *, input_text=None, extra_env=None, timeout_s=None, check=True):
-        args = list(args)
-        if args[0] == "ps":
-            wanted = {
-                args[i + 1].removeprefix("label=") for i, a in enumerate(args) if a == "--filter"
-            }
-            listed = []
-            for run in self.runs:
-                name = run[run.index("--name") + 1]
-                labels = {run[i + 1] for i, a in enumerate(run) if a == "--label"}
-                if name not in self.removed and wanted <= labels:
-                    listed.append(name)
-            return subprocess.CompletedProcess(args, 0, "\n".join(listed) + "\n", "")
-        raise NotImplementedError(f"the fake does not answer docker {' '.join(args[:2])}")
 
 
 class RecordingReporter(LiveReporter):

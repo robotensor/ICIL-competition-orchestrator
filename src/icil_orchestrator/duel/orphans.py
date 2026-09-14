@@ -9,9 +9,11 @@ or a lost machine run no `finally`. What survives them:
 
 So every process group a unit starts is written, while it runs, to a ledger in the directory it
 runs in (`pids.json`: the unit's, a prompt's, a side's health check), and every policy container
-carries labels naming the store and the run root it serves (`docker_runtime`). On start, holding
-the store's lock so that nothing of this store's can still be running on purpose, the
-orchestrator reaps both (`Orchestrator.reap_orphans`). `run_side` also reaps a unit's own ledger
+carries the sandbox's labels naming the process that started it (`submissions.container.Owner`).
+On start, holding the store's lock so that nothing of this store's can still be running on
+purpose, the orchestrator reaps both (`Orchestrator.reap_orphans`): the ledgers of its undecided
+duels, and every policy container whose owner is gone (`submissions.container.reap_orphans`,
+which each container's start also runs). `run_side` also reaps a unit's own ledger
 before it plays a unit that has no result, and moves what that interrupted attempt left aside as
 `<unit_id>.interrupted-<n>`, so nothing an orphan wrote is ever read as the unit's result.
 

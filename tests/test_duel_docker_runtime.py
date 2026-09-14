@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import socket
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -23,7 +24,7 @@ from duel_helpers import (
     RecordingReporter,
 )
 from icil_orchestrator.canon import Signer
-from icil_orchestrator.duel.docker_runtime import STORE_LABEL, DockerPolicyRuntime
+from icil_orchestrator.duel.docker_runtime import DockerPolicyRuntime
 from icil_orchestrator.duel.orchestrate import DuelRequest, Orchestrator
 from icil_orchestrator.duel.runtime import (
     PolicyDied,
@@ -33,6 +34,7 @@ from icil_orchestrator.duel.runtime import (
 )
 from icil_orchestrator.store.verify import verify_store
 from icil_orchestrator.store.writer import Store
+from icil_orchestrator.submissions.container import AUTHKEY_ENV, Owner, run_argv
 from icil_orchestrator.submissions.docker import ContainerState
 from icil_orchestrator.submissions.fetch import tree_hash
 from store_helpers import make_record, publish
@@ -103,7 +105,9 @@ def duel(spec, runtime, tmp_path):
     return store, orchestrator.run(DuelRequest(TRACK, REPLAY_REF, ZERO_REF, "smoke", block=2))
 
 
-def test_a_duel_runs_through_the_sandbox_one_container_per_unit(spec, docker, tmp_path):
+def test_a_duel_runs_through_the_sandbox_one_container_per_unit(
+    spec, docker, tmp_path, shared_mounts
+):
     runtime = runtime_for(spec, docker, tmp_path)
     assert isinstance(runtime, PolicyRuntime) and runtime.name == "docker"
     store, result = duel(spec, runtime, tmp_path)
@@ -121,12 +125,23 @@ def test_a_duel_runs_through_the_sandbox_one_container_per_unit(spec, docker, tm
     assert len(names) == 2 + 2 * len(result.units)
     assert all(name.startswith("icil-duel-") for name in names)
     assert sorted(docker.removed) == sorted(names) and docker.processes == {}
+    shared_dirs = set()
     for args in docker.runs:
-        assert f"{STORE_LABEL}={store.root.resolve()}" in args, "a container was not labelled"
-        assert args[args.index("--network") + 1] == "none"
         mounts = [a for a in args if a.startswith("type=bind")]
         assert len(mounts) == 1, "a unit's container mounted more than its socket directory"
-        assert str(tmp_path) not in mounts[0], "the run directory or the store was mounted"
+        shared = Path(mounts[0].removeprefix("type=bind,src=").split(",")[0])
+        assert str(tmp_path) not in str(shared), "the run directory or the store was mounted"
+        shared_dirs.add(shared)
+        # The sandbox's own `docker run`, word for word - its scratch tmpfs, HOME and JIT caches,
+        # the owner labels - with nothing added: owned by this process, which starts them.
+        name, image = args[args.index("--name") + 1], args[args.index(AUTHKEY_ENV) + 1]
+        assert args == run_argv(
+            spec, image=image, name=name, socket_dir=shared, gpus=0, owner=Owner.current()
+        )
+    if os.geteuid() == 0:
+        # Each socket directory was its own bounded tmpfs (recorded here, mounted for real under
+        # `pytest -m container`).
+        assert {call[1] for call in shared_mounts if call[0] == "mount"} == shared_dirs
     for side in ("challenger", "king"):
         for unit in result.units:
             assert (result.run_dir / side / unit["unit_id"] / "policy.log").is_file()
@@ -174,27 +189,29 @@ def test_a_container_that_ends_by_its_own_doing_fails_its_unit(spec, docker, tmp
     assert result.record["void"] == 0 and verify_store(store.root, spec).ok
 
 
-def test_a_container_a_killed_orchestrator_left_is_reaped_by_the_next_one_of_its_store(
+def test_a_container_whose_orchestrator_was_killed_is_reaped_and_a_live_ones_is_not(
     spec, docker, tmp_path
 ):
+    """`reap` is the sandbox's own reaping: a container whose owner process is gone is removed,
+    whatever store it served, and one a live process holds - this one - is left running."""
+    runtime = runtime_for(spec, docker, tmp_path)
+    prepared = runtime.prepare(runtime.fetch(REPLAY_REF, workdir=tmp_path), workdir=tmp_path)
+    # No process has a pid above PID_MAX_LIMIT (2**22): an orchestrator killed long ago.
+    killed = Owner(2**22 + 1, "1", Owner.current().pidns)
     held, names = [], []
-    for store in ("store", "other-store"):
-        runtime = runtime_for(spec, docker, tmp_path)
-        runtime.bind(store=tmp_path / store, runs=tmp_path / "runs")
-        fetched = runtime.fetch(REPLAY_REF, workdir=tmp_path / store)
-        prepared = runtime.prepare(fetched, workdir=tmp_path / store / "check")
-        serving = runtime.serve(prepared, workdir=tmp_path / store / "fp-000")
-        serving.__enter__()  # and never left: its orchestrator was killed
+    for unit, owner in (("fp-000", Owner.current()), ("fp-001", killed)):
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(Owner, "current", classmethod(lambda cls, owner=owner: owner))
+            serving = runtime.serve(prepared, workdir=tmp_path / unit)
+            serving.__enter__()  # and never left
         held.append(serving)
-        run = docker.runs[-1]
-        assert f"{STORE_LABEL}={(tmp_path / store).resolve()}" in run
-        names.append(run[run.index("--name") + 1])
+        names.append(docker.runs[-1][docker.runs[-1].index("--name") + 1])
+    alive, orphan = names
 
     restarted = runtime_for(spec, docker, tmp_path)
-    restarted.bind(store=tmp_path / "store", runs=tmp_path / "runs")
-    assert restarted.reap() == [names[0]]
-    assert names[0] in docker.removed and names[0] not in docker.processes
-    assert names[1] in docker.processes, "another store's container was reaped"
+    assert restarted.reap() == [orphan]
+    assert orphan in docker.removed and orphan not in docker.processes
+    assert alive in docker.processes, "a live process's container was reaped"
 
 
 def test_the_seams_errors_are_the_sandboxs_mapped(spec, docker, tmp_path):
