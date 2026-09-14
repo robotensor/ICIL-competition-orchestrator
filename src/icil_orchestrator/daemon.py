@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -39,16 +40,29 @@ from .store.writer import read_json, store_lock
 
 log = logging.getLogger(__name__)
 
+#: After a step crashes, the daemon waits this long, doubling with each crash in a row up to
+#: `max_backoff_s`, so an error that does not go away is retried without spinning.
+BACKOFF_START_S = 1.0
+MAX_BACKOFF_S = 300.0
+
 
 class Daemon:
     def __init__(
-        self, orchestrator: Orchestrator, queues: Queues, *, idle_sleep_s: float = 15.0
+        self,
+        orchestrator: Orchestrator,
+        queues: Queues,
+        *,
+        idle_sleep_s: float = 15.0,
+        max_backoff_s: float = MAX_BACKOFF_S,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self.orchestrator = orchestrator
         self.spec = orchestrator.spec
         self.store = orchestrator.store
         self.queues = queues
         self.idle_sleep_s = idle_sleep_s
+        self.max_backoff_s = max_backoff_s
+        self._sleep = sleep
         #: Tracks whose baseline genesis did not publish: not retried by this process.
         self.stalled: set[str] = set()
 
@@ -124,16 +138,31 @@ class Daemon:
             log.info("orchestrator %s serving %s", key[:12], self.store.root)
             for track in self.queues.tracks:
                 self.publish_queue(track)
+            crashes = 0
             while True:
                 try:
                     ran = self.step_all()
                 except Exception:  # noqa: BLE001 - one bad step must not stop every track
-                    log.exception("a daemon step crashed; continuing")
-                    ran = True
+                    crashes += 1
+                    if once:
+                        log.exception("a daemon step crashed")
+                        return
+                    delay = self.backoff_s(crashes)
+                    log.exception(
+                        "a daemon step crashed (%d in a row); retrying in %gs", crashes, delay
+                    )
+                    self._sleep(delay)
+                    continue
+                crashes = 0
                 if once:
                     return
                 if not ran:
-                    time.sleep(self.idle_sleep_s)
+                    self._sleep(self.idle_sleep_s)
+
+    def backoff_s(self, crashes: int) -> float:
+        """The wait after `crashes` steps in a row crashed: doubling from `BACKOFF_START_S`,
+        never more than `max_backoff_s`."""
+        return min(self.max_backoff_s, BACKOFF_START_S * 2.0 ** min(max(crashes, 1) - 1, 60))
 
     # -- helpers ----------------------------------------------------------------------------
 

@@ -256,6 +256,55 @@ def test_a_baseline_takes_the_empty_throne_before_any_entry(
     assert loop.step(TRACK) is True and store.head(TRACK)["king"] == REPLAY_REF.as_dict()
 
 
+class Stop(BaseException):
+    """Ends a daemon's loop from inside a test."""
+
+
+def crashing_steps(loop, script):
+    """`step_all` playing `script`: an exception is raised, anything else returned."""
+    steps = iter(script)
+
+    def step_all():
+        step = next(steps)
+        if isinstance(step, BaseException):
+            raise step
+        return step
+
+    loop.step_all = step_all
+
+
+def test_a_step_that_keeps_crashing_is_retried_with_an_exponential_backoff(
+    duel_spec, store, tmp_path
+):
+    slept = []
+    base = daemon(duel_spec, store, tmp_path)
+    loop = Daemon(base.orchestrator, base.queues, idle_sleep_s=15, sleep=slept.append)
+    disk_full = OSError(28, "No space left on device")
+    crashing_steps(loop, [disk_full] * 10 + [True, False, disk_full, Stop()])
+    with pytest.raises(Stop):
+        loop.run()
+    capped = [1, 2, 4, 8, 16, 32, 64, 128, 256, 300]
+    assert slept == [*capped, 15, 1], "a crash was retried at once, or success did not reset"
+
+    slept.clear()
+    loop = Daemon(base.orchestrator, base.queues, max_backoff_s=5, sleep=slept.append)
+    crashing_steps(loop, [disk_full] * 5 + [Stop()])
+    with pytest.raises(Stop):
+        loop.run()
+    assert slept == [1, 2, 4, 5, 5]
+
+
+def test_the_daemon_command_takes_its_backoff_cap():
+    from icil_orchestrator.cli import build_parser
+
+    args = build_parser().parse_args(["daemon", "--store", "s", "--run-dir", "r"])
+    assert args.max_backoff == 300.0
+    args = build_parser().parse_args(
+        ["daemon", "--store", "s", "--run-dir", "r", "--max-backoff", "7"]
+    )
+    assert args.max_backoff == 7.0
+
+
 def test_one_daemon_per_store(duel_spec, store, tmp_path):
     with store_lock(store.root):
         with pytest.raises(RuntimeError, match="another orchestrator is publishing"):

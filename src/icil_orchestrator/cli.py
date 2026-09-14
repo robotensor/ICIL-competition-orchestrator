@@ -420,7 +420,9 @@ def cmd_daemon(args: argparse.Namespace) -> int:
         return 2
     _logging()
     try:
-        Daemon(orchestrator, queues, idle_sleep_s=args.idle_sleep).run(once=args.once)
+        Daemon(
+            orchestrator, queues, idle_sleep_s=args.idle_sleep, max_backoff_s=args.max_backoff
+        ).run(once=args.once)
     except RuntimeError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -607,6 +609,14 @@ def build_parser() -> argparse.ArgumentParser:
     dm.add_argument("--once", action="store_true", help="one step for every track, then exit")
     dm.add_argument(
         "--idle-sleep", type=float, default=15.0, help="seconds to wait when every queue is empty"
+    )
+    dm.add_argument(
+        "--max-backoff",
+        type=float,
+        default=300.0,
+        metavar="SECONDS",
+        help="after a step crashes, wait 1s, doubling with each crash in a row up to this "
+        "(default: 300)",
     )
     _add_duel_args(dm)
     dm.set_defaults(func=cmd_daemon)
