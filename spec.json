@@ -164,9 +164,10 @@
   "act_timeout_s": 30.0,
   "materialize_wall_seconds": 900,
   "unit_wall_seconds": 600,
+  "policy_budget_seconds": 300,
   "side_wall_seconds": 10800,
   "duel_wall_seconds": 28800,
-  "_comment": "Wall clocks the orchestrator enforces. A unit or materialization past its budget is void, not a loss. The numbers are placeholders until the first smoke duel on the franka_1arm suite is measured."
+  "_comment": "Wall clocks the orchestrator enforces. A unit or materialization past its wall clock is void, not a loss. policy_budget_seconds is how long a policy may take over one unit, starting it and every call to it together; what it leaves of unit_wall_seconds is the benchmark's, and a policy that runs out of it loses the unit. The numbers are placeholders until the first smoke duel on the franka_1arm suite is measured."
  },
  "submission": {
   "manifest": "icil.yaml",

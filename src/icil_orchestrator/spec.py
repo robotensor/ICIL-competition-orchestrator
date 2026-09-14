@@ -52,6 +52,7 @@ BUDGETS = (
     "act_timeout_s",
     "materialize_wall_seconds",
     "unit_wall_seconds",
+    "policy_budget_seconds",
     "side_wall_seconds",
     "duel_wall_seconds",
 )
@@ -355,6 +356,13 @@ def validate_spec(doc: dict[str, Any]) -> list[str]:
     budgets = doc.get("budgets") or {}
     for key in BUDGETS:
         need(f"budgets.{key}>0", _positive_number(budgets.get(key)))
+    # What a policy's budget leaves of its unit is the benchmark's own time: a budget that leaves
+    # none lets a slow policy run every unit into the kill that voids it for both sides.
+    policy, unit = budgets.get("policy_budget_seconds"), budgets.get("unit_wall_seconds")
+    need(
+        "budgets.policy_budget_seconds<unit_wall_seconds",
+        not (_positive_number(policy) and _positive_number(unit)) or policy < unit,
+    )
 
     submission = doc.get("submission") or {}
     need("submission.manifest", _text(submission.get("manifest")))

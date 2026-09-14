@@ -112,6 +112,12 @@ def test_validate_rejects_bad_specs(spec_doc, write_spec):
     assert "benchmarks.robotwin.wheel_sha256 hex64|null" in errors_after(
         lambda d: d["benchmarks"]["robotwin"].update(wheel_sha256="abc")
     )
+    assert "budgets.policy_budget_seconds>0" in errors_after(
+        lambda d: d["budgets"].pop("policy_budget_seconds")
+    )
+    assert "budgets.policy_budget_seconds<unit_wall_seconds" in errors_after(
+        lambda d: d["budgets"].update(policy_budget_seconds=d["budgets"]["unit_wall_seconds"])
+    )
     doc = dict(spec_doc, duel=dict(spec_doc["duel"], default_size="gigantic"))
     with pytest.raises(SpecError, match="duel.default_size in sizes"):
         write_spec(doc)
