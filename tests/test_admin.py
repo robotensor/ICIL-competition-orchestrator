@@ -534,6 +534,23 @@ def test_no_token_no_server(spec, hub, paths):
     AdminServer(spec, queues, "x" * 32, port=0, api=hub).httpd.server_close()
 
 
+def test_an_intake_stops_at_once_whether_or_not_it_served(spec, hub, paths):
+    """socketserver's `shutdown` waits for its serving loop to end, for ever when it never began:
+    a daemon that could not take its store stops an intake that never served."""
+    queues = Queues(paths[1], spec.tracks)
+    for served in (False, True):
+        server = AdminServer(spec, queues, TOKEN, port=0, api=hub)
+        if served:
+            server.start()
+            assert call(server, "GET", HEALTH)[0] == 200
+        stopping = threading.Thread(target=server.shutdown, daemon=True)
+        stopping.start()
+        stopping.join(5)
+        assert not stopping.is_alive(), f"shutdown hung (served: {served})"
+        with pytest.raises(ConnectionRefusedError):
+            socket.create_connection((server.host, server.port), timeout=2).close()
+
+
 @pytest.mark.network
 def test_a_real_repository_resolves_through_the_hub(serve, paths):
     try:

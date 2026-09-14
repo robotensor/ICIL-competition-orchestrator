@@ -212,6 +212,8 @@ class AdminServer:
         )
         self.host = str(self.httpd.server_address[0])
         self.port = int(self.httpd.server_address[1])
+        self._served = False
+        self._thread: threading.Thread | None = None
 
     @property
     def url(self) -> str:
@@ -408,6 +410,7 @@ class AdminServer:
     # -- lifecycle --------------------------------------------------------------------------
 
     def serve_forever(self) -> None:
+        self._served = True
         try:
             self.httpd.serve_forever()
         finally:
@@ -415,11 +418,20 @@ class AdminServer:
 
     def start(self) -> threading.Thread:
         thread = threading.Thread(target=self.httpd.serve_forever, name="icil-admin", daemon=True)
+        self._served = True
         thread.start()
+        self._thread = thread
         return thread
 
     def shutdown(self) -> None:
-        self.httpd.shutdown()
+        """Stop serving and close the socket. A server that never served is only closed:
+        socketserver's `shutdown` waits for the end of a `serve_forever`, and would wait for ever
+        for one that never ran - a daemon that could not take its store never starts its intake."""
+        if self._served:
+            self.httpd.shutdown()
+        if self._thread is not None:
+            self._thread.join()
+            self._thread = None
         self.httpd.server_close()
 
 
