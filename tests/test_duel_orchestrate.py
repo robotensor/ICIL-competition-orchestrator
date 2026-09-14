@@ -476,15 +476,21 @@ def test_a_harness_that_cannot_fetch_fails_the_duel_without_deciding_it(duel_spe
     assert not (duel.run_dir(req) / "failed.txt").exists()
 
 
-def test_a_run_directory_holding_another_duel_is_refused(duel_spec, store, tmp_path):
+def test_a_run_directory_holding_another_duel_is_moved_aside_and_the_duel_runs(
+    duel_spec, store, tmp_path
+):
+    crowned(store, duel_spec, ZERO_REF)
     duel = orchestrator(duel_spec, store, tmp_path)
     req = DuelRequest(TRACK, REPLAY_REF, ZERO_REF, "smoke", block=2)
     duel.record_request(req)
     path = duel.run_dir(req) / "request.json"
     doc = json.loads(path.read_text())
     path.write_text(json.dumps({**doc, "size": "heavy"}))
-    with pytest.raises(DuelFailed, match="holds another duel's request"):
-        duel.run(req)
+    result = duel.run(req)
+    assert result.published and result.record["duel_size"] == "smoke"
+    stale = duel.run_dir(req).with_name(duel.run_dir(req).name + ".stale-1")
+    assert json.loads((stale / "request.json").read_text())["size"] == "heavy"
+    assert duel.run(req).published, "a request that matches is not moved aside"
 
 
 def test_a_duels_identity_is_its_spec_track_and_refs():

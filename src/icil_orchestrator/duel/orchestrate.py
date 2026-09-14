@@ -277,16 +277,27 @@ class Orchestrator:
         return self.run_root / req.track / req.event_id(self.spec)[:16]
 
     def record_request(self, req: DuelRequest) -> dict[str, Any]:
-        """Write `request.json` for `req` unless it is there; refuse one for another duel."""
+        """Write `request.json` for `req` unless it is there. A run directory started for another
+        duel of the same id (the same pair and block at another size) is moved aside as
+        `<dir>.stale-<n>` and logged, rather than refused on every attempt."""
         if req.track not in self.spec.tracks:
             raise DuelFailed(f"unknown track {req.track!r}")
         path = self.run_dir(req) / REQUEST_FILE
         wanted = req.as_dict(self.spec)
         existing = read_json(path)
         if isinstance(existing, dict):
-            if not self.holds_request(req):
-                raise DuelFailed(f"{path} holds another duel's request")
-            return existing
+            if self.holds_request(req):
+                return existing
+            # The same pair at the same block, asked for differently (another size): whatever
+            # that run was, it is not this duel. Kept aside for its logs, never resumed as this.
+            moved = move_aside(self.run_dir(req), "stale")
+            log.warning(
+                "%s held another duel's request (size %s, not %s); moved it aside to %s",
+                path,
+                existing.get("size"),
+                wanted["size"],
+                moved,
+            )
         doc = {**wanted, "started_at": now_iso()}
         atomic_write_json(path, doc)
         return doc

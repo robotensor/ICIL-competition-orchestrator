@@ -159,6 +159,27 @@ def test_a_resumed_duel_whose_king_lost_the_crown_requeues_its_challenger_and_ne
     assert verify_store(store.root, duel_spec).ok
 
 
+def test_an_entry_whose_run_directory_holds_another_request_still_duels(
+    duel_spec, store, queues, tmp_path
+):
+    """The same pair asked for at another size, at the block this entry gets, left a request
+    behind (a kill between writing it and taking the entry). The track must not stall on it."""
+    publish(store, duel_spec, make_record(duel_spec, "genesis", 1, ZERO_REF, None))
+    loop = daemon(duel_spec, store, tmp_path)
+    left = DuelRequest(TRACK, REPLAY_REF, ZERO_REF, "light", block=2)
+    loop.orchestrator.record_request(left)
+    add(queues, REPLAY_REF, size="smoke")
+    assert loop.step(TRACK) is True
+    records = store.iter_index(TRACK)
+    assert [(r["kind"], r["duel_size"]) for r in records[1:]] == [("duel", "smoke")]
+    stale = loop.orchestrator.run_dir(left)
+    assert (
+        json.loads((stale.with_name(stale.name + ".stale-1") / "request.json").read_text())["size"]
+        == "light"
+    )
+    assert queues[TRACK].reload().in_progress is None
+
+
 def test_a_void_duel_finishes_its_entry_and_the_king_keeps_the_crown(
     duel_spec, store, queues, tmp_path
 ):
