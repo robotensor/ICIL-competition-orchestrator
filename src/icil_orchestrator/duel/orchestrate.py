@@ -275,9 +275,11 @@ class Orchestrator:
     def reap_orphans(self) -> list[str]:
         """End what an orchestrator killed outright left running: the policy containers whose
         owner process is gone, and the process groups this run root's undecided duels' ledgers
-        name. Call it holding the store's lock, before any duel runs; what was reaped, by name."""
-        reaped = [f"container {name}" for name in self.runtime.reap()]
-        reaped += [f"process group {pgid}" for pgid in reap_run_root(self.run_root)]
+        name. Call it holding the store's lock, before any duel runs; what was reaped, by name.
+        The process groups go first: a benchmark whose policy container went before it would see
+        the hang-up and write its unit's result."""
+        reaped = [f"process group {pgid}" for pgid in reap_run_root(self.run_root)]
+        reaped += [f"container {name}" for name in self.runtime.reap()]
         if reaped:
             log.warning("reaped what a killed orchestrator left running: %s", ", ".join(reaped))
         return reaped

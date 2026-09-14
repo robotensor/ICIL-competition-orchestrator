@@ -138,10 +138,14 @@ def _still_recorded(group: dict[str, Any]) -> bool:
 
 def reap_ledger(directory: Path) -> list[int]:
     """Kill every process group the ledger in `directory` names that is still the one recorded,
-    and remove the ledger; the groups killed."""
+    and remove the ledger; the groups killed.
+
+    The newest group dies first, and every group is killed before any is waited for: a unit's
+    benchmark starts after its policy server, and a benchmark that outlives its server by even
+    a moment sees the hang-up and writes a result for the unit about to run again."""
     ledger = Ledger(directory)
     killed = []
-    for group in ledger.read():
+    for group in reversed(ledger.read()):
         if not _still_recorded(group):
             continue
         pgid = int(group["pgid"])
@@ -151,9 +155,9 @@ def reap_ledger(directory: Path) -> list[int]:
             log.warning("could not kill process group %d: %s", pgid, exc)
             continue
         killed.append(pgid)
-        deadline = time.monotonic() + KILL_WAIT_S
-        while _members(pgid) and time.monotonic() < deadline:
-            time.sleep(POLL_S)
+    deadline = time.monotonic() + KILL_WAIT_S
+    while any(_members(pgid) for pgid in killed) and time.monotonic() < deadline:
+        time.sleep(POLL_S)
     ledger.path.unlink(missing_ok=True)
     if killed:
         log.warning("killed process groups %s left running in %s", killed, directory)
