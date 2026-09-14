@@ -207,13 +207,39 @@ def test_a_second_post_answers_with_the_place_it_already_has(server, hub, paths)
         server,
         "POST",
         "/admin/submissions",
-        {"repo": "org/policy", "revision": SHA_A, "track": TRACK, "duel_size": "light"},
+        {"repo": "org/policy", "revision": SHA_A, "track": TRACK, "duel_size": "smoke"},
     )
     assert status == 200 and again["ok"] is True and again["queued"] is False
     assert (again["key"], again["position"]) == (first["key"], 1)
     assert (again["accepted_at"], again["duel_size"]) == (first["accepted_at"], "smoke")
     assert "nothing new was queued" in again["message"]
     assert [e.repo for e in queued(paths)] == ["org/policy", "org/other"]
+
+
+def test_a_second_post_with_another_duel_size_is_refused_not_answered_as_filed(spec, server, paths):
+    """The dashboard's receipt shows the size it sent; a 200 for a waiting entry of another size
+    would show a duel size that was never filed."""
+    call(server, "POST", "/admin/submissions", {"repo": "org/policy", **DASHBOARD})
+    other = next(size for size in spec.sizes(TRACK) if size != DASHBOARD["duel_size"])
+    status, body, _ = call(
+        server,
+        "POST",
+        "/admin/submissions",
+        {**DASHBOARD, "repo": "org/policy", "duel_size": other},
+    )
+    assert status == 409 and body["ok"] is False and body["field"] == "duel_size", body
+    assert "position 1" in body["error"] and DASHBOARD["duel_size"] in body["error"]
+    ((entry),) = queued(paths)
+    assert entry.duel_size == DASHBOARD["duel_size"], "the waiting entry changed"
+    # No size is the track's default: naming the default for an entry filed without one is the same.
+    call(server, "POST", "/admin/submissions", {"repo": "org/other", "track": TRACK})
+    status, body, _ = call(
+        server,
+        "POST",
+        "/admin/submissions",
+        {"repo": "org/other", "track": TRACK, "duel_size": spec.default_size(TRACK)},
+    )
+    assert (status, body["queued"], body["position"]) == (200, False, 2), body
 
 
 def test_a_health_check_during_a_submission_does_not_lose_it(server, paths, monkeypatch):

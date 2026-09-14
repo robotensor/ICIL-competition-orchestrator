@@ -245,6 +245,16 @@ class AdminServer:
             )
             if queued:
                 self.publish(track)
+        waiting_size = self.spec.size_of(track, entry.duel_size)
+        if not queued and waiting_size != self.spec.size_of(track, duel_size):
+            # A 200 would let the dashboard's receipt show the size it sent as the one filed.
+            raise Refused(
+                409,
+                f"Already queued at position {position} for {track} with duel size "
+                f"{waiting_size}, not {self.spec.size_of(track, duel_size)}; nothing was changed. "
+                f"To duel it at another size, remove it first (queue remove {entry.key}).",
+                "duel_size",
+            )
         log.info(
             "%s submission key=%s repo=%s sha=%s source=%s track=%s position=%d",
             "accepted" if queued else "already queued",
