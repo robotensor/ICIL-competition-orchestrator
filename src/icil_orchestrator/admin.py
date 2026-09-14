@@ -56,6 +56,14 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8799
 DEFAULT_TOKEN_ENV = "ICIL_ADMIN_TOKEN"
 
+#: The shortest bearer token the intake serves with; `secrets.token_urlsafe(32)` makes one of 43. A
+#: short token is guessed at a thousand tries a second, and scrubbing it from a log line would
+#: redact every character the line shares with it.
+MIN_TOKEN_CHARS = 32
+
+#: What a token is made of: printable ASCII with no space, which a header carries unchanged.
+TOKEN_RE = re.compile(r"[\x21-\x7e]+")
+
 HEALTH_PATH = "/admin/health"
 SUBMIT_PATH = "/admin/submissions"
 
@@ -177,6 +185,11 @@ class AdminServer:
     ) -> None:
         if not token or not token.strip():
             raise ValueError("the admin token is empty; the intake does not serve without one")
+        if not _strong(token):
+            raise ValueError(
+                f"the admin token is not {MIN_TOKEN_CHARS} or more printable ASCII characters "
+                "without a space; the intake does not serve with it"
+            )
         self.spec = spec
         self.queues = queues
         self.store = store
@@ -673,6 +686,10 @@ def _handler(server: AdminServer, timeout_s: float) -> type[BaseHTTPRequestHandl
     return Handler
 
 
+def _strong(token: str) -> bool:
+    return len(token) >= MIN_TOKEN_CHARS and TOKEN_RE.fullmatch(token) is not None
+
+
 def _loopback(host: str) -> bool:
     if host == "localhost":
         return True
@@ -698,6 +715,14 @@ def serve(
     if not token:
         print(
             f"error: {token_env} is not set; the intake does not serve without a bearer token",
+            file=sys.stderr,
+        )
+        return 2
+    if not _strong(token):
+        print(
+            f"error: {token_env} must be {MIN_TOKEN_CHARS} or more printable ASCII characters "
+            "without a space; make one with "
+            "python -c 'import secrets; print(secrets.token_urlsafe(32))'",
             file=sys.stderr,
         )
         return 2

@@ -15,7 +15,7 @@ from pathlib import Path
 from icil_orchestrator import admin
 from icil_orchestrator.cli import build_parser, main
 
-TOKEN = "tok-cli-51d2e0a4-never-in-a-log"
+TOKEN = "tok-cli-51d2e0a4c9e7-never-in-a-log"
 
 
 def test_admin_serve_defaults_are_the_intake_defaults():
@@ -40,6 +40,11 @@ def test_admin_serve_does_not_start_without_a_token_or_a_store(tmp_path, capsys,
     monkeypatch.setenv("ICIL_OTHER_TOKEN", "  ")
     assert main([*base, "--port", "0", "--token-env", "ICIL_OTHER_TOKEN"]) == 2
     assert "ICIL_OTHER_TOKEN is not set" in capsys.readouterr().err
+    # A token that can be guessed is no token.
+    monkeypatch.setenv("ICIL_ADMIN_TOKEN", "dev-token")
+    assert main([*base, "--port", "0"]) == 2
+    err = capsys.readouterr().err
+    assert "ICIL_ADMIN_TOKEN" in err and "32" in err and "dev-token" not in err
 
     monkeypatch.setenv("ICIL_ADMIN_TOKEN", TOKEN)
     not_a_store = ["admin", "serve", "--store", str(tmp_path / "nothing"), "--port", "0"]

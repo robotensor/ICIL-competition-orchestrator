@@ -22,7 +22,7 @@ from icil_orchestrator.store.writer import Store
 from store_helpers import TRACK
 from submission_helpers import SHA_A, SHA_B, FakeHub
 
-TOKEN = "tok-3f9a1c7e-never-in-a-log"
+TOKEN = "tok-3f9a1c7e5b2d8f60-never-in-a-log"
 HEALTH = "/admin/health"
 DASHBOARD = {"track": TRACK, "duel_size": "smoke", "source": "dashboard-dev-mode"}
 
@@ -466,9 +466,13 @@ def test_a_log_line_moves_no_cursor_and_keeps_no_part_of_the_token(server, caplo
 
 
 def test_no_token_no_server(spec, hub, paths):
-    for token in ("", "   "):
-        with pytest.raises(ValueError, match="does not serve without"):
-            AdminServer(spec, Queues(paths[1], spec.tracks), token, port=0, api=hub)
+    """An empty, short or unprintable token is refused: a short one is guessed in seconds, and
+    scrubbing it from a log line redacts whatever characters the line shares with it."""
+    queues = Queues(paths[1], spec.tracks)
+    for token in ("", "   ", "1", "x" * 31, "a b" + "x" * 40, "x" * 40 + "\x1b", "é" * 40):
+        with pytest.raises(ValueError, match="does not serve"):
+            AdminServer(spec, queues, token, port=0, api=hub)
+    AdminServer(spec, queues, "x" * 32, port=0, api=hub).httpd.server_close()
 
 
 @pytest.mark.network
