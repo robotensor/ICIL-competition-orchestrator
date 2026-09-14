@@ -54,7 +54,8 @@ start. `--local DIR` takes a directory in the Hub's place. See
 [`docker/policy-base`](docker/policy-base/README.md) for the base image, what a policy finds at
 run time and what was measured.
 
-A policy may compile at run time - `torch.compile`, Triton, cffi, `torch.utils.cpp_extension`:
+A policy may compile at run time - `torch.compile`, Triton, cffi, `torch.utils.cpp_extension`
+(with `ninja` in its requirements):
 the base is CUDA's `devel` image with gcc, g++, make and Python's headers, and `HOME`, `TMPDIR`,
 `XDG_CACHE_HOME` and the Triton, inductor and torch extension caches all point into `/tmp`, where
 what they build may be loaded. Submission code already runs natively in its container, so letting

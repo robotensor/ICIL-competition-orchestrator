@@ -74,7 +74,7 @@
   scope put it: the requirements install needs it at build time, the recorded image id is the code
   that ran, and the container mounts nothing of the host but its socket directory.
 - (feat): a policy may compile at run time - `torch.compile`, Triton, cffi,
-  `torch.utils.cpp_extension`. The sandbox's `/tmp` is a tmpfs mounted `exec,nosuid,nodev` and
+  `torch.utils.cpp_extension` (with `ninja` in its requirements). The sandbox's `/tmp` is a tmpfs mounted `exec,nosuid,nodev` and
   capped, by two keys added beside `spec.submission.sandbox.tmpfs`, which keeps its shape:
   `tmpfs_exec` (true) and `tmpfs_bytes` (8 GiB for each path, all of them together no more than
   `memory_bytes`, which their pages count against); `spec_version` stays 7. `validate_spec` also

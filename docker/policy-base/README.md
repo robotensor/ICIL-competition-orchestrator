@@ -10,14 +10,17 @@ checkout at `/submission` and a `pip install -r` of its requirements.
 
 | what | why |
 | --- | --- |
-| `nvidia/cuda:12.8.1-devel-ubuntu22.04` | CUDA 12.8 is the first toolkit for the RTX 5090's Blackwell GPUs; `devel` rather than `runtime` for nvcc and the CUDA headers, which Triton, `torch.utils.cpp_extension` and any other kernel built at run time need |
+| `nvidia/cuda:12.8.1-devel-ubuntu22.04` | CUDA 12.8 is the first toolkit for the RTX 5090's Blackwell GPUs; `devel` rather than `runtime` for nvcc and the toolkit's headers and libraries, which CUDA source built at run time needs: a `torch.utils.cpp_extension` CUDA extension, a kernel compiled with nvcc. Triton needs neither (its wheel carries the CUDA headers it compiles against), only gcc and `Python.h` |
 | `python3`, `python3-pip`, `python3-venv` | Ubuntu 22.04's Python is 3.10, the version the protocol is tested on |
 | `build-essential` (gcc, g++, make) | the compilers torch.compile's CPU backend, Triton's launcher, cffi and C++ extensions call |
 | `python3.10-dev` | `Python.h`, which they compile against |
 | `icil-policy` | the protocol's server |
 
 Nothing else is added. Whatever a policy needs beyond that - torch, its weights' libraries - its
-requirements install into its own image.
+requirements install into its own image. That includes `ninja`, which
+`torch.utils.cpp_extension.load` and `load_inline` refuse to build without ("Ninja is required
+to load C++ extensions"): torch does not depend on it, so a policy that builds extensions at run
+time lists the `ninja` wheel in its requirements.
 
 ## Building and pinning
 
@@ -71,12 +74,12 @@ every submission build (`icil_orchestrator.submissions.image.ensure_base`).
   start: the container makes `HOME` (`/tmp/home`) and `XDG_CACHE_HOME` (`/tmp/home/.cache`) before
   the server starts, and points `TMPDIR`, `TRITON_CACHE_DIR`, `TORCHINDUCTOR_CACHE_DIR` and
   `TORCH_EXTENSIONS_DIR` into it (`container.policy_environment`). So a policy may compile at run
-  time - `torch.compile`, Triton, cffi, `torch.utils.cpp_extension`, its own `gcc -shared` - and
-  load what it built. It is the only place it can: a compile into the root filesystem (`/`,
-  `/submission`, `/usr`, `/opt`) meets the read-only root, and `/dev/shm` (the other tmpfs Docker
-  gives a container) and `/run/icil` take the file but are `noexec`, so it will not load
-  (`tests/test_submission_jit.py` walks every mount to check). Its contents count against
-  `memory_bytes` and go with the container.
+  time - `torch.compile`, Triton, cffi, `torch.utils.cpp_extension` (with `ninja` in its
+  requirements), its own `gcc -shared` - and load what it built. It is the only place it can: a
+  compile into the root filesystem (`/`, `/submission`, `/usr`, `/opt`) meets the read-only root,
+  and `/dev/shm` (the other tmpfs Docker gives a container) and `/run/icil` take the file but are
+  `noexec`, so it will not load (`tests/test_submission_jit.py` walks every mount to check). Its
+  contents count against `memory_bytes` and go with the container.
 - `/run/icil`: the socket and the server's log, shared with the host. When the orchestrator runs as
   root it is a tmpfs of 64 MiB and 64 entries (`container.SHARED_DIR_BYTES`,
   `SHARED_DIR_INODES`) mounted `nosuid,nodev,noexec` (`SHARED_DIR_HARDENING`), which the bind
@@ -112,14 +115,15 @@ commit that builds it from `devel`:
 | --- | --- |
 | base image digest (that build's; an example, not the base) | `sha256:25b8d365d3ad01bfa3bbf460581d2925a95d60439e576e3ef6fdf7861b522765` |
 | base image size | 9 488 012 261 bytes (9.49 GB; `nvidia/cuda:12.8.1-devel-ubuntu22.04` alone is 9 341 554 090 bytes, and the `runtime` base this replaced was 3.52 GB) |
-| pulling the CUDA `devel` image | 72 s |
+| pulling the CUDA `devel` image | 72 s for its `devel` layer alone (2.99 GB compressed): the runtime layers under it (2.16 GB compressed) were already on the host. A host with neither downloads 5.15 GB compressed |
 | cold build (CUDA image pulled, no cached layer) | 22 s |
 | cached rebuild | 0.35 s |
 | replay example: `submission check`, `--gpus 0` | image build 0.4 s; `docker run` to listening 0.56 s; `hello` answered 0.13 s after that |
 | `tests/fixtures/jit_policy`: first `act` (write C, `gcc -shared`, `dlopen`) | 30 ms; the next `act` 0.5 ms |
-| `tests/fixtures/torch_compile_policy` (torch 2.8.0+cpu): image build | 13.4 s; 10 263 597 002 bytes, torch adding 0.78 GB to the base |
-| its `hello` (import torch, `torch.compile` one function with inductor, one compile worker) | 5.5 s, 4.4 s of it compiling |
-| its `act` (the compiled function) | 1.1 ms round trip, 0.37 ms in the call |
+| `tests/fixtures/torch_compile_policy` (torch 2.8.0+cpu, ninja 1.13.2): image build | 13.5 s; 10 264 005 374 bytes, torch and ninja adding 0.78 GB to the base |
+| its `hello` (import torch, `torch.compile` one function with inductor, one compile worker) | 5.6 s, 4.4 s of it compiling |
+| its `act` (the compiled function) | 0.8 to 1.1 ms round trip, 0.12 to 0.37 ms in the call |
+| `torch.utils.cpp_extension.load_inline` of a one-function C++ extension in that container (`MAX_JOBS=1`) | 8.1 s |
 
 The digest in the table is that one build's and no other build will have it (see
 [The digest is not reproducible](#the-digest-is-not-reproducible)).
