@@ -185,6 +185,19 @@ def cmd_queue(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_admin(args: argparse.Namespace) -> int:
+    from .admin import serve
+
+    return serve(
+        _spec(args),
+        store_dir=args.store,
+        queue_dir=args.queue,
+        host=args.host,
+        port=args.port,
+        token_env=args.token_env,
+    )
+
+
 def cmd_submission(args: argparse.Namespace) -> int:
     from .submissions.docker import Docker
 
@@ -614,6 +627,32 @@ def build_parser() -> argparse.ArgumentParser:
     q_rm = q_sub.add_parser("remove", help="drop an entry by its key")
     q_rm.add_argument("key")
     q.set_defaults(func=cmd_queue)
+
+    ad = sub.add_parser("admin", help="the submission intake the dashboard's submit form posts to")
+    ad_sub = ad.add_subparsers(dest="admin_cmd", required=True)
+    ad_serve = ad_sub.add_parser(
+        "serve",
+        help="serve GET /admin/health and POST /admin/submissions over plain HTTP, for organizers "
+        "on a private network",
+    )
+    ad_serve.add_argument(
+        "--store",
+        required=True,
+        help="the store an accepted entry's queue snapshot is published to (`store init`)",
+    )
+    ad_serve.add_argument("--queue", default="queue", help="queue directory, one file per track")
+    ad_serve.add_argument(
+        "--host", default="127.0.0.1", help="address to bind (default: 127.0.0.1, loopback only)"
+    )
+    ad_serve.add_argument("--port", type=int, default=8799, help="port (default: 8799)")
+    ad_serve.add_argument(
+        "--token-env",
+        default="ICIL_ADMIN_TOKEN",
+        metavar="NAME",
+        help="the environment variable holding the bearer token, never taken from the command "
+        "line (default: ICIL_ADMIN_TOKEN)",
+    )
+    ad.set_defaults(func=cmd_admin)
 
     sm = sub.add_parser("submission", help="a submission's image and sandbox")
     sm_sub = sm.add_subparsers(dest="submission_cmd", required=True)
