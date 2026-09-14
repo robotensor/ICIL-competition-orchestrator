@@ -99,6 +99,21 @@ def test_a_failed_duel_by_hand_run_again_resumes_at_its_block(duel_spec, store, 
     assert Queues(tmp_path / "queue", duel_spec.tracks)[TRACK].block == 2
 
 
+def test_the_duel_command_leaves_an_empty_throne_to_the_declared_baseline(
+    spec_doc, write_spec, store, tmp_path, capsys
+):
+    from conftest import fake_spec_doc
+
+    doc = fake_spec_doc(spec_doc)
+    doc["budgets"]["act_timeout_s"] = 2.0
+    doc["baselines"][TRACK] = {"repo": ZERO_REF.repo, "revision": ZERO_REF.revision}
+    spec = write_spec(doc, name="baseline.json")
+    assert run(spec, store, tmp_path, "duel", "--challenger", REPLAY_AT) == 2
+    assert f"track {TRACK} declares a baseline" in capsys.readouterr().err
+    assert Store(store[0], spec).iter_index(TRACK) == []
+    assert not (tmp_path / "runs" / TRACK).exists()
+
+
 def test_the_duel_command_refuses_while_a_daemon_holds_the_store(
     duel_spec, store, tmp_path, capsys
 ):

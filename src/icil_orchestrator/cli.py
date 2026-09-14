@@ -422,6 +422,15 @@ def _duel(args: argparse.Namespace) -> int:
             if king is not None and king.key == challenger.key:
                 print(f"error: {challenger.entry} already holds the crown", file=sys.stderr)
                 return 2
+            if king is None and spec.baseline(track) is not None:
+                # The daemon crowns the declared baseline by genesis before any entry; an entrant
+                # crowned here instead would be shown as the organizer's baseline.
+                print(
+                    f"error: track {track} declares a baseline, which takes its empty throne; "
+                    "run the daemon to crown it first",
+                    file=sys.stderr,
+                )
+                return 2
             queue = Queues(args.queue, spec.tracks)[track]
             head_block = int(head.get("block") or 0)
             # Numbered from the queue's counter, as the daemon numbers its duels, so the two never
