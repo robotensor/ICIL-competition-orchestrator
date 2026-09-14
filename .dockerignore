@@ -5,3 +5,4 @@
 !packages/icil-policy
 packages/icil-policy/**/__pycache__
 packages/icil-policy/**/*.egg-info
+packages/icil-policy/**/.pytest_cache
