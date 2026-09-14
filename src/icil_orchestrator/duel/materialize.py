@@ -15,7 +15,7 @@ For each unit, in order, and resumably:
 2. Its `result.json` must say the demonstration succeeded, and `prompt.npz` must exist.
 3. `verify_prompt(path, unit)` must say ok, and hash the file to what this module hashes it to:
    the published `prompt_sha256` is the sha256 of the file's bytes, which is what a third party
-   holding the file checks.
+   holding the file checks. A `prompt_sha256` the result names must be that hash too.
 4. The scene seed the prompt was built on is kept (`Prompt.scene_seed`): the result's
    `scene_seed`, which must be the one `verify_prompt` read from the file when it names one. A
    benchmark may choose the scene only here - RoboTwin's expert tries a unit's candidate seeds in
@@ -286,6 +286,12 @@ def materialize_unit(
         return void(
             f"verify_prompt hashed the prompt to {str(verdict.get('sha256'))[:12]}..., "
             f"not the sha256 of its bytes {sha[:12]}..."
+        )
+    written = outcome.extra.get("prompt_sha256")
+    if written is not None and written != sha:
+        return void(
+            f"its result says it wrote a prompt hashing to {str(written)[:12]}..., not the "
+            f"sha256 of the file's bytes {sha[:12]}..."
         )
     reported, read = (
         scene_seed_of(outcome.extra.get("scene_seed")),

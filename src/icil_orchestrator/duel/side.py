@@ -277,13 +277,14 @@ def run_side(
                 result_reserve_s=reserves[name],
             )
             # The unit counts only if it ran from the recorded bytes: the file must still hash to
-            # them, and so must what the benchmark says it read.
+            # them, and so must what the benchmark says it read, whenever it says anything - a
+            # value that is not the recorded hex, of whatever type, is another prompt's.
             reported = outcome.extra.get("prompt_sha256")
             if (changed := prompt.changed()) is not None:
                 outcome = voided(f"no prompt: {changed} during the unit", wall_s=outcome.wall_s)
-            elif isinstance(reported, str) and reported != prompt.sha256:
+            elif reported is not None and reported != prompt.sha256:
                 outcome = voided(
-                    f"no prompt: the benchmark read a prompt hashing to {reported[:12]}..., "
+                    f"no prompt: the benchmark read a prompt hashing to {str(reported)[:12]}..., "
                     f"not the recorded {str(prompt.sha256)[:12]}...",
                     wall_s=outcome.wall_s,
                 )

@@ -476,3 +476,35 @@ def test_the_benchmark_quotes_a_copy_of_the_policys_log_never_the_log_itself(
     # A policy killed under its unit: the benchmark's error ends with the copy's tail.
     assert (killed["success"], killed["void"]) == (False, False)
     assert "--- policy log (tail) ---" in killed["error"] and "listening on" in killed["error"]
+
+
+@pytest.mark.parametrize("reported", [12345, ["f" * 64], ""])
+def test_a_prompt_sha256_the_benchmark_reports_that_is_not_the_recorded_hash_voids_the_unit(
+    duel_spec, fake, units, prompts, tmp_path, reported
+):
+    """Whatever the benchmark's result holds as `prompt_sha256`, if anything, must be the hash
+    both sides ran from: a number, a list or an empty string is not it."""
+
+    class Misreporting(type(fake)):
+        def read_result(self, *, out_dir):
+            return {**super().read_result(out_dir=out_dir), "prompt_sha256": reported}
+
+    misreporting = Misreporting()
+    runtime = FakePolicyRuntime(duel_spec)
+    results = run_side(
+        duel_spec,
+        side="challenger",
+        units=units[:1],
+        prompts=prompts,
+        side_dir=tmp_path / "challenger",
+        benchmark_of=lambda unit: misreporting,
+        runtime=runtime,
+        prepared=runtime.prepare(
+            runtime.fetch(REPLAY_REF, workdir=tmp_path), workdir=tmp_path / "check"
+        ),
+    )
+    record = results[units[0]["unit_id"]]
+    assert (record["success"], record["void"]) == (None, True)
+    assert record["error"].startswith(
+        f"no prompt: the benchmark read a prompt hashing to {str(reported)[:12]}..., not the"
+    )

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from pathlib import Path
 
 import pytest
 
@@ -186,3 +187,25 @@ def test_a_result_naming_another_scene_seed_than_its_prompt_is_void(
     prompt = out.prompts[units[0]["unit_id"]]
     assert prompt.void and prompt.scene_seed is None
     assert "built on scene seed 12345, but the prompt's own is" in prompt.error
+
+
+@pytest.mark.parametrize("written", ["0" * 64, 7, "the file's"])
+def test_a_prompt_sha256_the_result_names_must_be_the_files(
+    fake_spec, fake, units, tmp_path, written
+):
+    """RoboTwin's materialize result names the sha256 of the prompt it wrote: when a result names
+    one, it is the file's, or the prompt is not the one both sides would run from."""
+
+    class Reporting(type(fake)):
+        def read_result(self, *, out_dir):
+            own = sha256_file(Path(out_dir) / "prompt.npz")
+            value = own if written == "the file's" else written
+            return {**super().read_result(out_dir=out_dir), "prompt_sha256": value}
+
+    out = materialize_units(fake_spec, units[:1], tmp_path, benchmark_of=lambda unit: Reporting())
+    prompt = out.prompts[units[0]["unit_id"]]
+    if written == "the file's":
+        assert not prompt.void and prompt.sha256 == sha256_file(prompt.path), prompt.error
+        return
+    assert prompt.void and prompt.sha256 is None
+    assert f"its result says it wrote a prompt hashing to {str(written)[:12]}..." in prompt.error
