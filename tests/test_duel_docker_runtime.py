@@ -247,3 +247,62 @@ def test_only_a_socket_itself_counts_as_a_units_policy_listening(spec, docker, t
     finally:
         elsewhere.close()
         served.close()
+
+
+class InspectHangs(DockerPolicyRuntime):
+    """`docker inspect` stops answering about the container of the challenger's unit `unit`:
+    while it starts, its process already dead (`starting`); once it listens, its process then
+    killed (`killed`); or once it listens, its policy left to play the unit out (`alive`)."""
+
+    unit = "fp-000"
+    when = "starting"
+
+    def _chosen(self, unit_dir: Path) -> bool:
+        return unit_dir.name == self.unit and unit_dir.parent.name == "challenger"
+
+    def serve(self, prepared, *, workdir):
+        if self.when == "starting" and self._chosen(Path(workdir)):
+            self.docker.hang_next_run = True
+        return super().serve(prepared, workdir=workdir)
+
+    def _started(self, container, served):
+        if self.when == "starting" or not self._chosen(served.log_file.parent):
+            return
+        self.docker.hang.add(container.name)
+        if self.when == "killed":
+            self.docker.processes[container.name].kill()
+            self.docker.processes[container.name].wait()
+
+
+@pytest.mark.parametrize(
+    "when, void, said",
+    [
+        ("starting", True, "could not be served: docker could not say whether"),
+        ("killed", True, "docker could not say how the policy container ended"),
+        ("alive", False, None),
+    ],
+)
+def test_a_docker_inspect_that_times_out_voids_its_unit_and_never_undoes_a_score(
+    spec, write_spec, docker, tmp_path, when, void, said
+):
+    """A Docker that does not answer `docker inspect` in time cannot say whose a unit's end was:
+    the unit is void for the harness, the duel goes on to the next one, and nothing escapes the
+    side. A unit already scored keeps its score."""
+    import json
+
+    doc = json.loads(spec.path.read_text())
+    doc["duel"]["max_void_fraction"] = 0.5  # so that one void unit leaves the duel standing
+    lenient = write_spec(doc, name="lenient-docker-duel-spec.json")
+    runtime = runtime_for(lenient, docker, tmp_path, cls=InspectHangs)
+    runtime.when = when
+    store, result = duel(lenient, runtime, tmp_path)
+    assert result.published, result.reason
+    first, second, third = result.units
+    assert first["void"] is void
+    if void:
+        error = first["challenger_error"]
+        assert said in error and "did not finish within 60s" in error, error
+    else:
+        assert first["challenger_success"] is True, "a scored unit was undone"
+    assert second["challenger_success"] is True and third["challenger_success"] is True
+    assert result.record["void"] == int(void) and verify_store(store.root, spec).ok

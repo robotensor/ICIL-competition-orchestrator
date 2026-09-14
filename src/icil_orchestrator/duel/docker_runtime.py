@@ -30,9 +30,9 @@ live process holds is never touched.
 
 Whose a container's end is comes from `Docker.state` (`docker inspect`): a container that exited
 non-zero, or that the kernel killed for its sandbox's memory limit (`State.OOMKilled`), ended by its
-policy's doing; a container Docker no longer knows (removed from outside, or Docker itself gone)
-did not. `docker run` failing is Docker's failure too. Nothing here removes a container before its
-end is read.
+policy's doing; a container Docker no longer knows (removed from outside, or Docker itself gone),
+or does not describe in time (a `docker inspect` that times out), did not. `docker run` failing is
+Docker's failure too. Nothing here removes a container before its end is read.
 """
 
 from __future__ import annotations
@@ -205,7 +205,12 @@ class DockerPolicyRuntime:
     def _wait_listening(self, container: PolicyContainer) -> None:
         deadline = time.monotonic() + self.start_timeout_s
         while not is_socket(container.socket_path):
-            state = self.docker.state(container.name)
+            try:
+                state = self.docker.state(container.name)
+            except SubmissionError as exc:
+                raise RuntimeUnavailable(
+                    f"docker could not say whether the policy container runs: {exc}"
+                ) from None
             if not state.running:
                 error = f": {state.error}" if state.error else ""
                 if state.exit_code is None:
@@ -222,12 +227,17 @@ class DockerPolicyRuntime:
 
     def _died(self, container: PolicyContainer) -> PolicyEnd | None:
         """How the container ended underneath its unit: any end but a clean exit after its client.
-        A container Docker cannot describe any more is the harness's; any other end, the policy's."""
+        A container Docker cannot describe any more, or does not describe in time (a `docker
+        inspect` that times out), is the harness's; any other end, the policy's. It never raises:
+        a unit already scored keeps its score whatever this says."""
         deadline = time.monotonic() + EXIT_GRACE_S
-        state = self.docker.state(container.name)
-        while state.running and time.monotonic() < deadline:
-            time.sleep(POLL_S)
+        try:
             state = self.docker.state(container.name)
+            while state.running and time.monotonic() < deadline:
+                time.sleep(POLL_S)
+                state = self.docker.state(container.name)
+        except SubmissionError as exc:
+            return PolicyEnd(f"docker could not say how the policy container ended: {exc}", HARNESS)
         if state.running or state.exit_code == 0:
             return None
         error = f": {state.error}" if state.error else ""
