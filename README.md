@@ -82,7 +82,8 @@ What a unit counts as depends on whose doing its end was:
 
 - **Void, for both sides**, only for a harness cause: its prompt failed to materialize or was
   rejected, the benchmark crashed or timed out while the policy was fine (or reported
-  `void_cause: "harness"`), Docker or the host failed, or the orchestrator stopped the run. A duel
+  `void_cause: "harness"`), Docker or the host failed (a container removed from outside, a
+  `docker inspect` that does not answer in time), or the orchestrator stopped the run. A duel
   with more than `max_void_fraction` of its units void is void and publishes nothing; once that is
   certain, nothing more is materialized or played.
 - **That side's failure** for anything its own submission did: its policy container exiting on its
@@ -105,8 +106,10 @@ progress while the harness is only unavailable (benchmark not installed, Docker 
 unreachable), moves aside a run directory holding another request, and backs off exponentially,
 up to `--max-backoff` (300 s), when a step keeps crashing. SIGTERM and SIGINT tear the running
 unit's policy and benchmark down before exiting; after a SIGKILL, the next start reaps what was
-left - `icil-duel-*` containers labelled with the store and run directory, and the process groups
-recorded in each unit's `pids.json` - before any unit runs again.
+left - the policy containers whose owner process is gone (the sandbox labels each container with
+the process that started it), and the process groups recorded in each unit's `pids.json` - before
+any unit runs again. A unit's container runs with exactly the sandbox's `docker run`: the duel
+adds nothing to it.
 
 Deploy the dashboard before this orchestrator: its live ingest must accept the `materializing`
 phase, which every duel reports between `checking` and `evaluating`, or those frames are refused.

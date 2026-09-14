@@ -51,7 +51,9 @@ runnable policy code and weights, run in a sandboxed container.
   `duel.runtime.PolicyRuntime`; `duel/docker_runtime.py` is the one module of it that imports
   `submissions`, and `duel/local_runtime.py` serves a local directory with no sandbox (development
   and tests only). `duel/orphans.py` keeps each unit's process groups in a `pids.json` ledger and
-  reaps what a killed orchestrator left. The duel tests use `duel_spec` (a short `act_timeout_s`),
+  reaps what a killed orchestrator left; its containers are the sandbox's to label and reap
+  (`Owner`, `reap_orphans`), and the adapter adds nothing to a container's `docker run` and calls
+  nothing private of `submissions`. The duel tests use `duel_spec` (a short `act_timeout_s`),
   `FakePolicyRuntime`, `RecordingReporter`, `harness_voiding` and `InspectingFakeDocker` from
   `tests/duel_helpers.py`, and the example policies; `tests/test_duel_signals.py` signals and
   kills a real `duel` process; the container test (`tests/test_duel_container.py`) runs a smoke

@@ -117,8 +117,15 @@
   is moved aside as `<dir>.stale-<n>` and its challenger queued again at the head. A duel resumed
   after its record was appended rebuilds `head.json` from the index and pushes to the mirror again.
 - (fix): SIGTERM and SIGINT tear the running unit's policy and benchmark down before `duel` or
-  `daemon` exits (128+signal); after a SIGKILL, the next start reaps the labelled `icil-duel-*`
-  containers and the process groups in each unit's `pids.json` before a unit runs again.
+  `daemon` exits (128+signal); after a SIGKILL, the next start reaps the policy containers whose
+  owner process is gone and the process groups in each unit's `pids.json` before a unit runs again.
+- (fix): a duel's containers run with exactly the sandbox's `docker run` - the scratch tmpfs that
+  may run code, `HOME` and the JIT caches in it, the noexec socket tmpfs - and the docker runtime
+  adds nothing to it. The sandbox's owner labels and `reap_orphans` replace the duel's own store
+  labels and reaping, and the runtime seam's `bind` is gone. Only a socket itself counts as a
+  unit's policy listening; whether its container was OOM-killed comes from `Docker.state`
+  (`ContainerState.oom_killed`); and a `docker inspect` that times out voids its unit for the
+  harness instead of failing the duel, while a unit already scored keeps its score.
 - (fix): `duel` numbers its block from the queue's counter (`--queue`) and refuses to run beside a
   daemon; it leaves a declared baseline's empty throne to the daemon. The daemon keeps a duel in
   progress while the harness is unavailable, moves aside a run directory holding another request,
