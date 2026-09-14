@@ -108,6 +108,17 @@ def _non_root(value: Any) -> bool:
     return True
 
 
+def _tmpfs_path(value: Any) -> bool:
+    """A path `docker run --tmpfs PATH:OPTIONS` takes whole: absolute, and free of the colon that
+    starts its options, the comma between them and whitespace."""
+    return (
+        isinstance(value, str)
+        and value.startswith("/")
+        and not any(c in value for c in ":,")
+        and not any(c.isspace() for c in value)
+    )
+
+
 def _repo_root() -> Path | None:
     here = Path(__file__).resolve()
     for parent in here.parents:
@@ -343,7 +354,21 @@ def validate_spec(doc: dict[str, Any]) -> list[str]:
     # it is refused here rather than trusted to be read correctly by the container runner.
     need("submission.sandbox.network == none", sandbox.get("network") == "none")
     need("submission.sandbox.read_only_root", sandbox.get("read_only_root") is True)
-    need("submission.sandbox.tmpfs", isinstance(sandbox.get("tmpfs"), list))
+    tmpfs = sandbox.get("tmpfs")
+    need(
+        "submission.sandbox.tmpfs non-empty list of absolute paths",
+        isinstance(tmpfs, list) and bool(tmpfs) and all(_tmpfs_path(p) for p in tmpfs),
+    )
+    need("submission.sandbox.tmpfs_exec bool", isinstance(sandbox.get("tmpfs_exec"), bool))
+    # A tmpfs's pages are charged to the container's memory cgroup, so a cap above memory_bytes
+    # caps nothing; the size is what keeps the executable scratch space a bounded one.
+    memory = sandbox.get("memory_bytes")
+    need(
+        "submission.sandbox.tmpfs_bytes in 1..memory_bytes",
+        _positive_int(sandbox.get("tmpfs_bytes"))
+        and _positive_number(memory)
+        and sandbox["tmpfs_bytes"] <= memory,
+    )
     need("submission.sandbox.user non-root", _non_root(sandbox.get("user")))
     for key in ("gpus", "memory_bytes", "cpus", "pids"):
         need(f"submission.sandbox.{key}>0", _positive_number(sandbox.get(key)))

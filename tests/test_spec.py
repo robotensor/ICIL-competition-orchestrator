@@ -138,6 +138,47 @@ def test_the_sandbox_cannot_be_loosened(spec_doc):
         assert message in validate_spec(doc), (key, value)
 
 
+def test_the_scratch_tmpfs_is_capped_and_says_whether_it_runs_code(spec, spec_doc):
+    """`/tmp` is where a policy's JIT caches compile and load code: an executable tmpfs, and a
+    bounded one. The additive keys sit beside `tmpfs`, which keeps the shape the dashboard reads."""
+    import copy
+
+    sandbox = spec.submission["sandbox"]
+    assert sandbox["tmpfs"] == ["/tmp"] and sandbox["tmpfs_exec"] is True
+    assert 0 < sandbox["tmpfs_bytes"] <= sandbox["memory_bytes"]
+    for key, value, message in (
+        ("tmpfs", [], "submission.sandbox.tmpfs non-empty list of absolute paths"),
+        ("tmpfs", "/tmp", "submission.sandbox.tmpfs non-empty list of absolute paths"),
+        ("tmpfs", ["tmp"], "submission.sandbox.tmpfs non-empty list of absolute paths"),
+        # A colon starts docker's options and a comma separates them: either would smuggle some in.
+        ("tmpfs", ["/tmp:suid"], "submission.sandbox.tmpfs non-empty list of absolute paths"),
+        ("tmpfs", ["/tmp,dev"], "submission.sandbox.tmpfs non-empty list of absolute paths"),
+        ("tmpfs", ["/t mp"], "submission.sandbox.tmpfs non-empty list of absolute paths"),
+        ("tmpfs_exec", "yes", "submission.sandbox.tmpfs_exec bool"),
+        ("tmpfs_exec", None, "submission.sandbox.tmpfs_exec bool"),
+        ("tmpfs_bytes", 0, "submission.sandbox.tmpfs_bytes in 1..memory_bytes"),
+        ("tmpfs_bytes", True, "submission.sandbox.tmpfs_bytes in 1..memory_bytes"),
+        ("tmpfs_bytes", "8g", "submission.sandbox.tmpfs_bytes in 1..memory_bytes"),
+        ("tmpfs_bytes", 1.5, "submission.sandbox.tmpfs_bytes in 1..memory_bytes"),
+        (
+            "tmpfs_bytes",
+            sandbox["memory_bytes"] + 1,
+            "submission.sandbox.tmpfs_bytes in 1..memory_bytes",
+        ),
+    ):
+        doc = copy.deepcopy(spec_doc)
+        doc["submission"]["sandbox"][key] = value
+        assert message in validate_spec(doc), (key, value)
+    for key in ("tmpfs_exec", "tmpfs_bytes"):
+        doc = copy.deepcopy(spec_doc)
+        del doc["submission"]["sandbox"][key]
+        assert any(e.startswith(f"submission.sandbox.{key}") for e in validate_spec(doc)), key
+    # A noexec scratch space is still a contract the orchestrator can honour.
+    doc = copy.deepcopy(spec_doc)
+    doc["submission"]["sandbox"].update(tmpfs_exec=False, tmpfs_bytes=1 << 20)
+    assert validate_spec(doc) == []
+
+
 def test_a_skill_environment_is_the_shape_the_benchmark_and_dashboard_read(spec_doc):
     """The demonstration's shape lives here: RoboTwin's [left arm, right arm, distance], the clip
     cameras the dashboard lays out, and the action dimensions a policy must return."""

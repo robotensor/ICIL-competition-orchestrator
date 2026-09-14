@@ -184,13 +184,15 @@
    "tmpfs": [
     "/tmp"
    ],
+   "tmpfs_exec": true,
+   "tmpfs_bytes": 8589934592,
    "user": "1000:1000",
    "gpus": 1,
    "memory_bytes": 34359738368,
    "cpus": 8,
    "pids": 1024
   },
-  "_comment": "A submission is a Hugging Face repository at a resolved commit sha holding `icil.yaml`, its policy code and weights. There is no architecture or model-type check: it is held to the manifest, the policy protocol and this sandbox. Its code runs only inside its own container, with no network, a read-only root filesystem, a non-root user and these limits; the orchestrator never imports, unpickles or executes anything from it."
+  "_comment": "A submission is a Hugging Face repository at a resolved commit sha holding `icil.yaml`, its policy code and weights. There is no architecture or model-type check: it is held to the manifest, the policy protocol and this sandbox. Its code runs only inside its own container, with no network, a read-only root filesystem, a non-root user and these limits; the orchestrator never imports, unpickles or executes anything from it. Each `tmpfs` path is a tmpfs of at most `tmpfs_bytes`, counted against `memory_bytes`, mounted nosuid and nodev, and executable when `tmpfs_exec` is true, so a policy may compile code at run time (torch.compile, Triton, C extensions) into its caches there; the first is its home and its caches' root."
  },
  "media": {
   "video": {
