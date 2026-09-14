@@ -1,16 +1,31 @@
 """A submission's policy, served inside `spec.submission.sandbox`.
 
-    docker run --detach --network none --read-only --tmpfs /tmp --user 1000:1000 --gpus 1
-               --memory N --memory-swap N --cpus ... --pids-limit ... --cap-drop ALL
-               --security-opt no-new-privileges --mount type=bind,src=<dir>,dst=/run/icil
-               --env ICIL_POLICY_AUTHKEY <image>
+    docker run --detach --network none --read-only --tmpfs /tmp:exec,nosuid,nodev,size=N
+               --user 1000:1000 --gpus 1 --memory N --memory-swap N --cpus ... --pids-limit ...
+               --cap-drop ALL --security-opt no-new-privileges
+               --mount type=bind,src=<dir>,dst=/run/icil
+               --env HOME=/tmp/home --env TMPDIR=/tmp --env XDG_CACHE_HOME=/tmp/home/.cache
+               --env TRITON_CACHE_DIR=... --env TORCHINDUCTOR_CACHE_DIR=...
+               --env TORCH_EXTENSIONS_DIR=... --env ICIL_POLICY_AUTHKEY <image>
+               sh -c 'mkdir -p -m 0700 "$HOME" "$XDG_CACHE_HOME" && exec "$@"' sh
                python -m icil_policy.serve --manifest /submission/icil.yaml
                       --address /run/icil/policy.sock --authkey-env ICIL_POLICY_AUTHKEY
                       --log-file /run/icil/policy.log
 
 Every limit is the spec's, read here and nowhere else. `--memory-swap` equal to `--memory` means
 no swap at all: the spec's bytes are the container's total, where Docker's default would allow as
-much again in swap. What the container can reach is its own image and one directory, shared for
+much again in swap.
+
+**The scratch tmpfs.** Each `sandbox.tmpfs` path is a tmpfs of `tmpfs_bytes`, `nosuid,nodev`
+always, and `exec` when `tmpfs_exec` says so, so a policy can JIT-compile: torch.compile, Triton,
+cffi and `torch.utils.cpp_extension` write a shared object and load it. The first path is the
+scratch directory: `TMPDIR`, the policy's `HOME` (made by the shell above, since the tmpfs is
+empty at every start) and the cache root every compiler is pointed at (`policy_environment`).
+Submission code already runs natively in here, so code it compiles adds no reach; what bounds it
+is the network, the read-only root, the non-root user and the limits, and the size cap keeps the
+scratch space inside `memory_bytes`, which its pages are charged to.
+
+What the container can reach is its own image and one directory, shared for
 the Unix socket and the server's log: mode 0700 on the host and owned by the sandbox user, so the
 policy can create the socket and nobody else on the host can open it. The policy can write there,
 so the directory is a tmpfs of `SHARED_DIR_BYTES` mounted on the host by the orchestrator (root)
@@ -41,7 +56,7 @@ import subprocess
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from icil_policy.client import RemotePolicy
@@ -63,6 +78,26 @@ POLL_S = 0.1
 #: Not in the spec because they are not limits a competitor sees: a non-root user with no
 #: capabilities at all, and no way to gain any through a setuid binary in its own image.
 HARDENING = ("--cap-drop", "ALL", "--security-opt", "no-new-privileges")
+#: Options every `sandbox.tmpfs` mount gets whatever the spec says: a setuid bit or a device file
+#: written there means nothing. Whether code written there may run (`tmpfs_exec`) and how much
+#: fits (`tmpfs_bytes`) are the spec's.
+TMPFS_HARDENING = ("nosuid", "nodev")
+#: Under the scratch directory (the first `sandbox.tmpfs` path): the policy's home, and in it the
+#: cache root.
+HOME_SUBDIR = "home"
+CACHE_SUBDIR = ".cache"
+#: Each JIT compiler's cache, as the variable that moves it and its directory under the cache root.
+#: Their defaults are scattered (~/.triton/cache, /tmp/torchinductor_<user>,
+#: ~/.cache/torch_extensions); named, they are in one place a policy can find, whatever a library
+#: defaults to next.
+CACHE_ENV = (
+    ("TRITON_CACHE_DIR", "triton"),
+    ("TORCHINDUCTOR_CACHE_DIR", "torchinductor"),
+    ("TORCH_EXTENSIONS_DIR", "torch_extensions"),
+)
+#: What runs before the server: the home and the cache root made on the empty tmpfs, then the
+#: server in the shell's place, so it is still the container's first process.
+PREPARE_HOME = 'mkdir -p -m 0700 "$HOME" "$XDG_CACHE_HOME" && exec "$@"'
 #: The shared directory's tmpfs: its size and how many entries it takes. The socket and the log
 #: fit; a policy that writes more gets ENOSPC, and the host's disk sees none of it. What a
 #: competitor sees is a log that stops growing, so this is not a spec limit either.
@@ -148,6 +183,37 @@ def serve_argv(spec: Any) -> list[str]:
     ]
 
 
+def tmpfs_options(spec: Any) -> str:
+    """The options every `sandbox.tmpfs` mount takes: exec or not, `TMPFS_HARDENING`, the size."""
+    sandbox = spec.submission["sandbox"]
+    runs_code = "exec" if sandbox["tmpfs_exec"] else "noexec"
+    return ",".join((runs_code, *TMPFS_HARDENING, f"size={int(sandbox['tmpfs_bytes'])}"))
+
+
+def scratch_dir(spec: Any) -> PurePosixPath:
+    """The first `sandbox.tmpfs` path: where the policy's home and its caches live."""
+    return PurePosixPath(str(spec.submission["sandbox"]["tmpfs"][0]))
+
+
+def policy_environment(spec: Any) -> dict[str, str]:
+    """The variables the container is given besides the authkey: the scratch directory as
+    `TMPDIR`, the home in it and every JIT compiler's cache under the home's cache root."""
+    scratch = scratch_dir(spec)
+    home = scratch / HOME_SUBDIR
+    cache = home / CACHE_SUBDIR
+    return {
+        "HOME": str(home),
+        "TMPDIR": str(scratch),
+        "XDG_CACHE_HOME": str(cache),
+        **{name: str(cache / sub) for name, sub in CACHE_ENV},
+    }
+
+
+def container_argv(spec: Any) -> list[str]:
+    """The container's command: `PREPARE_HOME` in a shell, which then becomes the server."""
+    return ["sh", "-c", PREPARE_HOME, "sh", *serve_argv(spec)]
+
+
 def run_argv(
     spec: Any,
     *,
@@ -171,8 +237,9 @@ def run_argv(
     args += ["--network", str(sandbox["network"])]
     if sandbox["read_only_root"]:
         args.append("--read-only")
+    options = tmpfs_options(spec)
     for path in sandbox["tmpfs"]:
-        args += ["--tmpfs", str(path)]
+        args += ["--tmpfs", f"{path}:{options}"]
     args += ["--user", str(sandbox["user"])]
     count = int(sandbox["gpus"]) if gpus is None else int(gpus)
     if count > 0:
@@ -190,11 +257,10 @@ def run_argv(
         *HARDENING,
         "--mount",
         f"type=bind,src={socket_dir},dst={SOCKET_DIR}",
-        "--env",
-        AUTHKEY_ENV,
-        image,
-        *serve_argv(spec),
     ]
+    for key, value in policy_environment(spec).items():
+        args += ["--env", f"{key}={value}"]
+    args += ["--env", AUTHKEY_ENV, image, *container_argv(spec)]
     return args
 
 
