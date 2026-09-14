@@ -9,7 +9,8 @@ same call lists the repository's files with their sizes, so a repository larger 
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
@@ -57,28 +58,8 @@ def resolve(repo: str, revision: str, *, api: Any = None) -> Resolved:
         from huggingface_hub import HfApi
 
         api = HfApi()
-    from huggingface_hub.errors import (
-        HfHubHTTPError,
-        RepositoryNotFoundError,
-        RevisionNotFoundError,
-    )
-
-    try:
+    with _asking_the_hub(repo, revision):
         info = api.repo_info(repo, revision=revision, repo_type=REPO_TYPE, files_metadata=True)
-    except RepositoryNotFoundError as exc:
-        raise SubmissionRejected(
-            "resolve", f"{repo}@{revision}: {_not_found('repository not found', exc)}"
-        ) from None
-    except RevisionNotFoundError as exc:
-        raise SubmissionRejected(
-            "resolve", f"{repo}@{revision}: {_not_found('revision not found', exc)}"
-        ) from None
-    except HfHubHTTPError as exc:
-        raise SubmissionError(
-            f"the Hub could not resolve {repo}@{revision}: {_first_line(exc)}"
-        ) from exc
-    except Exception as exc:  # noqa: BLE001 - the transport's own errors: unreachable, timed out
-        raise SubmissionError(f"the Hub is unreachable resolving {repo}@{revision}: {exc}") from exc
 
     sha = getattr(info, "sha", None)
     if not isinstance(sha, str) or not is_commit_sha(sha):
@@ -97,6 +78,34 @@ def check_ref(repo: str, revision: str) -> None:
         raise SubmissionRejected("resolve", f"{repo!r} is not a Hugging Face repo id (owner/name)")
     if not revision:
         raise SubmissionRejected("resolve", "no revision given")
+
+
+@contextmanager
+def _asking_the_hub(repo: str, revision: str) -> Iterator[None]:
+    """What the Hub answers, as what it means for a submission: a repository or a revision it does
+    not have is `SubmissionRejected`, a Hub that cannot be asked is `SubmissionError`."""
+    from huggingface_hub.errors import (
+        HfHubHTTPError,
+        RepositoryNotFoundError,
+        RevisionNotFoundError,
+    )
+
+    try:
+        yield
+    except RepositoryNotFoundError as exc:
+        raise SubmissionRejected(
+            "resolve", f"{repo}@{revision}: {_not_found('repository not found', exc)}"
+        ) from None
+    except RevisionNotFoundError as exc:
+        raise SubmissionRejected(
+            "resolve", f"{repo}@{revision}: {_not_found('revision not found', exc)}"
+        ) from None
+    except HfHubHTTPError as exc:
+        raise SubmissionError(
+            f"the Hub could not resolve {repo}@{revision}: {_first_line(exc)}"
+        ) from exc
+    except Exception as exc:  # noqa: BLE001 - the transport's own errors: unreachable, timed out
+        raise SubmissionError(f"the Hub is unreachable resolving {repo}@{revision}: {exc}") from exc
 
 
 def _files(siblings: Iterable[Any] | None) -> tuple[RepoFile, ...]:
