@@ -4,12 +4,14 @@
 fake benchmark runs on the host and reaches each unit's container through its socket directory.
 Every container the duel starts is named `icil-duel-*` and removed when its unit is over; the
 submission images built here are untagged at the end, by tag: an image id another image shares
-is left alone.
+is left alone. Each `docker run` is recorded on its way through the real client, so the test can
+hold it to the sandbox's own `run_argv`, and to the socket directory's tmpfs as mounted then.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -21,6 +23,13 @@ from icil_orchestrator.cli import main
 from icil_orchestrator.duel.side import read_results
 from icil_orchestrator.ids import SubmissionRef
 from icil_orchestrator.store.writer import Store
+from icil_orchestrator.submissions.container import (
+    AUTHKEY_ENV,
+    SHARED_DIR_HARDENING,
+    SHARED_DIR_SOURCE,
+    Owner,
+    run_argv,
+)
 from icil_orchestrator.submissions.docker import Docker, DockerError
 from icil_orchestrator.submissions.fetch import tree_hash
 from icil_orchestrator.submissions.image import build_base_image, submission_tag
@@ -58,10 +67,36 @@ def duel_containers() -> list[str]:
     return done.stdout.split()
 
 
+def mount_options(directory: str) -> set[str] | None:
+    """The options the host's mount table lists for the sandbox's tmpfs at `directory`."""
+    wanted = os.path.realpath(directory)
+    for line in Path("/proc/self/mounts").read_text().splitlines():
+        fields = line.split()
+        if len(fields) >= 4 and fields[0] == SHARED_DIR_SOURCE and fields[1] == wanted:
+            return set(fields[3].split(","))
+    return None
+
+
+class RecordingDocker(Docker):
+    """The real client, keeping every `docker run` with the socket directory's mount options at
+    that moment: the orchestrator mounts the directory before it runs the container."""
+
+    runs: list[tuple[list[str], str, set[str] | None]] = []
+
+    def run(self, args, *, env=None):
+        args = list(args)
+        mount = next(a for a in args if a.startswith("type=bind,src="))
+        shared = mount.removeprefix("type=bind,src=").split(",")[0]
+        RecordingDocker.runs.append((args, shared, mount_options(shared)))
+        return super().run(args, env=env)
+
+
 def test_a_smoke_duel_through_the_sandbox_publishes_the_replay_challenger_winning(
-    docker, base, duel_spec, fake_installed, tmp_path, capsys
+    docker, base, duel_spec, fake_installed, tmp_path, capsys, monkeypatch
 ):
     before = set(duel_containers())
+    RecordingDocker.runs = []
+    monkeypatch.setattr("icil_orchestrator.duel.docker_runtime.Docker", RecordingDocker)
     root, key = tmp_path / "store", tmp_path / "keys" / "orchestrator.ed25519"
     spec = ["--spec", str(duel_spec.path)]
     assert main([*spec, "store", "init", str(root), "--key", str(key)]) == 0
@@ -125,6 +160,25 @@ def test_a_smoke_duel_through_the_sandbox_publishes_the_replay_challenger_winnin
         assert main([*spec, "store", "verify", str(root)]) == 0
         assert capsys.readouterr().out.strip().endswith("OK")
         assert set(duel_containers()) == before, "a duel's container outlived its unit"
+
+        # Every container - the genesis's and the duel's, health checks and units - ran with the
+        # sandbox's own argv (the exec scratch tmpfs, HOME and the JIT caches in it, the owner
+        # labels), and, where this process can mount, with its socket directory a noexec tmpfs.
+        assert len(RecordingDocker.runs) >= 2 + 2 * len(event["units"])
+        for args, shared, options in RecordingDocker.runs:
+            name, image = args[args.index("--name") + 1], args[args.index(AUTHKEY_ENV) + 1]
+            assert name.startswith("icil-duel-")
+            assert args == run_argv(
+                duel_spec,
+                image=image,
+                name=name,
+                socket_dir=Path(shared),
+                gpus=0,
+                owner=Owner.current(),
+            )
+            if os.geteuid() == 0:
+                assert options is not None, f"{shared} was not the sandbox's tmpfs"
+                assert set(SHARED_DIR_HARDENING) <= options, options
     finally:
         for tag in tags:
             docker.remove_image(tag)
