@@ -129,7 +129,7 @@
    }
   }
  },
- "_skills_comment": "PROVISIONAL until the Franka expert survey. Which RoboTwin categories, and which tasks in them, one Franka arm's expert solves reliably is decided by that survey, which fixes the benchmark's `franka_1arm` suite. Until then the skills are the three categories of RoboTwin's V1 Same Scene suite (pick_and_place, stacking, press_push in robotwin_icil/tasks.yml). The survey may change the list, the ids or the codes; that is a spec_version bump. `max_steps` are per-skill caps; each task carries its own smaller limit from RoboTwin.",
+ "_skills_comment": "The skills are the three categories of the benchmark's surveyed `franka_1arm` suite (robotwin_icil/tasks.yml and docs/results/survey-franka-1arm.json in robotensor/ICIL-robotwin-benchmark at 98a7ffd): pick_and_place is place_empty_cup, stacking is stack_bowls_two, press_push is click_bell and press_stapler. The survey was small, 6 tasks x 3 seeds on a dual Franka, keeping a task whose expert solved at least 2 of 3 seeds with one arm. Stacking has no one-arm task, so stack_bowls_two, whose expert may switch arms, stands in: a scene the survey did not see can still make its expert use both arms. Changing the list, the ids or the codes is a spec_version bump. `max_steps` are per-skill caps; each task carries its own smaller limit from RoboTwin.",
  "duel": {
   "default_size": "smoke",
   "sizes": {

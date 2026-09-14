@@ -27,7 +27,8 @@ def test_the_shipped_contract_is_one_franka_track_on_robotwin(spec, track):
         assert spec.env(skill)["embodiment"][:2] == ["franka-panda", "franka-panda"]
         assert spec.env(skill)["action_dims"] == {"qpos": 16, "ee": 16}
     assert spec.benchmark_pin("robotwin")["distribution"] == "robotwin-icil-competition"
-    assert "PROVISIONAL" in spec.raw["_skills_comment"]
+    assert "PROVISIONAL" not in spec.raw["_skills_comment"]
+    assert "surveyed `franka_1arm` suite" in spec.raw["_skills_comment"]
     assert spec.units_per_side(track, "smoke") == 3 * spec.units_per_skill(track, "smoke")
     assert spec.size_of(track, "bogus") == spec.default_size(track)
     assert 0 <= spec.score_margin(track) <= 100 and 0 <= spec.max_void_fraction(track) <= 1
