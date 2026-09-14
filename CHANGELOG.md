@@ -76,8 +76,10 @@
 - (feat): a policy may compile at run time - `torch.compile`, Triton, cffi,
   `torch.utils.cpp_extension`. The sandbox's `/tmp` is a tmpfs mounted `exec,nosuid,nodev` and
   capped, by two keys added beside `spec.submission.sandbox.tmpfs`, which keeps its shape:
-  `tmpfs_exec` (true) and `tmpfs_bytes` (8 GiB, no more than `memory_bytes`, which its pages count
-  against); `spec_version` stays 7. The container starts with `HOME=/tmp/home`, made at start,
+  `tmpfs_exec` (true) and `tmpfs_bytes` (8 GiB for each path, all of them together no more than
+  `memory_bytes`, which their pages count against); `spec_version` stays 7. `validate_spec` also
+  refuses a tmpfs path Docker would not take as spelled, a repeated one, and one at `/` or at or
+  under `/proc`, `/sys`, `/dev`, the checkout or the socket's directory. The container starts with `HOME=/tmp/home`, made at start,
   and `TMPDIR`, `XDG_CACHE_HOME`, `TRITON_CACHE_DIR`, `TORCHINDUCTOR_CACHE_DIR` and
   `TORCH_EXTENSIONS_DIR` pointing into `/tmp`. `docker/policy-base` is built from CUDA 12.8.1
   `devel` (nvcc and the CUDA headers) with build-essential and python3.10-dev: 9.49 GB, where the

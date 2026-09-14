@@ -140,42 +140,75 @@ def test_the_sandbox_cannot_be_loosened(spec_doc):
 
 def test_the_scratch_tmpfs_is_capped_and_says_whether_it_runs_code(spec, spec_doc):
     """`/tmp` is where a policy's JIT caches compile and load code: an executable tmpfs, and a
-    bounded one. The additive keys sit beside `tmpfs`, which keeps the shape the dashboard reads."""
+    bounded one. The additive keys sit beside `tmpfs`, which keeps the shape the dashboard reads.
+    Each path is one `docker run --tmpfs` takes as spelled and that hides nothing the container
+    needs, and each gets `tmpfs_bytes`, so all of them together fit in `memory_bytes`."""
     import copy
 
+    from icil_orchestrator.spec import SANDBOX_RESERVED_PATHS
+    from icil_orchestrator.submissions.container import SOCKET_DIR
+    from icil_orchestrator.submissions.image import SUBMISSION_DIR
+
     sandbox = spec.submission["sandbox"]
+    memory = sandbox["memory_bytes"]
     assert sandbox["tmpfs"] == ["/tmp"] and sandbox["tmpfs_exec"] is True
-    assert 0 < sandbox["tmpfs_bytes"] <= sandbox["memory_bytes"]
-    for key, value, message in (
-        ("tmpfs", [], "submission.sandbox.tmpfs non-empty list of absolute paths"),
-        ("tmpfs", "/tmp", "submission.sandbox.tmpfs non-empty list of absolute paths"),
-        ("tmpfs", ["tmp"], "submission.sandbox.tmpfs non-empty list of absolute paths"),
+    assert 0 < sandbox["tmpfs_bytes"] <= memory
+    assert {SUBMISSION_DIR, SOCKET_DIR} <= set(SANDBOX_RESERVED_PATHS)
+    paths = "submission.sandbox.tmpfs non-empty list of absolute paths"
+    distinct = "submission.sandbox.tmpfs paths distinct"
+    reserved = "submission.sandbox.tmpfs not / and not at or under "
+    size = "submission.sandbox.tmpfs_bytes x len(tmpfs) in 1..memory_bytes"
+    for changes, message in (
+        ({"tmpfs": []}, paths),
+        ({"tmpfs": "/tmp"}, paths),
+        ({"tmpfs": ["tmp"]}, paths),
         # A colon starts docker's options and a comma separates them: either would smuggle some in.
-        ("tmpfs", ["/tmp:suid"], "submission.sandbox.tmpfs non-empty list of absolute paths"),
-        ("tmpfs", ["/tmp,dev"], "submission.sandbox.tmpfs non-empty list of absolute paths"),
-        ("tmpfs", ["/t mp"], "submission.sandbox.tmpfs non-empty list of absolute paths"),
-        ("tmpfs_exec", "yes", "submission.sandbox.tmpfs_exec bool"),
-        ("tmpfs_exec", None, "submission.sandbox.tmpfs_exec bool"),
-        ("tmpfs_bytes", 0, "submission.sandbox.tmpfs_bytes in 1..memory_bytes"),
-        ("tmpfs_bytes", True, "submission.sandbox.tmpfs_bytes in 1..memory_bytes"),
-        ("tmpfs_bytes", "8g", "submission.sandbox.tmpfs_bytes in 1..memory_bytes"),
-        ("tmpfs_bytes", 1.5, "submission.sandbox.tmpfs_bytes in 1..memory_bytes"),
-        (
-            "tmpfs_bytes",
-            sandbox["memory_bytes"] + 1,
-            "submission.sandbox.tmpfs_bytes in 1..memory_bytes",
-        ),
+        ({"tmpfs": ["/tmp:suid"]}, paths),
+        ({"tmpfs": ["/tmp,dev"]}, paths),
+        ({"tmpfs": ["/t mp"]}, paths),
+        # The path as spelled is the path meant: nothing a normalisation would change.
+        ({"tmpfs": ["/tmp/"]}, paths),
+        ({"tmpfs": ["//tmp"]}, paths),
+        ({"tmpfs": ["/tmp/./x"]}, paths),
+        ({"tmpfs": ["/tmp/../submission"]}, paths),
+        ({"tmpfs": ["/tmp", "/tmp"]}, distinct),
+        # Docker refuses "/" and runc a tmpfs over /proc; one over the checkout empties it, one
+        # over the socket's directory hides the socket from the host, and /sys and /dev are the
+        # runtime's.
+        ({"tmpfs": ["/"]}, reserved),
+        ({"tmpfs": ["/tmp", "/proc"]}, reserved),
+        ({"tmpfs": ["/sys/fs/cgroup"]}, reserved),
+        ({"tmpfs": ["/dev/shm"]}, reserved),
+        ({"tmpfs": ["/submission"]}, reserved),
+        ({"tmpfs": ["/submission/cache"]}, reserved),
+        ({"tmpfs": ["/run/icil"]}, reserved),
+        ({"tmpfs_exec": "yes"}, "submission.sandbox.tmpfs_exec bool"),
+        ({"tmpfs_exec": None}, "submission.sandbox.tmpfs_exec bool"),
+        ({"tmpfs_bytes": 0}, size),
+        ({"tmpfs_bytes": True}, size),
+        ({"tmpfs_bytes": "8g"}, size),
+        ({"tmpfs_bytes": 1.5}, size),
+        ({"tmpfs_bytes": memory + 1}, size),
+        # Each path is a tmpfs of tmpfs_bytes, all charged to the one memory cgroup.
+        ({"tmpfs": ["/tmp", "/var/tmp"], "tmpfs_bytes": memory // 2 + 1}, size),
     ):
         doc = copy.deepcopy(spec_doc)
-        doc["submission"]["sandbox"][key] = value
-        assert message in validate_spec(doc), (key, value)
+        doc["submission"]["sandbox"].update(changes)
+        errors = validate_spec(doc)
+        assert any(e.startswith(message) for e in errors), (changes, errors)
     for key in ("tmpfs_exec", "tmpfs_bytes"):
         doc = copy.deepcopy(spec_doc)
         del doc["submission"]["sandbox"][key]
         assert any(e.startswith(f"submission.sandbox.{key}") for e in validate_spec(doc)), key
-    # A noexec scratch space is still a contract the orchestrator can honour.
+    # A noexec scratch space is still a contract the orchestrator can honour, and so are several
+    # paths that fit together: /run, under which the socket's directory is mounted on top, and a
+    # name that only starts like the checkout's.
     doc = copy.deepcopy(spec_doc)
     doc["submission"]["sandbox"].update(tmpfs_exec=False, tmpfs_bytes=1 << 20)
+    assert validate_spec(doc) == []
+    doc["submission"]["sandbox"].update(
+        tmpfs=["/tmp", "/run", "/submission-cache"], tmpfs_bytes=memory // 3
+    )
     assert validate_spec(doc) == []
 
 

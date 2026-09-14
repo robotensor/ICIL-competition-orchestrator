@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import posixpath
 import re
 from dataclasses import dataclass
 from functools import lru_cache
@@ -108,14 +109,32 @@ def _non_root(value: Any) -> bool:
     return True
 
 
+#: Where a `sandbox.tmpfs` mount may be neither at nor under: the kernel's and the runtime's trees
+#: (runc refuses a tmpfs over /proc, and one over /sys or /dev hides what the runtime put there),
+#: the checkout (`submissions.image.SUBMISSION_DIR`), which a tmpfs would empty, and the socket's
+#: directory (`submissions.container.SOCKET_DIR`), which one would hide from the host. Docker
+#: refuses `/` itself.
+SANDBOX_RESERVED_PATHS = ("/proc", "/sys", "/dev", "/submission", "/run/icil")
+
+
 def _tmpfs_path(value: Any) -> bool:
-    """A path `docker run --tmpfs PATH:OPTIONS` takes whole: absolute, and free of the colon that
-    starts its options, the comma between them and whitespace."""
+    """A path `docker run --tmpfs PATH:OPTIONS` takes whole and as spelled: absolute, normalised
+    (no trailing or doubled slash, no `.` or `..`), and free of the colon that starts its options,
+    the comma between them and whitespace."""
     return (
         isinstance(value, str)
         and value.startswith("/")
+        and not value.startswith("//")
+        and posixpath.normpath(value) == value
         and not any(c in value for c in ":,")
         and not any(c.isspace() for c in value)
+    )
+
+
+def _tmpfs_reserved(path: str) -> bool:
+    """Whether a tmpfs at `path` would be `/` or at or under one of `SANDBOX_RESERVED_PATHS`."""
+    return path == "/" or any(
+        path == reserved or path.startswith(reserved + "/") for reserved in SANDBOX_RESERVED_PATHS
     )
 
 
@@ -355,19 +374,27 @@ def validate_spec(doc: dict[str, Any]) -> list[str]:
     need("submission.sandbox.network == none", sandbox.get("network") == "none")
     need("submission.sandbox.read_only_root", sandbox.get("read_only_root") is True)
     tmpfs = sandbox.get("tmpfs")
-    need(
-        "submission.sandbox.tmpfs non-empty list of absolute paths",
-        isinstance(tmpfs, list) and bool(tmpfs) and all(_tmpfs_path(p) for p in tmpfs),
+    paths = (
+        tmpfs if isinstance(tmpfs, list) and tmpfs and all(_tmpfs_path(p) for p in tmpfs) else None
     )
+    need("submission.sandbox.tmpfs non-empty list of absolute paths", paths is not None)
+    if paths is not None:
+        need("submission.sandbox.tmpfs paths distinct", len(set(paths)) == len(paths))
+        need(
+            "submission.sandbox.tmpfs not / and not at or under "
+            + ", ".join(SANDBOX_RESERVED_PATHS),
+            not any(_tmpfs_reserved(p) for p in paths),
+        )
     need("submission.sandbox.tmpfs_exec bool", isinstance(sandbox.get("tmpfs_exec"), bool))
-    # A tmpfs's pages are charged to the container's memory cgroup, so a cap above memory_bytes
-    # caps nothing; the size is what keeps the executable scratch space a bounded one.
+    # A tmpfs's pages are charged to the container's memory cgroup, and each path is a tmpfs of
+    # tmpfs_bytes, so caps adding up past memory_bytes cap nothing; the size is what keeps the
+    # executable scratch space a bounded one.
     memory = sandbox.get("memory_bytes")
     need(
-        "submission.sandbox.tmpfs_bytes in 1..memory_bytes",
+        "submission.sandbox.tmpfs_bytes x len(tmpfs) in 1..memory_bytes",
         _positive_int(sandbox.get("tmpfs_bytes"))
         and _positive_number(memory)
-        and sandbox["tmpfs_bytes"] <= memory,
+        and sandbox["tmpfs_bytes"] * (len(paths) if paths else 1) <= memory,
     )
     need("submission.sandbox.user non-root", _non_root(sandbox.get("user")))
     for key in ("gpus", "memory_bytes", "cpus", "pids"):
