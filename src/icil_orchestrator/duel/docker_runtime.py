@@ -45,7 +45,7 @@ from typing import Any
 from ..ids import SubmissionRef
 from ..submissions import SubmissionError, SubmissionRejected
 from ..submissions.checks import check_repository
-from ..submissions.container import AUTHKEY_ENV, PolicyContainer
+from ..submissions.container import AUTHKEY_ENV, PolicyContainer, is_socket
 from ..submissions.docker import ContainerState, Docker
 from ..submissions.fetch import HubFetcher, LocalFetcher, RepoCache
 from ..submissions.image import base_image, build_submission_image
@@ -246,7 +246,7 @@ class DockerPolicyRuntime:
 
     def _wait_listening(self, container: PolicyContainer) -> None:
         deadline = time.monotonic() + self.start_timeout_s
-        while not container.socket_path.exists():
+        while not is_socket(container.socket_path):
             state = self.docker.state(container.name)
             if not state.running:
                 error = f": {state.error}" if state.error else ""

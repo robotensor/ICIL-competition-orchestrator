@@ -8,6 +8,8 @@ container per unit. `pytest -m container` runs the same duel with Docker itself.
 from __future__ import annotations
 
 import os
+import socket
+from types import SimpleNamespace
 
 import pytest
 
@@ -23,9 +25,15 @@ from duel_helpers import (
 from icil_orchestrator.canon import Signer
 from icil_orchestrator.duel.docker_runtime import STORE_LABEL, DockerPolicyRuntime
 from icil_orchestrator.duel.orchestrate import DuelRequest, Orchestrator
-from icil_orchestrator.duel.runtime import PolicyRuntime, RuntimeUnavailable, SubmissionRefused
+from icil_orchestrator.duel.runtime import (
+    PolicyDied,
+    PolicyRuntime,
+    RuntimeUnavailable,
+    SubmissionRefused,
+)
 from icil_orchestrator.store.verify import verify_store
 from icil_orchestrator.store.writer import Store
+from icil_orchestrator.submissions.docker import ContainerState
 from icil_orchestrator.submissions.fetch import tree_hash
 from store_helpers import make_record, publish
 from submission_helpers import FAKE_BASE_DIGEST
@@ -199,3 +207,26 @@ def test_the_seams_errors_are_the_sandboxs_mapped(spec, docker, tmp_path):
     with pytest.raises(SubmissionRefused) as refused:
         runtime.prepare(fetched, workdir=tmp_path)
     assert refused.value.step == "manifest"
+
+
+def test_only_a_socket_itself_counts_as_a_units_policy_listening(spec, docker, tmp_path):
+    """The policy writes in its socket's directory, so a link at the socket's name - even to a
+    socket that listens - is not its policy listening: the unit waits for a socket itself, and
+    fails its side when none comes in time."""
+    runtime = runtime_for(spec, docker, tmp_path)
+    runtime.docker = SimpleNamespace(state=lambda name: ContainerState(True, None))
+    runtime.start_timeout_s = 0.3
+    container = SimpleNamespace(name="icil-duel-link", socket_path=tmp_path / "policy.sock")
+    elsewhere, served = socket.socket(socket.AF_UNIX), socket.socket(socket.AF_UNIX)
+    try:
+        elsewhere.bind(str(tmp_path / "elsewhere.sock"))
+        elsewhere.listen()
+        container.socket_path.symlink_to(tmp_path / "elsewhere.sock")
+        with pytest.raises(PolicyDied, match="did not listen within 0.3s"):
+            runtime._wait_listening(container)
+        container.socket_path.unlink()
+        served.bind(str(container.socket_path))
+        runtime._wait_listening(container)
+    finally:
+        elsewhere.close()
+        served.close()
