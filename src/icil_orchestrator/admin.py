@@ -760,6 +760,18 @@ def _loopback(host: str) -> bool:
         return False
 
 
+def announce(server: AdminServer, token_env: str) -> None:
+    """Log where the intake listens and where its token comes from, and warn off an address that is
+    not loopback. `admin serve` and `daemon --admin` both say it here."""
+    if not _loopback(server.host):
+        log.warning(
+            "%s is not a loopback address: the token and every submission cross the network in "
+            "plain HTTP; serve it only on a private network",
+            server.host,
+        )
+    log.info("admin intake listening on %s (bearer token from $%s)", server.url, token_env)
+
+
 def read_token(token_env: str = DEFAULT_TOKEN_ENV, environ: Mapping[str, str] | None = None) -> str:
     """The bearer token from the variable `token_env` names, or `ValueError` saying what is wrong
     with it - never the token itself. `admin serve` and `daemon --admin` both read it here."""
@@ -810,13 +822,7 @@ def serve(
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
-    if not _loopback(server.host):
-        log.warning(
-            "%s is not a loopback address: the token and every submission cross the network in "
-            "plain HTTP; serve it only on a private network",
-            server.host,
-        )
-    log.info("admin intake listening on %s (bearer token from $%s)", server.url, token_env)
+    announce(server, token_env)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

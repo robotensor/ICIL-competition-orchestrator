@@ -496,15 +496,52 @@ def _daemon(args: argparse.Namespace) -> int:
     except ValueError as exc:
         print(f"error: {exc.args[0] if exc.args else exc}", file=sys.stderr)
         return 2
+    daemon = Daemon(
+        orchestrator, queues, idle_sleep_s=args.idle_sleep, max_backoff_s=args.max_backoff
+    )
+    intake = None
+    if args.admin:
+        from .admin import AdminServer, read_token
+
+        try:
+            # Bound now, so a port in use stops the daemon before it takes the store; serving
+            # starts once the store is held. It queues on the daemon's own queues, and publishes
+            # their snapshots through the daemon, which holds the store.
+            intake = AdminServer(
+                spec,
+                queues,
+                read_token(args.admin_token_env),
+                host=args.admin_host,
+                port=args.admin_port,
+                publish=lambda track: daemon.publish_queue(track, mirror=False),
+            )
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        except OSError as exc:
+            print(
+                f"error: cannot serve the intake on {args.admin_host}:{args.admin_port}: {exc}",
+                file=sys.stderr,
+            )
+            return 2
     _logging()
     try:
-        Daemon(
-            orchestrator, queues, idle_sleep_s=args.idle_sleep, max_backoff_s=args.max_backoff
-        ).run(once=args.once)
+        daemon.run(once=args.once, serving=None if intake is None else lambda: _serve(intake, args))
     except RuntimeError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+    finally:
+        # On a signal too: the intake stops with the loop, before the process exits.
+        if intake is not None:
+            intake.shutdown()
     return 0
+
+
+def _serve(intake: Any, args: argparse.Namespace) -> None:
+    from .admin import announce
+
+    intake.start()
+    announce(intake, args.admin_token_env)
 
 
 def _add_duel_args(p: argparse.ArgumentParser) -> None:
@@ -721,6 +758,27 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="SECONDS",
         help="after a step crashes, wait 1s, doubling with each crash in a row up to this "
         "(default: 300)",
+    )
+    dm.add_argument(
+        "--admin",
+        action="store_true",
+        help="also serve the submission intake (`admin serve`) beside the duel loop, on the "
+        "daemon's own queues, from once it holds the store until it stops",
+    )
+    dm.add_argument(
+        "--admin-host",
+        default="127.0.0.1",
+        help="address the intake binds (default: 127.0.0.1, loopback only)",
+    )
+    dm.add_argument(
+        "--admin-port", type=int, default=8799, help="the intake's port (default: 8799)"
+    )
+    dm.add_argument(
+        "--admin-token-env",
+        default="ICIL_ADMIN_TOKEN",
+        metavar="NAME",
+        help="the environment variable holding the intake's bearer token, never taken from the "
+        "command line (default: ICIL_ADMIN_TOKEN)",
     )
     _add_duel_args(dm)
     dm.set_defaults(func=cmd_daemon)
