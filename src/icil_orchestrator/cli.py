@@ -140,12 +140,13 @@ def cmd_queue(args: argparse.Namespace) -> int:
         revision = args.revision
         if is_repo(args.repo):
             # The Hub is asked once, here: a branch or a tag becomes the commit it names, a sha
-            # is confirmed to be a commit of the repository, and the queue holds the commit.
+            # is confirmed to be a commit a branch or a tag of the repository holds - not a pull
+            # request's alone - and the queue holds the commit.
             from .submissions import SubmissionError, SubmissionRejected
-            from .submissions.resolve import resolve
+            from .submissions.resolve import resolve_for_queue
 
             try:
-                revision = resolve(args.repo, revision).sha
+                revision = resolve_for_queue(args.repo, revision).sha
             except (SubmissionRejected, SubmissionError) as exc:
                 print(f"error: {exc}", file=sys.stderr)
                 return 2

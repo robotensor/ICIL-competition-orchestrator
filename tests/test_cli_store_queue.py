@@ -211,6 +211,23 @@ def test_queue_add_resolves_a_branch_or_tag_to_its_commit_once(tmp_path, capsys,
     assert hub.calls == [("org/policy", "main"), ("org/policy", "v1"), ("org/other", "2" * 40)]
 
 
+def test_queue_add_refuses_a_commit_only_a_pull_request_holds(tmp_path, capsys, monkeypatch):
+    """Anyone on the Hub can open a pull request on a public repository, and the Hub serves its
+    commit by sha: queued, it would be duelled and published as the owner's code."""
+    hub = FakeHub()
+    hub.add("org/policy", SHA_A, {"icil.yaml": 80}, "main")
+    hub.add("org/policy", SHA_2, {"icil.yaml": 80}, pr=1, parent=SHA_A)
+    monkeypatch.setattr("huggingface_hub.HfApi", lambda: hub)
+    base = ["queue", "--queue", str(tmp_path / "queue")]
+    assert main([*base, "add", "org/policy", SHA_2]) == 2
+    assert main([*base, "add", "org/policy", "refs/pr/1"]) == 2
+    err = capsys.readouterr().err
+    assert f"org/policy@{SHA_2}: no branch or tag of the repository holds this commit" in err
+    assert "org/policy@refs/pr/1: a ref under refs/, a pull request's included, is not" in err
+    assert Queue(tmp_path / "queue" / f"{TRACK}.json").entries() == []
+    assert main([*base, "add", "org/policy", SHA_A]) == 0
+
+
 def test_queue_add_refuses_what_it_cannot_queue(tmp_path, capsys, monkeypatch):
     hub = FakeHub()
     hub.add("org/policy", SHA_A, {"icil.yaml": 80}, "main")
