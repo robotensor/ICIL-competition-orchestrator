@@ -14,7 +14,10 @@ Ported from icilval's `daemon.py`. Each step takes one track's next entry and ru
 
 A duel that publishes, is refused or void, or fails for the harness finishes its entry: the queue
 moves on (as in icilval; a failed entry is queued again by hand). An interrupt does not finish it,
-which is what lets the next daemon resume it. A duel whose king lost the crown while it was stopped
+which is what lets the next daemon resume it. Nor does a harness that is only unavailable for now
+(`HarnessUnavailable`: the benchmark not installed or not the pinned one, Docker down, the Hub
+unreachable): the duel stays in progress with everything it had done, and a later step resumes it;
+a duel in progress is not resumed while its track's benchmark is not ready. A duel whose king lost the crown while it was stopped
 (`CrownMoved`) is discarded - its run moved aside, nothing published - and its challenger's entry
 goes back to the head of the queue, to duel the king who holds the crown now. A track whose
 benchmark is not installed, or not the pinned one, is skipped with a warning and its queue left as
@@ -32,7 +35,14 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from .duel.orchestrate import REQUEST_FILE, CrownMoved, DuelFailed, DuelRequest, Orchestrator
+from .duel.orchestrate import (
+    REQUEST_FILE,
+    CrownMoved,
+    DuelFailed,
+    DuelRequest,
+    HarnessUnavailable,
+    Orchestrator,
+)
 from .ids import SubmissionRef
 from .queue import InProgress, Queue, QueueEntry, Queues
 from .store.records import now_iso
@@ -93,6 +103,8 @@ class Daemon:
         queue = self.queues[track]
         in_progress = queue.reload().in_progress
         if in_progress is not None:
+            if not self._benchmarks_ready(track):
+                return False  # the duel stays in progress, for when its benchmark is back
             return self._resume(track, queue, in_progress)
         if track in self.stalled:
             return False
@@ -121,8 +133,7 @@ class Daemon:
         if queue.take(entry.key, block=req.block, event_id=req.event_id(self.spec)) is None:
             return True  # removed from the queue meanwhile
         self.publish_queue(track)
-        self._run(track, queue, req)
-        return True
+        return self._run(track, queue, req)
 
     def step_all(self) -> bool:
         """One step for every track, in turn. False when no track had anything to do."""
@@ -166,9 +177,19 @@ class Daemon:
 
     # -- helpers ----------------------------------------------------------------------------
 
-    def _run(self, track: str, queue: Queue, req: DuelRequest) -> None:
+    def _run(self, track: str, queue: Queue, req: DuelRequest) -> bool:
+        """Run `req`, which is in progress, and settle its entry. False when the harness was not
+        there to run it: the duel stays in progress, with everything it had done, to be retried."""
         try:
             result = self.orchestrator.run(req)
+        except HarnessUnavailable as exc:
+            log.warning(
+                "%s: duel %s kept in progress for a later try: %s",
+                track,
+                req.event_id(self.spec)[:16],
+                exc,
+            )
+            return False
         except CrownMoved as exc:
             entry = queue.put_back(self._entry_of(track, req))
             again = (
@@ -183,7 +204,7 @@ class Daemon:
                 again,
             )
             self.publish_queue(track)
-            return
+            return True
         except DuelFailed as exc:
             log.error("%s: duel %s failed: %s", track, req.event_id(self.spec)[:16], exc)
         else:
@@ -191,6 +212,7 @@ class Daemon:
         # Not in a `finally`: an interrupt leaves the duel in progress, to be resumed.
         queue.finish()
         self.publish_queue(track)
+        return True
 
     def _resume(self, track: str, queue: Queue, in_progress: InProgress) -> bool:
         path = Path(self.orchestrator.run_root) / track / in_progress.event_id[:16] / REQUEST_FILE
@@ -210,8 +232,7 @@ class Daemon:
             self.publish_queue(track)
             return True
         log.info("%s: resuming duel %s", track, in_progress.event_id[:16])
-        self._run(track, queue, req)
-        return True
+        return self._run(track, queue, req)
 
     def _entry_of(self, track: str, req: DuelRequest) -> QueueEntry | None:
         """The entry a stale duel goes back as when its in-progress mark kept none: the request's
@@ -247,7 +268,8 @@ class Daemon:
         queue.set_block(req.block)
         queue.start(req.event_id(self.spec), ref)
         self.publish_queue(track)
-        self._run(track, queue, req)
+        if not self._run(track, queue, req):
+            return False  # in progress still, retried once the harness is back
         if self.current_king(track) is None:
             log.error("%s: the baseline's genesis did not publish; the track waits", track)
             self.stalled.add(track)

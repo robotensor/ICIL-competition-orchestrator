@@ -28,7 +28,9 @@ returns it.
 **What stops a duel, and what that means.**
 
 - `DuelFailed`: the harness could not run it (no benchmark, no Docker, the Hub unreachable, a
-  bug). Nothing is published and nothing is decided; running it again resumes it.
+  bug). Nothing is published and nothing is decided; running it again resumes it. Its subclass
+  `HarnessUnavailable` is the part of that which may pass by itself - a benchmark not installed or
+  not the pinned one, Docker down, the Hub unreachable - which the daemon retries later.
 - Refused: the challenger's submission cannot run (a bad manifest, an image that does not build,
   no `hello`). Nothing else runs - the king is not fetched and no prompt is made - nothing is
   published, and `outcome.json` says why.
@@ -97,6 +99,11 @@ SIDES = ("challenger", "king")
 
 class DuelFailed(RuntimeError):
     """The harness could not run the duel. Nothing was published or decided."""
+
+
+class HarnessUnavailable(DuelFailed):
+    """A part of the harness the duel needs is not there for now - its benchmark not installed or
+    not the pinned one, Docker down, the Hub unreachable. Worth trying the same duel again later."""
 
 
 class CrownMoved(RuntimeError):
@@ -395,7 +402,7 @@ class Orchestrator:
                 if side == "challenger":
                     break
             except RuntimeUnavailable as exc:
-                raise DuelFailed(f"fetching the {side}: {exc}") from exc
+                raise HarnessUnavailable(f"fetching the {side}: {exc}") from exc
         self._post(duel, force=True, phase="checking", message="checking and building")
         for side, _ in sides:
             if "challenger" in refused:
@@ -410,7 +417,7 @@ class Orchestrator:
             except SubmissionRefused as exc:
                 refused[side] = str(exc)
             except RuntimeUnavailable as exc:
-                raise DuelFailed(f"checking the {side}: {exc}") from exc
+                raise HarnessUnavailable(f"checking the {side}: {exc}") from exc
         for side, ref in sides:
             duel.sides[side] = self._side_meta(duel, side, ref, refused.get(side))
         if "challenger" in refused:
@@ -461,7 +468,9 @@ class Orchestrator:
             duel.unit_defs = plugin_units(
                 self.spec, req.track, duel.duel_id, duel.size, resolve=duel.benchmarks.__getitem__
             )
-        except (BenchmarkRefused, DerivationError) as exc:
+        except BenchmarkRefused as exc:
+            raise HarnessUnavailable(str(exc)) from exc
+        except DerivationError as exc:
             raise DuelFailed(str(exc)) from exc
         view = self.spec.demo_view(req.track)
         duel.units = []

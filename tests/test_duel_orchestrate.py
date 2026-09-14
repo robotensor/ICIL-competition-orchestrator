@@ -21,8 +21,8 @@ from icil_orchestrator.canon import Signer
 from icil_orchestrator.duel.orchestrate import (
     OUTCOME_FILE,
     CrownMoved,
-    DuelFailed,
     DuelRequest,
+    HarnessUnavailable,
     Orchestrator,
 )
 from icil_orchestrator.duel.runtime import RuntimeUnavailable
@@ -466,7 +466,7 @@ def test_a_harness_that_cannot_fetch_fails_the_duel_without_deciding_it(duel_spe
     req = DuelRequest(TRACK, REPLAY_REF, ZERO_REF, "smoke", block=2)
     live = RecordingReporter(duel_spec)
     duel = orchestrator(duel_spec, store, tmp_path, NoHub(duel_spec), live=live)
-    with pytest.raises(DuelFailed, match="fetching the challenger: the Hub is unreachable"):
+    with pytest.raises(HarnessUnavailable, match="fetching the challenger: the Hub is unreachable"):
         duel.run(req)
     assert not (duel.run_dir(req) / OUTCOME_FILE).exists()
     assert "the Hub is unreachable" in (duel.run_dir(req) / "failed.txt").read_text()

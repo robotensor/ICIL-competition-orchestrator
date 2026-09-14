@@ -159,6 +159,50 @@ def test_a_resumed_duel_whose_king_lost_the_crown_requeues_its_challenger_and_ne
     assert verify_store(store.root, duel_spec).ok
 
 
+def test_a_duel_resumed_while_its_benchmark_is_missing_stays_in_progress_for_a_later_try(
+    spec_doc, write_spec, duel_spec, store, queues, tmp_path
+):
+    publish(store, duel_spec, make_record(duel_spec, "genesis", 1, ZERO_REF, None))
+    add(queues, REPLAY_REF)
+    killed = daemon(duel_spec, store, tmp_path, FakePolicyRuntime(duel_spec, crash_on_serve=4))
+    with pytest.raises(Crash):
+        killed.step(TRACK)
+    taken = queues[TRACK].reload().in_progress
+
+    doc = fake_spec_doc(spec_doc, pin={**FAKE_PIN, "version": "9.9.9"})  # mid-upgrade
+    doc["budgets"]["act_timeout_s"] = 2.0
+    upgrading = write_spec(doc, name="upgrading.json")
+    assert daemon(upgrading, store, tmp_path).step(TRACK) is False
+    assert queues[TRACK].reload().in_progress == taken, "the resumed duel was dropped"
+
+    runtime = FakePolicyRuntime(duel_spec)
+    assert daemon(duel_spec, store, tmp_path, runtime).step(TRACK) is True
+    assert [r["kind"] for r in store.iter_index(TRACK)] == ["genesis", "duel"]
+    assert len(runtime.serves) == 2, "the finished units were lost"
+    assert queues[TRACK].reload().in_progress is None
+
+
+def test_a_duel_the_hub_or_docker_cannot_serve_stays_in_progress_for_a_later_try(
+    duel_spec, store, queues, tmp_path
+):
+    from icil_orchestrator.duel.runtime import RuntimeUnavailable
+
+    class Down(FakePolicyRuntime):
+        def fetch(self, ref, *, workdir):
+            raise RuntimeUnavailable("docker is not running")
+
+    publish(store, duel_spec, make_record(duel_spec, "genesis", 1, ZERO_REF, None))
+    add(queues, REPLAY_REF)
+    add(queues, SubmissionRef.make("org/next-policy", "7" * 40))
+    for _ in range(2):  # taken, then resumed: kept both times, and the next entry never taken
+        assert daemon(duel_spec, store, tmp_path, Down(duel_spec)).step(TRACK) is False
+        state = queues[TRACK].reload()
+        assert state.in_progress is not None and len(state.entries) == 1
+    assert daemon(duel_spec, store, tmp_path).step(TRACK) is True
+    assert [r["kind"] for r in store.iter_index(TRACK)] == ["genesis", "duel"]
+    assert queues[TRACK].reload().in_progress is None
+
+
 def test_an_entry_whose_run_directory_holds_another_request_still_duels(
     duel_spec, store, queues, tmp_path
 ):
