@@ -1,0 +1,228 @@
+"""Compiling at run time inside the policy sandbox, for real. `pytest -m container`.
+
+The base image carries gcc, g++, make, Python's headers and the CUDA toolkit's nvcc, and the
+sandbox's /tmp is a tmpfs that may run what is written there - nosuid, nodev and no larger than
+`sandbox.tmpfs_bytes` - with HOME, TMPDIR and the compilers' caches pointed into it. These tests
+serve a competitor repository that compiles (`tests/fixtures/jit_policy`) through the real
+sandbox and `RemotePolicy`, and check that
+the relaxation is exactly /tmp: the same compile anywhere else meets the read-only root. The
+network, the user, the limits and what a policy cannot see are `test_submission_container.py`'s.
+
+Containers are named `icil-jit-*`, and the images built here are removed when the module ends.
+"""
+
+from __future__ import annotations
+
+import json
+import shutil
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+from icil_orchestrator.submissions.checks import check_repository
+from icil_orchestrator.submissions.container import PolicyContainer, policy_environment
+from icil_orchestrator.submissions.docker import Docker, DockerError
+from icil_orchestrator.submissions.fetch import LocalFetcher, RepoCache
+from icil_orchestrator.submissions.image import (
+    build_base_image,
+    build_submission_image,
+    sandbox_user,
+)
+from icil_policy.errors import PolicyUnavailable
+
+pytestmark = pytest.mark.container
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+JIT_POLICY = REPO_ROOT / "tests/fixtures/jit_policy"
+
+#: Run inside a container: compile a one-line C function into argv[1] and call it from there.
+COMPILE_AND_LOAD = """
+import ctypes, os, subprocess, sys
+target = sys.argv[1]
+source = os.path.join(os.environ["TMPDIR"], "one.c")
+with open(source, "w") as f:
+    f.write("int cjit_one(void) { return 1; }\\n")
+done = subprocess.run(
+    ["gcc", "-shared", "-fPIC", "-o", target, source], capture_output=True, text=True
+)
+if done.returncode:
+    sys.exit("compile failed: " + done.stderr)
+print(ctypes.CDLL(target).cjit_one())
+"""
+
+
+@pytest.fixture(scope="module")
+def docker():
+    client = Docker()
+    try:
+        client.image_id("hello-world:nonexistent")
+    except DockerError as exc:
+        pytest.skip(str(exc))
+    return client
+
+
+@pytest.fixture(scope="module")
+def base(docker, spec):
+    return build_base_image(docker, spec, REPO_ROOT)
+
+
+@pytest.fixture(scope="module")
+def cache(spec, tmp_path_factory):
+    return RepoCache(tmp_path_factory.mktemp("cache"), spec.submission["max_repo_bytes"])
+
+
+@pytest.fixture(scope="module")
+def build(docker, spec, base, cache):
+    """Build a competitor directory's image as `submission check` does; each is removed after."""
+    built = []
+
+    def build_image(directory: Path, repo: str):
+        fetcher = LocalFetcher(cache, directory)
+        fetched = fetcher.fetch(fetcher.resolve(repo, "main"))
+        manifest = check_repository(fetched.root, spec)
+        image = build_submission_image(
+            docker, spec, fetched.root, manifest, fetched.resolved.ref, base.base
+        )
+        built.append(image.tag)
+        return image
+
+    yield build_image
+    for tag in built:
+        docker.remove_image(tag)
+
+
+@pytest.fixture(scope="module")
+def jit_image(build):
+    return build(JIT_POLICY, "local/jit_policy")
+
+
+@pytest.fixture
+def jit(spec, docker, jit_image, tmp_path):
+    """The C-compiling policy in its container, past `hello`, with no GPU."""
+    container = PolicyContainer(
+        spec, docker, jit_image.tag, name="icil-jit-cjit", socket_dir=tmp_path / "s", gpus=0
+    )
+    try:
+        container.hello(spec.budgets["policy_start_seconds"])
+        yield container
+    finally:
+        container.close()
+
+
+def inside(container: PolicyContainer, *argv: str, timeout_s: float = 120):
+    return container.exec(list(argv), timeout_s=timeout_s)
+
+
+def python(container: PolicyContainer, code: str, *args: str):
+    return inside(container, "python", "-c", code, *args)
+
+
+# -- compiling ----------------------------------------------------------------------------------
+
+
+def test_a_policy_that_compiles_c_on_its_first_act_answers_with_it(spec, jit):
+    """hello, prompt, reset and act through `RemotePolicy`: the first act writes C to $TMPDIR,
+    compiles it with gcc -shared into the cache on /tmp, loads it with ctypes and answers with
+    what it computes."""
+    env = policy_environment(spec)
+    policy = jit.session
+    assert policy is not None and policy.action_type == "qpos"
+    policy.set_demonstration({"actions": np.zeros((4, 16))}, {"fps": 10})
+    policy.reset(1234)
+    empty = inside(jit, "ls", "-A", env["XDG_CACHE_HOME"])
+    assert empty.returncode == 0 and empty.stdout == "", "made at start, empty until act"
+    for obs in (np.linspace(-2.0, 2.0, 16), np.arange(16.0)):
+        action = policy.act({"qpos": obs})["action"]
+        np.testing.assert_allclose(action, 3.0 * obs + np.arange(16) + 0.5, rtol=0, atol=1e-12)
+    library = f"{env['XDG_CACHE_HOME']}/cjit/cjit.so"
+    assert inside(jit, "test", "-f", f"{env['TMPDIR']}/cjit.c").returncode == 0
+    assert inside(jit, "test", "-f", library).returncode == 0
+    maps = inside(jit, "cat", "/proc/1/maps")
+    assert library in maps.stdout, "the server, the container's first process, has it mapped"
+
+
+def test_the_same_compile_anywhere_but_tmp_meets_the_read_only_root(
+    spec, docker, build, jit, tmp_path
+):
+    """The relaxation is exactly /tmp. The policy compiling into /submission - its own checkout,
+    owned by its user - fails at act, and the served session goes on; by hand, the root and the
+    image's directories refuse the shared object, /tmp takes it and loads it, and /dev/shm, the
+    other tmpfs Docker gives a container, takes it and refuses to run it."""
+    outside = shutil.copytree(JIT_POLICY, tmp_path / "outside")
+    (outside / "icil.yaml").write_text(
+        "api: 1\npolicy: cjit.policy:CJitPolicy\nkwargs:\n  build_dir: /submission\n"
+    )
+    image = build(outside, "local/jit_outside")
+    with PolicyContainer(
+        spec, docker, image.tag, name="icil-jit-outside", socket_dir=tmp_path / "o", gpus=0
+    ) as container:
+        container.hello(spec.budgets["policy_start_seconds"])
+        with pytest.raises(PolicyUnavailable) as info:
+            container.session.act({"qpos": np.zeros(16)})
+        message = str(info.value)
+        assert "gcc failed" in message and "Read-only file system" in message, message
+        assert "/submission/cjit.so" in message
+        container.session.reset(1)  # an error reply leaves the session usable
+
+    for target in ("/one.so", "/submission/one.so", "/usr/local/lib/one.so", "/opt/one.so"):
+        done = python(jit, COMPILE_AND_LOAD, target)
+        assert done.returncode != 0 and "compile failed" in done.stderr, (target, done.stderr)
+        assert "Read-only file system" in done.stderr, (target, done.stderr)
+    scratch = python(jit, COMPILE_AND_LOAD, f"{policy_environment(spec)['TMPDIR']}/one.so")
+    assert scratch.returncode == 0 and scratch.stdout.strip() == "1", scratch.stderr
+    shm = python(jit, COMPILE_AND_LOAD, "/dev/shm/one.so")
+    assert shm.returncode != 0 and "compile failed" not in shm.stderr, shm.stderr
+    assert "failed to map segment from shared object" in shm.stderr, shm.stderr
+
+
+def test_tmp_is_a_nosuid_nodev_tmpfs_of_the_specs_size_that_runs_code(spec, jit):
+    """What /proc/mounts says inside: every `sandbox.tmpfs` path a tmpfs, nosuid and nodev, exec
+    as the spec says, of `tmpfs_bytes`; and the environment and home the container starts with."""
+    sandbox = spec.submission["sandbox"]
+    mounts = inside(jit, "cat", "/proc/mounts").stdout.splitlines()
+    for path in sandbox["tmpfs"]:
+        (line,) = [m for m in mounts if m.split()[1:2] == [path]]
+        _, _, kind, options, *_ = line.split()
+        flags = options.split(",")
+        assert kind == "tmpfs" and "rw" in flags, line
+        assert "nosuid" in flags and "nodev" in flags, line
+        assert ("noexec" not in flags) is sandbox["tmpfs_exec"], line
+        assert f"size={sandbox['tmpfs_bytes'] >> 10}k" in flags, line
+    environ = json.loads(python(jit, "import json, os\nprint(json.dumps(dict(os.environ)))").stdout)
+    served = inside(jit, "cat", "/proc/1/environ").stdout.split("\0")
+    for key, value in policy_environment(spec).items():
+        assert environ[key] == value and f"{key}={value}" in served, key
+    uid, gid = sandbox_user(spec)
+    home = python(
+        jit,
+        "import json, os, stat\n"
+        "for d in (os.environ['HOME'], os.environ['XDG_CACHE_HOME']):\n"
+        "    s = os.stat(d)\n"
+        "    print(json.dumps([s.st_uid, s.st_gid, stat.S_IMODE(s.st_mode)]))",
+    )
+    assert [json.loads(line) for line in home.stdout.splitlines()] == [[uid, gid, 0o700]] * 2
+
+
+def test_nvcc_gcc_and_the_python_headers_are_there_for_the_sandbox_user(spec, jit):
+    """No GPU in this container: nvcc still reports its version and compiles a kernel."""
+    uid, _ = sandbox_user(spec)
+    assert python(jit, "import os; print(os.getuid())").stdout.strip() == str(uid)
+    nvcc = inside(jit, "nvcc", "--version")
+    assert nvcc.returncode == 0 and "Cuda compilation tools, release 12.8" in nvcc.stdout, nvcc
+    for tool in ("gcc", "g++", "make"):
+        assert inside(jit, tool, "--version").returncode == 0, tool
+    header = python(
+        jit,
+        "import os, sysconfig\n"
+        "print(os.path.isfile(os.path.join(sysconfig.get_paths()['include'], 'Python.h')))",
+    )
+    assert header.stdout.strip() == "True", header.stderr
+    kernel = inside(
+        jit,
+        "sh",
+        "-c",
+        'printf "__global__ void fill(float *x, int i) { x[i] = 1.0f; }\\n" > "$TMPDIR/k.cu"'
+        ' && nvcc -c "$TMPDIR/k.cu" -o "$TMPDIR/k.o" && test -s "$TMPDIR/k.o"',
+    )
+    assert kernel.returncode == 0, kernel.stderr
