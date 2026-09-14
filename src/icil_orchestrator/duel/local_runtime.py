@@ -37,6 +37,7 @@ from icil_policy.manifest import load as load_manifest
 
 from ..benchmarks.subprocess_runner import benchmark_environment
 from ..ids import SubmissionRef, is_commit_sha
+from .orphans import Ledger
 from .runtime import (
     POLICY,
     FetchedSubmission,
@@ -106,6 +107,13 @@ class SubprocessPolicyRuntime:
         )
 
     # -- the seam ---------------------------------------------------------------------------
+
+    def bind(self, *, store: Path, runs: Path) -> None:
+        """Nothing to label: a policy server here is a process group, in its unit's ledger."""
+
+    def reap(self) -> list[str]:
+        """Nothing beyond the ledgers, which the orchestrator reaps."""
+        return []
 
     def directory(self, ref_or_repo: SubmissionRef | str) -> Path:
         repo = ref_or_repo if isinstance(ref_or_repo, str) else ref_or_repo.repo
@@ -210,7 +218,9 @@ class SubprocessPolicyRuntime:
         except OSError as exc:
             shutil.rmtree(sockets, ignore_errors=True)
             raise RuntimeUnavailable(f"the policy server could not be started: {exc}") from None
+        ledger = Ledger(workdir)
         try:
+            ledger.started(process.pid)
             self._wait_listening(process, address, log_file)
             served = ServedPolicy(
                 address=str(address),
@@ -223,6 +233,7 @@ class SubprocessPolicyRuntime:
             yield served, key
         finally:
             _kill_group(process)
+            ledger.ended(process.pid)
             shutil.rmtree(sockets, ignore_errors=True)
 
     def _wait_listening(self, process: subprocess.Popen, address: Path, log_file: Path) -> None:

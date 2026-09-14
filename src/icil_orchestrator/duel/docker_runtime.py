@@ -18,6 +18,11 @@ adapter and nothing else in `duel/`:
 The submission code's two errors become the seam's: `SubmissionRejected` is `SubmissionRefused`
 (the submission's own fault, with its step and reason), `SubmissionError` is `RuntimeUnavailable`.
 
+Every container is labelled with the store and the run root it serves (`bind`), besides the
+sandbox's own label, so that `reap` - called by the orchestrator on start, holding the store's
+lock - can remove the containers an orchestrator of the same store killed outright left running,
+and no one else's.
+
 Whose a container's end is comes from `docker inspect`: a container that exited non-zero, or that
 the kernel killed for its sandbox's memory limit (`State.OOMKilled`), ended by its policy's doing;
 a container Docker no longer knows (removed from outside, or Docker itself gone) did not. `docker
@@ -67,6 +72,24 @@ MAX_LOG_BYTES = 16 << 20
 POLL_S = 0.1
 #: How long a container whose client has gone gets to stop on its own before its state is read.
 EXIT_GRACE_S = 10.0
+#: The labels naming what a container was started for: the store's root and the run root.
+STORE_LABEL = "icil.duel.store"
+RUNS_LABEL = "icil.duel.runs"
+
+
+class _Labelled:
+    """A docker client that adds `labels` to every `docker run` and is otherwise the client."""
+
+    def __init__(self, docker: Any, labels: Mapping[str, str]) -> None:
+        self._docker = docker
+        self._labels = dict(labels)
+
+    def run(self, args: Any, *, env: Mapping[str, str] | None = None) -> str:
+        extra = [a for k, v in sorted(self._labels.items()) for a in ("--label", f"{k}={v}")]
+        return self._docker.run([*extra, *args], env=env)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._docker, name)
 
 
 class DockerPolicyRuntime:
@@ -95,8 +118,41 @@ class DockerPolicyRuntime:
         self.hub_api = hub_api
         self.build_timeout_s = build_timeout_s
         self.start_timeout_s = float(spec.budgets["policy_start_seconds"])
+        #: Put on every container this runtime starts; empty until `bind`.
+        self.labels: dict[str, str] = {}
 
     # -- the seam ---------------------------------------------------------------------------
+
+    def bind(self, *, store: Path, runs: Path) -> None:
+        self.labels = {
+            STORE_LABEL: str(Path(store).resolve()),
+            RUNS_LABEL: str(Path(runs).resolve()),
+        }
+
+    def reap(self) -> list[str]:
+        """Remove every `icil-duel-*` container labelled with this runtime's store and run root:
+        with the store's lock held, none of them is a duel still running. Best effort: a Docker
+        that cannot list them reaps nothing, and the duel that follows says why."""
+        run = getattr(self.docker, "_run", None)
+        if not self.labels or run is None:
+            return []
+        filters = [
+            a for k, v in sorted(self.labels.items()) for a in ("--filter", f"label={k}={v}")
+        ]
+        try:
+            done = run(
+                ["ps", "--all", *filters, "--format", "{{.Names}}"], check=False, timeout_s=60
+            )
+        except SubmissionError as exc:
+            log.warning("could not list the containers a killed orchestrator left: %s", exc)
+            return []
+        if done.returncode != 0:
+            log.warning("could not list the containers a killed orchestrator left: %s", done.stderr)
+            return []
+        names = [n for n in done.stdout.split() if n.startswith(f"{CONTAINER_PREFIX}-")]
+        for name in names:
+            self.docker.remove(name)
+        return names
 
     def resolve(self, repo: str, revision: str) -> SubmissionRef:
         with _mapped():
@@ -173,7 +229,7 @@ class DockerPolicyRuntime:
         sockets = Path(tempfile.mkdtemp(prefix=f"{CONTAINER_PREFIX}-"))
         container = PolicyContainer(
             self.spec,
-            self.docker,
+            _Labelled(self.docker, self.labels),  # type: ignore[arg-type]
             image,
             name=f"{CONTAINER_PREFIX}-{ref.key}-{secrets.token_hex(3)}",
             socket_dir=sockets,

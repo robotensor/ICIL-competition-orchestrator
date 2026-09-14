@@ -233,6 +233,32 @@ def test_units_left_when_the_duel_runs_out_of_time_are_void(
     assert runtime.serves == []
 
 
+def test_an_interrupted_unit_is_reaped_and_moved_aside_before_it_runs_again(
+    duel_spec, fake, units, prompts, tmp_path
+):
+    import subprocess
+
+    from icil_orchestrator.duel.orphans import Ledger
+
+    first = units[0]["unit_id"]
+    unit_dir = tmp_path / "challenger" / first
+    unit_dir.mkdir(parents=True)
+    (unit_dir / "runs.log").write_text("12345\n")
+    orphan = subprocess.Popen(["sleep", "60"], start_new_session=True)
+    try:
+        Ledger(unit_dir).started(orphan.pid)  # what a killed orchestrator's benchmark left
+        results = side(duel_spec, fake, units, prompts, tmp_path, FakePolicyRuntime(duel_spec))
+        assert orphan.wait(timeout=10) == -9, "the orphan was not ended"
+    finally:
+        if orphan.poll() is None:
+            orphan.kill()
+            orphan.wait()
+    assert results[first]["success"] is True
+    aside = unit_dir.with_name(f"{first}.interrupted-1")
+    assert (aside / "runs.log").read_text() == "12345\n"
+    assert runs(tmp_path, first) == 1 and not (unit_dir / "pids.json").exists()
+
+
 def test_a_unit_the_duel_already_holds_void_is_not_played(
     duel_spec, fake, units, prompts, tmp_path
 ):

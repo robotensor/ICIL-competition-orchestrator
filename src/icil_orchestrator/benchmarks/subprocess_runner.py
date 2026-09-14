@@ -176,13 +176,21 @@ class Completed:
 
 
 def run_argv(
-    argv: list[str], *, env: Mapping[str, str], timeout_s: float, log_path: Path
+    argv: list[str],
+    *,
+    env: Mapping[str, str],
+    timeout_s: float,
+    log_path: Path,
+    ledger: Any = None,
 ) -> Completed:
     """Run `argv` to completion or to `timeout_s`, its output going to `log_path`.
 
     It runs in its own session, and whatever ends the unit - a clean exit, a crash, the timeout, or
     the orchestrator itself being interrupted - the whole process group is killed on the way out: a
     simulator that forked a renderer must not outlive its unit and hold the GPU for the next one.
+    Only a kill that runs no `finally` escapes that; for it, `ledger` (anything with
+    `started(pid)` and `ended(pid)`) is told of the group while it runs, so whoever starts next
+    can find and end it.
     """
     log_path.parent.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
@@ -201,6 +209,8 @@ def run_argv(
         returncode: int | None = None
         timed_out = False
         try:
+            if ledger is not None:
+                ledger.started(proc.pid)
             returncode = proc.wait(timeout=timeout_s)
         except subprocess.TimeoutExpired:
             timed_out = True
@@ -208,6 +218,8 @@ def run_argv(
             # The session is the benchmark's alone (start_new_session), so this reaches only what
             # it started - including children still running after the direct child exited.
             _kill_group(proc)
+            if ledger is not None:
+                ledger.ended(proc.pid)
     return Completed(returncode, timed_out, None, time.monotonic() - started, _tail(log_path))
 
 
@@ -244,9 +256,10 @@ def run_unit(
     timeout_s: float,
     env: Mapping[str, str] | None = None,
     extra: Mapping[str, Any] | None = None,
+    ledger: Any = None,
 ) -> Outcome:
     """One unit against a served policy, start to finish. Every failure is a void outcome, never an
-    exception: one bad unit must not lose the rest of the duel.
+    exception: one bad unit must not lose the rest of the duel. `ledger` is `run_argv`'s.
 
     `env` is the subprocess's whole environment; without it the benchmark gets
     `benchmark_environment(os.environ, authkey_env)`, not everything the orchestrator holds.
@@ -291,7 +304,7 @@ def run_unit(
         except OSError as exc:
             return void(f"could not clear a stale {stale}: {exc}")
 
-    done = run_argv(argv, env=environ, timeout_s=timeout_s, log_path=out / LOG_FILE)
+    done = run_argv(argv, env=environ, timeout_s=timeout_s, log_path=out / LOG_FILE, ledger=ledger)
     if done.start_error is not None:
         return void(f"could not start the benchmark: {done.start_error}")
     if done.timed_out:

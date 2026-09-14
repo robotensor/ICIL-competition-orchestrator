@@ -147,6 +147,7 @@ class Daemon:
         with store_lock(self.store.root):
             key = self.store.signer.verify_key_hex if self.store.signer else "?"
             log.info("orchestrator %s serving %s", key[:12], self.store.root)
+            self.orchestrator.reap_orphans()
             for track in self.queues.tracks:
                 self.publish_queue(track)
             crashes = 0

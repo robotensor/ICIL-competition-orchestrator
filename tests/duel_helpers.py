@@ -118,6 +118,17 @@ class InspectingFakeDocker(FakeDocker):
     def _run(self, args, *, input_text=None, extra_env=None, timeout_s=None, check=True):
         args = list(args)
         names = {run[run.index("--name") + 1] for run in self.runs}
+        if args[0] == "ps":
+            wanted = {
+                args[i + 1].removeprefix("label=") for i, a in enumerate(args) if a == "--filter"
+            }
+            listed = []
+            for run in self.runs:
+                name = run[run.index("--name") + 1]
+                labels = {run[i + 1] for i, a in enumerate(run) if a == "--label"}
+                if name not in self.removed and wanted <= labels:
+                    listed.append(name)
+            return subprocess.CompletedProcess(args, 0, "\n".join(listed) + "\n", "")
         if args[0] == "inspect" and "{{.State.OOMKilled}}" in args:
             name = args[-1]
             found = name in names and name not in self.removed

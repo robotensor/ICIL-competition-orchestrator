@@ -6,6 +6,7 @@ down so that a unit is surely under way, and look in /proc for what it left runn
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import signal
@@ -27,21 +28,26 @@ SLOW_REF = SubmissionRef.make("org/slow-policy", "8" * 40)
 SLOW_ACT_S = 0.6
 
 
-@pytest.fixture
-def slow_policy(tmp_path) -> Path:
-    """The replay example, sleeping in every `act`."""
+def slowed(tmp_path: Path, act_s: float, flag: Path | None = None) -> Path:
+    """The replay example, sleeping `act_s` in every `act` - while `flag` exists, if given."""
     root = tmp_path / "slow"
     shutil.copytree(REPLAY, root, ignore=shutil.ignore_patterns("__pycache__"))
     policy = root / "replay" / "policy.py"
     text = policy.read_text()
-    text = text.replace("import numpy as np", "import time\n\nimport numpy as np", 1)
+    text = text.replace("import numpy as np", "import os\nimport time\n\nimport numpy as np", 1)
+    when = f"os.path.exists({str(flag)!r})" if flag is not None else "True"
     text = text.replace(
         "        k = min(self._step,",
-        f"        time.sleep({SLOW_ACT_S})\n        k = min(self._step,",
+        f"        if {when}:\n            time.sleep({act_s})\n        k = min(self._step,",
         1,
     )
     policy.write_text(text)
     return root
+
+
+@pytest.fixture
+def slow_policy(tmp_path) -> Path:
+    return slowed(tmp_path, SLOW_ACT_S)
 
 
 def alive(pid: int) -> bool:
@@ -67,32 +73,33 @@ def processes_running(text: str) -> list[int]:
     return found
 
 
-def start_duel(spec, tmp_path: Path, slow: Path) -> subprocess.Popen:
-    root, key = tmp_path / "store", tmp_path / "keys" / "orchestrator.ed25519"
-    assert main(["--spec", str(spec.path), "store", "init", str(root), "--key", str(key)]) == 0
-    env = {**os.environ, "PYTHONPATH": os.pathsep.join([str(FAKE_SITE), *sys.path])}
-    argv = [
-        sys.executable,
-        "-m",
-        "icil_orchestrator",
+def duel_args(spec, tmp_path: Path, slow: Path) -> list[str]:
+    return [
         "--spec",
         str(spec.path),
         "duel",
         "--challenger",
         SLOW_REF.entry,
         "--store",
-        str(root),
+        str(tmp_path / "store"),
         "--run-dir",
         str(tmp_path / "runs"),
         "--queue",
         str(tmp_path / "queue"),
         "--key",
-        str(key),
+        str(tmp_path / "keys" / "orchestrator.ed25519"),
         "--runtime",
         "local",
         "--local",
         f"{SLOW_REF.repo}={slow}",
     ]
+
+
+def start_duel(spec, tmp_path: Path, slow: Path) -> subprocess.Popen:
+    root, key = tmp_path / "store", tmp_path / "keys" / "orchestrator.ed25519"
+    assert main(["--spec", str(spec.path), "store", "init", str(root), "--key", str(key)]) == 0
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join([str(FAKE_SITE), *sys.path])}
+    argv = [sys.executable, "-m", "icil_orchestrator", *duel_args(spec, tmp_path, slow)]
     log = open(tmp_path / "duel.log", "wb")  # noqa: SIM115 - the child writes it until it exits
     return subprocess.Popen(argv, env=env, stdout=log, stderr=subprocess.STDOUT, cwd=tmp_path)
 
@@ -139,3 +146,48 @@ def test_a_signal_tears_down_the_units_policy_and_benchmark_before_the_duel_exit
     assert left == [], f"left running: {left}\n{log}"
     assert code == 128 + signum, log
     assert f"stopped by {signal.Signals(signum).name}" in log
+
+
+def test_what_a_duel_killed_outright_left_is_reaped_before_its_unit_runs_again(
+    duel_spec, fake_installed, tmp_path, monkeypatch, capsys
+):
+    """SIGKILL runs no teardown. The next start ends the orphans first - while they are still
+    playing the unit - and the unit runs again in a directory of its own."""
+    from icil_orchestrator.duel.orchestrate import Orchestrator
+
+    flag = tmp_path / "slow.flag"
+    flag.touch()
+    slow = slowed(tmp_path, 1.5, flag)  # an orphan takes seconds to finish its unit on its own
+    process = start_duel(duel_spec, tmp_path, slow)
+    capsys.readouterr()  # what `store init` printed
+    left: list[int] = []
+    seen = []
+    try:
+        benchmark, policies = mid_unit(process, tmp_path, slow)
+        left = [benchmark, *policies]
+        process.kill()
+        process.wait(timeout=30)
+        unit_dir = sorted((tmp_path / "runs").glob(f"{TRACK}/*/challenger/*/runs.log"))[0].parent
+        assert all(alive(pid) for pid in left), "the kill orphaned nothing to reap"
+
+        reap_orphans = Orchestrator.reap_orphans
+
+        def reaping(self):
+            before = [pid for pid in left if alive(pid)]
+            reaped = reap_orphans(self)
+            seen.append((before, [pid for pid in left if alive(pid)], reaped))
+            flag.unlink()  # the rest of the duel at full speed
+            return reaped
+
+        monkeypatch.setattr(Orchestrator, "reap_orphans", reaping)
+        assert main(duel_args(duel_spec, tmp_path, slow)) == 0, capsys.readouterr().err
+    finally:
+        reap([pid for pid in left if alive(pid)])
+    ((before, after, reaped),) = seen
+    assert before == left and after == [], "the orphans were not ended on start"
+    assert any(name.startswith("process group ") for name in reaped)
+    aside = unit_dir.with_name(unit_dir.name + ".interrupted-1")
+    assert (aside / "runs.log").is_file()
+    assert not (aside / "result.json").exists(), "an orphan finished the unit after all"
+    assert (unit_dir / "runs.log").read_text().count("\n") == 1
+    assert json.loads(capsys.readouterr().out)["status"] == "published"

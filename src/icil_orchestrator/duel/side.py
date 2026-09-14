@@ -12,7 +12,9 @@ order. For each one:
 5. the unit's record is appended to `<side_dir>/results.jsonl` and handed to `on_unit`.
 
 A restarted duel reads `results.jsonl` first and runs only the units it does not hold, so a unit
-that finished is never run twice; the side's budget counts the wall time already recorded.
+that finished is never run twice; the side's budget counts the wall time already recorded. A unit
+whose directory exists without a result was cut off by a kill: the process groups its ledger names
+are ended (`orphans`) and its directory moved aside before the unit is played again.
 
 **Whose a unit is.** A unit is void - void for both sides, since the duel merges it so - only for
 a cause outside either submission. Anything a side's own submission brings about is that side's
@@ -50,6 +52,7 @@ from typing import Any
 from ..benchmarks.subprocess_runner import Outcome, benchmark_environment, run_unit, voided
 from ..canon import sha256_file
 from .materialize import Materialized
+from .orphans import Ledger, move_aside, reap_ledger
 from .runtime import (
     CAUSES,
     HARNESS,
@@ -192,6 +195,13 @@ def run_side(
         elif (changed := prompt.changed()) is not None:
             outcome = voided(f"no prompt: {changed}")
         else:
+            unit_dir = side_dir / unit_id
+            if unit_dir.exists():
+                # An attempt that never recorded its result: its orchestrator was killed. What it
+                # left running is ended, and what it wrote is kept apart from this attempt.
+                reap_ledger(unit_dir)
+                moved = move_aside(unit_dir, "interrupted")
+                log.warning("%s %s: an interrupted attempt is kept at %s", side, unit_id, moved)
             if on_start is not None:
                 on_start(unit)
             outcome = _play(
@@ -247,6 +257,7 @@ def _play(
                 timeout_s=timeout_s,
                 env=env,
                 extra=extra,
+                ledger=Ledger(unit_dir),
             )
             end = served.died()
     except PolicyDied as exc:

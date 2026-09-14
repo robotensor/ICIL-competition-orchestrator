@@ -140,6 +140,16 @@ class PolicyRuntime(Protocol):
     #: `docker` or `local`, recorded with every duel it serves.
     name: str
 
+    def bind(self, *, store: Path, runs: Path) -> None:
+        """The store and the run root this runtime serves duels for, told once by the orchestrator:
+        whatever it starts that could outlive a killed orchestrator is marked with them."""
+        ...
+
+    def reap(self) -> list[str]:
+        """Remove what an orchestrator of the same store and run root started and could not tear
+        down (it was killed); the names of what was removed. Called holding the store's lock."""
+        ...
+
     def resolve(self, repo: str, revision: str) -> SubmissionRef: ...
 
     def fetch(self, ref: SubmissionRef, *, workdir: Path) -> FetchedSubmission: ...

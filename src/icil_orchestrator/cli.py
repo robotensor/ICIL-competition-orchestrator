@@ -416,6 +416,7 @@ def _duel(args: argparse.Namespace) -> int:
     try:
         # A daemon holds this lock for its whole life, so a duel here never runs beside one.
         with store_lock(store.root):
+            orchestrator.reap_orphans()
             head = store.head(track) or {}
             king = SubmissionRef.from_dict(head.get("king"))
             if king is not None and king.key == challenger.key:

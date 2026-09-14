@@ -21,7 +21,7 @@ from duel_helpers import (
     RecordingReporter,
 )
 from icil_orchestrator.canon import Signer
-from icil_orchestrator.duel.docker_runtime import DockerPolicyRuntime
+from icil_orchestrator.duel.docker_runtime import STORE_LABEL, DockerPolicyRuntime
 from icil_orchestrator.duel.orchestrate import DuelRequest, Orchestrator
 from icil_orchestrator.duel.runtime import PolicyRuntime, RuntimeUnavailable, SubmissionRefused
 from icil_orchestrator.store.verify import verify_store
@@ -114,6 +114,7 @@ def test_a_duel_runs_through_the_sandbox_one_container_per_unit(spec, docker, tm
     assert all(name.startswith("icil-duel-") for name in names)
     assert sorted(docker.removed) == sorted(names) and docker.processes == {}
     for args in docker.runs:
+        assert f"{STORE_LABEL}={store.root.resolve()}" in args, "a container was not labelled"
         assert args[args.index("--network") + 1] == "none"
         mounts = [a for a in args if a.startswith("type=bind")]
         assert len(mounts) == 1, "a unit's container mounted more than its socket directory"
@@ -157,6 +158,29 @@ def test_a_container_that_ends_by_its_own_doing_fails_its_unit(spec, docker, tmp
     assert said in first["challenger_error"]
     assert second["challenger_success"] is True and third["challenger_success"] is True
     assert result.record["void"] == 0 and verify_store(store.root, spec).ok
+
+
+def test_a_container_a_killed_orchestrator_left_is_reaped_by_the_next_one_of_its_store(
+    spec, docker, tmp_path
+):
+    held, names = [], []
+    for store in ("store", "other-store"):
+        runtime = runtime_for(spec, docker, tmp_path)
+        runtime.bind(store=tmp_path / store, runs=tmp_path / "runs")
+        fetched = runtime.fetch(REPLAY_REF, workdir=tmp_path / store)
+        prepared = runtime.prepare(fetched, workdir=tmp_path / store / "check")
+        serving = runtime.serve(prepared, workdir=tmp_path / store / "fp-000")
+        serving.__enter__()  # and never left: its orchestrator was killed
+        held.append(serving)
+        run = docker.runs[-1]
+        assert f"{STORE_LABEL}={(tmp_path / store).resolve()}" in run
+        names.append(run[run.index("--name") + 1])
+
+    restarted = runtime_for(spec, docker, tmp_path)
+    restarted.bind(store=tmp_path / "store", runs=tmp_path / "runs")
+    assert restarted.reap() == [names[0]]
+    assert names[0] in docker.removed and names[0] not in docker.processes
+    assert names[1] in docker.processes, "another store's container was reaped"
 
 
 def test_the_seams_errors_are_the_sandboxs_mapped(spec, docker, tmp_path):

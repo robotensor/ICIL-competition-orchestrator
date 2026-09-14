@@ -40,6 +40,7 @@ from typing import Any
 from ..benchmarks.api import DEMONSTRATION_CLIP, PROMPT_FILE, RESULT_FILE
 from ..benchmarks.subprocess_runner import benchmark_environment, outcome_from, run_argv
 from ..canon import sha256_file
+from .orphans import Ledger, reap_ledger
 
 log = logging.getLogger(__name__)
 
@@ -212,13 +213,16 @@ def materialize_unit(
     if not argv:
         return void("materialize_command returned an empty argv")
     out_dir.mkdir(parents=True, exist_ok=True)
+    reap_ledger(out_dir)  # an expert a killed orchestrator left running must not write here
     for stale in (PROMPT_FILE, DEMONSTRATION_CLIP, RESULT_FILE):
         try:
             (out_dir / stale).unlink(missing_ok=True)
         except OSError as exc:
             return void(f"could not clear a stale {stale}: {exc}")
 
-    done = run_argv(argv, env=env, timeout_s=timeout_s, log_path=out_dir / LOG_FILE)
+    done = run_argv(
+        argv, env=env, timeout_s=timeout_s, log_path=out_dir / LOG_FILE, ledger=Ledger(out_dir)
+    )
     if done.start_error is not None:
         return void(f"could not start: {done.start_error}")
     if done.timed_out:

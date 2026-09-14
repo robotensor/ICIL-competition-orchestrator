@@ -84,6 +84,7 @@ from ..store.records import (
 from ..store.writer import Store, atomic_write_json, read_json
 from . import score
 from .materialize import Materialized, Prompt, materialize_units
+from .orphans import move_aside, reap_run_root
 from .runtime import PolicyRuntime, PreparedSubmission, RuntimeUnavailable, SubmissionRefused
 from .side import read_results, run_side
 
@@ -116,17 +117,6 @@ class CrownMoved(RuntimeError):
         self.reason = reason
         self.moved_to = moved_to
         super().__init__(reason)
-
-
-def move_aside(run_dir: Path, why: str) -> Path | None:
-    """`run_dir` renamed to `<run_dir>.<why>-<n>`, the first `n` free; None when there was none."""
-    if not run_dir.exists():
-        return None
-    n = 1
-    while (target := run_dir.with_name(f"{run_dir.name}.{why}-{n}")).exists():
-        n += 1
-    run_dir.rename(target)
-    return target
 
 
 @dataclass(frozen=True)
@@ -268,6 +258,7 @@ class Orchestrator:
         self.store = store
         self.runtime = runtime
         self.run_root = Path(run_root)
+        runtime.bind(store=store.root, runs=self.run_root)
         self.live = live or LiveReporter(spec, None, None)
         self.mirror = mirror
         if resolve is None:
@@ -279,6 +270,16 @@ class Orchestrator:
         self.resolve = resolve
 
     # -- the run directory ------------------------------------------------------------------
+
+    def reap_orphans(self) -> list[str]:
+        """End what an orchestrator of this store and run root, killed outright, left running:
+        its policy containers, and the process groups its undecided duels' ledgers name. Call it
+        holding the store's lock, before any duel runs; what was reaped, by name."""
+        reaped = [f"container {name}" for name in self.runtime.reap()]
+        reaped += [f"process group {pgid}" for pgid in reap_run_root(self.run_root)]
+        if reaped:
+            log.warning("reaped what a killed orchestrator left running: %s", ", ".join(reaped))
+        return reaped
 
     def run_dir(self, req: DuelRequest) -> Path:
         return self.run_root / req.track / req.event_id(self.spec)[:16]
