@@ -75,6 +75,8 @@ def test_a_smoke_duel_through_the_sandbox_publishes_the_replay_challenger_winnin
         str(root),
         "--run-dir",
         str(tmp_path / "runs"),
+        "--queue",
+        str(tmp_path / "queue"),
         "--key",
         str(key),
         "--runtime",
