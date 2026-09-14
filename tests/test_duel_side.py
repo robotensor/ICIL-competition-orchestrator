@@ -386,3 +386,66 @@ def test_a_unit_whose_harness_runs_long_is_written_void_before_its_benchmark_is_
     assert (record["success"], record["void"]) == (None, True)
     assert record["error"].startswith("fake: the unit ran out of time during"), record["error"]
     assert 0 < given(tmp_path, units[0]["unit_id"])["unit_timeout_s"] <= 6.0
+
+
+def slow_policy(root: Path, act_s: float) -> Path:
+    """A competitor repository replaying the demonstration, taking `act_s` over every act."""
+    (root / "slow").mkdir(parents=True)
+    (root / "slow" / "__init__.py").touch()
+    (root / "slow" / "policy.py").write_text(
+        "import time\n"
+        "import numpy as np\n\n\n"
+        "class Policy:\n"
+        "    action_type = 'qpos'\n\n"
+        "    def set_demonstration(self, arrays, info):\n"
+        "        self.actions = np.array(arrays['actions'], dtype=np.float64)\n\n"
+        "    def reset(self, seed):\n"
+        "        self.k = 0\n\n"
+        "    def act(self, observation):\n"
+        f"        time.sleep({act_s!r})\n"
+        "        k, self.k = min(self.k, len(self.actions) - 1), self.k + 1\n"
+        "        return {'action': self.actions[k]}\n"
+    )
+    (root / "icil.yaml").write_text("api: 1\npolicy: slow.policy:Policy\n")
+    return root
+
+
+def test_a_slow_policy_that_uses_up_its_budget_fails_its_unit_rather_than_voiding_it(
+    spec_doc, write_spec, fake, units, prompts, tmp_path
+):
+    """Every act is well within `act_timeout_s`, but together they run past the policy's budget:
+    the benchmark ends the unit on the policy, and the side fails it. Were the budget the unit's
+    whole time, the benchmark's deadline would come first, and the unit be void for both sides."""
+    from icil_orchestrator.ids import SubmissionRef
+
+    slow = SubmissionRef.make("org/slow-policy", "6" * 40)
+    doc = fake_spec_doc(spec_doc)
+    doc["budgets"].update(act_timeout_s=2.0, policy_budget_seconds=3.0)
+    small = write_spec(doc, name="small-budget-spec.json")
+    runtime = FakePolicyRuntime(small, {slow.repo: slow_policy(tmp_path / "slow", act_s=1.0)})
+    results = side(small, fake, units[:1], prompts, tmp_path, runtime, ref=slow)
+    record = results[units[0]["unit_id"]]
+    assert (record["success"], record["void"]) == (False, False), record["error"]
+    assert "its whole budget of" in record["error"]
+    limits = given(tmp_path, units[0]["unit_id"])
+    reserve = fake.info()["limits"]["result_reserve_s"]
+    assert 0 < limits["policy_budget_s"] < 3.0 < limits["unit_timeout_s"] - reserve
+
+
+def test_a_policy_that_takes_its_whole_budget_to_start_fails_its_unit_unplayed(
+    spec_doc, write_spec, fake, units, prompts, tmp_path
+):
+    doc = fake_spec_doc(spec_doc)
+    doc["budgets"].update(act_timeout_s=2.0, policy_budget_seconds=1.0)
+    tiny = write_spec(doc, name="tiny-budget-spec.json")
+
+    class SlowStart(FakePolicyRuntime):
+        def serve(self, prepared, *, workdir):
+            time.sleep(1.5)  # loading weights before it listens
+            return super().serve(prepared, workdir=workdir)
+
+    results = side(tiny, fake, units[:1], prompts, tmp_path, SlowStart(tiny))
+    record = results[units[0]["unit_id"]]
+    assert (record["success"], record["void"]) == (False, False)
+    assert "to start, its whole budget of 1s for the unit" in record["error"]
+    assert runs(tmp_path, units[0]["unit_id"]) == 0, "the benchmark ran after the budget was gone"

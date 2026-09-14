@@ -14,11 +14,12 @@ the replay example wins and the zero example loses. A policy that is lost or doe
 time ends the episode void with `void_cause: "policy"`, as the RoboTwin plugin reports it: the
 orchestrator counts that as the side's failure, not a void for both.
 
-It keeps time as RoboTwin's run-unit does. With `--unit-timeout-s`, no call to the policy runs
-within `RESULT_RESERVE_S` of that timeout, counted from the command's start, and a call cut short
-there voids the unit on the harness, written before whoever started the command kills it.
-`--step-s` is how long the "simulator" takes over each step, never past that deadline: a harness
-that runs long.
+It keeps time as RoboTwin's run-unit does. Each call gets the least of `--act-timeout-s`, what is
+left of `--policy-budget-s` (all the calls' time together) and what is left before the unit's
+deadline: `RESULT_RESERVE_S` before `--unit-timeout-s`, counted from the command's start. A call
+the budget cuts short voids the unit on the policy; one the deadline cuts short, on the harness,
+written before whoever started the command kills it. `--step-s` is how long the "simulator" takes
+over each step, never past that deadline: a harness that runs long.
 
 `--behaviour policy_then_void` drives the policy the same way and then reports the unit void, with
 `--void-cause` as its `void_cause` when one is given: a simulator that lost the scene after the
@@ -147,10 +148,19 @@ def run(args: argparse.Namespace) -> int:
 
 
 class OutOfTime(Exception):
-    """A call to the policy the unit's deadline cut short: the harness's time ran out."""
+    """A call to the policy cut short by the policy's budget, which is the policy's own, or by the
+    unit's deadline, which cut into the harness's time."""
 
-    def __init__(self, op: str) -> None:
-        super().__init__(f"the unit ran out of time during {op}")
+    def __init__(self, op: str, bound: str, used: float, budget: float) -> None:
+        self.cause = "policy" if bound == "budget" else "harness"
+        if bound == "budget":
+            message = (
+                f"policy: {op}: its calls took {used:.1f}s, its whole budget of {budget:g}s "
+                "for the unit"
+            )
+        else:
+            message = f"the unit ran out of time during {op}"
+        super().__init__(message)
 
 
 def drive_policy(args: argparse.Namespace) -> dict:
@@ -162,6 +172,8 @@ def drive_policy(args: argparse.Namespace) -> dict:
     deadline = math.inf
     if args.unit_timeout_s is not None:
         deadline = STARTED + args.unit_timeout_s - RESULT_RESERVE_S
+    budget = math.inf if args.policy_budget_s is None else args.policy_budget_s
+    used = 0.0
     with np.load(args.prompt) as data:
         arrays = {name: data[name] for name in data.files}
     meta = json.loads(bytes(arrays.pop("meta")).decode())  # privileged: stays on this side
@@ -173,18 +185,24 @@ def drive_policy(args: argparse.Namespace) -> dict:
         with RemotePolicy(args.policy_address, key, timeout_s=args.act_timeout_s) as policy:
 
             def call(op, method, *call_args):
-                limit = min(args.act_timeout_s, deadline - time.monotonic())
+                nonlocal used
+                left, until = budget - used, deadline - time.monotonic()
+                limit, bound = args.act_timeout_s, "call"
+                if limit > min(left, until):
+                    limit, bound = (left, "budget") if left <= until else (until, "deadline")
                 if limit <= 0:
-                    raise OutOfTime(op)
+                    raise OutOfTime(op, bound, used, budget)
                 policy.timeout_s = limit
                 began = time.monotonic()
                 try:
                     return method(*call_args)
                 except PolicyUnavailable:
-                    cut = limit < args.act_timeout_s and time.monotonic() - began >= limit
-                    if cut:
-                        raise OutOfTime(op) from None
+                    spent = time.monotonic() - began
+                    if bound != "call" and spent >= limit:
+                        raise OutOfTime(op, bound, used + spent, budget) from None
                     raise
+                finally:
+                    used += time.monotonic() - began
 
             call("hello", policy.hello)
             info = {"frequency": 10.0, "cameras": ["head_camera"]}
@@ -195,7 +213,7 @@ def drive_policy(args: argparse.Namespace) -> dict:
                 taken.append(np.atleast_2d(np.asarray(action, dtype=np.float64))[0])
                 time.sleep(max(0.0, min(args.step_s, deadline - time.monotonic())))
     except OutOfTime as exc:
-        error, cause = str(exc), "harness"
+        error, cause = str(exc), exc.cause
     except PolicyUnavailable as exc:
         error, cause = f"policy: {exc}", "policy"
     if error is not None:
@@ -239,6 +257,7 @@ def main() -> int:
     r.add_argument("--behaviour", default="policy")
     r.add_argument("--act-timeout-s", type=float, default=30.0)
     r.add_argument("--unit-timeout-s", type=float, default=None)
+    r.add_argument("--policy-budget-s", type=float, default=None)
     r.add_argument("--step-s", type=float, default=0.0)
     r.add_argument("--void-cause", default="")
     args = parser.parse_args()

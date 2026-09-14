@@ -8,8 +8,10 @@ order. For each one:
 3. the benchmark's `run_command` runs as a subprocess with the allow-listed environment plus the
    policy's key variable, within `min(budgets.unit_wall_seconds, what is left of the side's
    budget)` less the time the policy took to start, and its result is read back as an `Outcome`.
-   `run_command` is given `act_timeout_s` and that subprocess timeout as `unit_timeout_s`, so the
-   benchmark can stop calling the policy in time to write why a unit it cannot finish ended;
+   `run_command` is given `act_timeout_s`; that subprocess timeout as `unit_timeout_s`, so the
+   benchmark can stop calling the policy in time to write why a unit it cannot finish ended; and
+   `policy_budget_s`, what starting the policy left of `budgets.policy_budget_seconds`, never more
+   than that timeout less the benchmark's result reserve (`info()["limits"]["result_reserve_s"]`);
 4. whose the outcome is, when it is not a scored one, is decided (`attribute`);
 5. the unit's record is appended to `<side_dir>/results.jsonl` and handed to `on_unit`.
 
@@ -26,16 +28,16 @@ failure on the unit, scored like any failed episode:
   it, or the benchmark reports reading a prompt of another sha256; the side or the duel ran
   out of wall clock before it started; the runtime could not serve (`RuntimeUnavailable`: no
   Docker, a container removed from outside); the benchmark crashed, timed out or wrote nothing
-  while the policy was fine; the benchmark said `void_cause: "harness"`, or the policy was ended
-  from outside whatever the benchmark said; or the duel already
-  knows the unit is void (`void_units`: void on the other side, so not played here only to be
-  thrown away).
+  while the policy was fine; the benchmark said `void_cause: "harness"` (a unit that ran out of
+  time while its policy was within its budget), or the policy was ended from outside whatever the
+  benchmark said; or the duel already knows the unit is void (`void_units`: void on the other
+  side, so not played here only to be thrown away).
 - the side's failure: its submission was refused or could not be prepared at all (`refused`: a
   king that forfeits), on every unit that has a prompt; its policy never listened (`PolicyDied`,
-  which covers
-  `budgets.policy_start_seconds`); the benchmark said `void_cause: "policy"` (an act timeout, a
-  lost policy); or the benchmark gave no cause and the policy ended badly underneath it (a
-  non-zero exit, a signal, running out of memory in its sandbox).
+  which covers `budgets.policy_start_seconds`) or took all of `budgets.policy_budget_seconds` to
+  start; the benchmark said `void_cause: "policy"` (an act timeout, a policy that used up its
+  budget, a lost policy); or the benchmark gave no cause and the policy ended badly underneath it
+  (a non-zero exit, a signal, running out of memory in its sandbox).
 
 A scored outcome stands whatever the policy did after it: nothing turns a result into a void
 afterwards. A policy that died on one unit is served afresh for the next, like any other.
@@ -45,6 +47,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -129,6 +132,37 @@ def attribute(outcome: Outcome, end: PolicyEnd | None) -> Outcome:
     return replace(outcome, success=False, void=False, error=reason)
 
 
+def result_reserve_s(benchmark: Any) -> float:
+    """What a benchmark keeps back from `unit_timeout_s` to write its result, as its
+    `info()["limits"]["result_reserve_s"]` says: 0 for one that says nothing readable."""
+    try:
+        value = benchmark.info()["limits"]["result_reserve_s"]
+    except Exception:  # noqa: BLE001 - a plugin that cannot say keeps nothing back
+        return 0.0
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        return 0.0
+    return max(0.0, float(value))
+
+
+def unit_limits(
+    extra: Mapping[str, Any], *, timeout_s: float, budget_s: float, reserve_s: float
+) -> dict[str, Any]:
+    """`extra` with the time limits of one unit, as `run_command` takes them.
+
+    `unit_timeout_s` is the subprocess's own timeout. `policy_budget_s` is `budget_s`, what is left
+    of the policy's budget, but never more than that timeout less the benchmark's result reserve:
+    the benchmark stops calling the policy there whatever its budget says, and a call cut short
+    there is the harness's. A benchmark refuses a limit that is not positive, so none is passed.
+    """
+    limits = dict(extra)
+    if timeout_s > 0:
+        limits["unit_timeout_s"] = timeout_s
+    budget = min(budget_s, timeout_s - reserve_s)
+    if budget > 0:
+        limits["policy_budget_s"] = budget
+    return limits
+
+
 def unit_record(
     unit: Mapping[str, Any], outcome: Outcome, side_dir: Path, prompt_sha256: str | None
 ) -> dict[str, Any]:
@@ -182,7 +216,10 @@ def run_side(
     if deadline is not None:
         side_deadline = min(side_deadline, deadline)
     unit_budget = float(budgets["unit_wall_seconds"])
+    policy_budget = float(budgets["policy_budget_seconds"])
     extra = {"act_timeout_s": float(budgets["act_timeout_s"])}
+    #: Each benchmark's result reserve, asked once per side.
+    reserves: dict[str, float] = {}
     if prepared is None and refused is None:
         refused = "the submission was not prepared"
 
@@ -215,16 +252,22 @@ def run_side(
                 log.warning("%s %s: an interrupted attempt is kept at %s", side, unit_id, moved)
             if on_start is not None:
                 on_start(unit)
+            benchmark = benchmark_of(unit)
+            name = str(getattr(benchmark, "id", ""))
+            if name not in reserves:
+                reserves[name] = result_reserve_s(benchmark)
             outcome = _play(
                 runtime,  # type: ignore[arg-type]
                 prepared,  # type: ignore[arg-type]
-                benchmark_of(unit),
+                benchmark,
                 unit,
                 side=side,
                 prompt_path=str(prompt.path),
                 unit_dir=side_dir / unit_id,
                 deadline=min(time.monotonic() + unit_budget, side_deadline),
                 extra=extra,
+                policy_budget_s=policy_budget,
+                result_reserve_s=reserves[name],
             )
             # The unit counts only if it ran from the recorded bytes: the file must still hash to
             # them, and so must what the benchmark says it read.
@@ -260,36 +303,51 @@ def _play(
     unit_dir: Path,
     deadline: float,
     extra: Mapping[str, Any],
+    policy_budget_s: float,
+    result_reserve_s: float,
 ) -> Outcome:
     """One unit against a policy served for it, attributed to whoever ended it.
 
     `deadline` (a `time.monotonic()`) bounds the whole of it: the benchmark gets only what starting
     the policy left, and the wall time recorded - which a resumed side's budget counts - is all of
-    it, starting the policy and waiting for it to end included."""
+    it, starting the policy and waiting for it to end included. Starting the policy counts against
+    `policy_budget_s` as well, so a policy cannot spend on starting the time its budget would have
+    kept the harness: one that took all of it to start has failed the unit, which is not played."""
     started = time.monotonic()
+    end: PolicyEnd | None = None
     try:
         with runtime.serve(prepared, workdir=unit_dir) as served:
-            env = {
-                **benchmark_environment(os.environ, served.authkey_env),
-                **served.env,
-            }
-            timeout_s = max(0.0, deadline - time.monotonic())
-            # The seconds the subprocess has before it is killed: told them, the benchmark stops
-            # calling the policy in time to write why the unit ended, rather than writing nothing.
-            limits = {**extra, "unit_timeout_s": timeout_s} if timeout_s > 0 else dict(extra)
-            outcome = run_unit(
-                benchmark,
-                unit,
-                prompt=prompt_path,
-                out_dir=unit_dir,
-                policy_address=served.address,
-                authkey_env=served.authkey_env,
-                timeout_s=timeout_s,
-                env=env,
-                extra=limits,
-                ledger=Ledger(unit_dir),
-            )
-            end = served.died()
+            start_s = time.monotonic() - started
+            if start_s >= policy_budget_s:
+                outcome = failed(
+                    f"the {side}'s policy took {start_s:.1f}s to start, its whole budget of "
+                    f"{policy_budget_s:g}s for the unit"
+                )
+            else:
+                env = {
+                    **benchmark_environment(os.environ, served.authkey_env),
+                    **served.env,
+                }
+                timeout_s = max(0.0, deadline - time.monotonic())
+                limits = unit_limits(
+                    extra,
+                    timeout_s=timeout_s,
+                    budget_s=policy_budget_s - start_s,
+                    reserve_s=result_reserve_s,
+                )
+                outcome = run_unit(
+                    benchmark,
+                    unit,
+                    prompt=prompt_path,
+                    out_dir=unit_dir,
+                    policy_address=served.address,
+                    authkey_env=served.authkey_env,
+                    timeout_s=timeout_s,
+                    env=env,
+                    extra=limits,
+                    ledger=Ledger(unit_dir),
+                )
+                end = served.died()
     except PolicyDied as exc:
         wall = round(time.monotonic() - started, 3)
         return failed(f"the {side}'s policy did not start: {exc}", wall_s=wall)

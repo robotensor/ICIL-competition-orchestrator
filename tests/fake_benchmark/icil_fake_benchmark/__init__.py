@@ -167,8 +167,12 @@ class FakeBenchmark:
             "--void-cause",
             str(unit.get("fake_void_cause", "")),
         ]
-        if extra.get("unit_timeout_s") is not None:
-            argv += ["--unit-timeout-s", repr(float(extra["unit_timeout_s"]))]
+        for key, flag in (
+            ("unit_timeout_s", "--unit-timeout-s"),
+            ("policy_budget_s", "--policy-budget-s"),
+        ):
+            if extra.get(key) is not None:
+                argv += [flag, repr(float(extra[key]))]
         return argv
 
 
