@@ -58,6 +58,18 @@ if done.returncode:
 print(ctypes.CDLL(target).cjit_one())
 """
 
+#: Run inside the torch.compile policy's container: build a C++ extension at run time with
+#: `torch.utils.cpp_extension.load_inline` (ninja driving g++, one job) and call it.
+CPP_EXTENSION = """
+import os
+os.environ["MAX_JOBS"] = "1"
+from torch.utils.cpp_extension import load_inline
+module = load_inline(
+    "icil_jit_twice", cpp_sources="int twice(int x) { return 2 * x; }", functions=["twice"]
+)
+print(module.twice(21))
+"""
+
 #: Run inside a container: the mount points where the user it runs as can put code and run it,
 #: as a sorted JSON list. A mount counts when /proc/mounts has it neither `ro` nor `noexec` and, on
 #: that filesystem alone (as `find -xdev`), a directory takes a new file or a file of the user's own
@@ -307,8 +319,10 @@ def test_nvcc_gcc_and_the_python_headers_are_there_for_the_sandbox_user(spec, ji
 @pytest.mark.slow
 def test_a_torch_compiled_act_runs_on_the_cpu_in_the_sandbox(spec, docker, build, tmp_path, capsys):
     """CPU torch installed at build time; inductor compiles C++ with g++ into
-    $TORCHINDUCTOR_CACHE_DIR during hello and act runs it. The times and the image size are
-    printed for the base image's README."""
+    $TORCHINDUCTOR_CACHE_DIR during hello and act runs it. `torch.utils.cpp_extension` then builds
+    and loads an extension in $TORCH_EXTENSIONS_DIR, with the ninja the requirements install (torch
+    does not depend on it and the base does not carry it). The times and the image size are printed
+    for the base image's README."""
     started = time.monotonic()
     image = build(TORCH_POLICY, "local/torch_compile_policy")
     build_seconds = time.monotonic() - started
@@ -334,10 +348,18 @@ def test_a_torch_compiled_act_runs_on_the_cpu_in_the_sandbox(spec, docker, build
         assert found.returncode == 0 and libraries, (found.stdout, found.stderr)
         maps = inside(container, "cat", "/proc/1/maps").stdout
         assert any(library in maps for library in libraries), "the server runs what inductor built"
+        started = time.monotonic()
+        extension = inside(container, "python", "-c", CPP_EXTENSION, timeout_s=600)
+        extension_seconds = time.monotonic() - started
+        assert extension.returncode == 0, extension.stderr
+        assert extension.stdout.split()[-1:] == ["42"], extension.stdout
+        found = inside(container, "find", env["TORCH_EXTENSIONS_DIR"], "-name", "*.so")
+        assert found.returncode == 0 and found.stdout.split(), (found.stdout, found.stderr)
     with capsys.disabled():
         print(
             f"\n[torch.compile in the sandbox] image build {build_seconds:.1f} s, "
             f"image {size} bytes, hello (import torch and compile) {hello_seconds:.1f} s, "
             f"compile {float(reply['compile_seconds']):.2f} s, "
-            f"act {act_seconds * 1000:.1f} ms (compiled call {float(reply['act_seconds']) * 1000:.2f} ms)"
+            f"act {act_seconds * 1000:.1f} ms (compiled call {float(reply['act_seconds']) * 1000:.2f} ms), "
+            f"cpp_extension load_inline {extension_seconds:.1f} s"
         )
