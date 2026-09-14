@@ -20,7 +20,8 @@ are ended (`orphans`) and its directory moved aside before the unit is played ag
 a cause outside either submission. Anything a side's own submission brings about is that side's
 failure on the unit, scored like any failed episode:
 
-- void: its prompt is void (materialization failed) or changed on disk; the side or the duel ran
+- void: its prompt is void (materialization failed) or changed on disk, before the unit or during
+  it, or the benchmark reports reading a prompt of another sha256; the side or the duel ran
   out of wall clock before it started; the runtime could not serve (`RuntimeUnavailable`: no
   Docker, a container removed from outside); the benchmark crashed, timed out or wrote nothing
   while the policy was fine; the benchmark said `void_cause: "harness"`, or the policy was ended
@@ -218,6 +219,17 @@ def run_side(
                 timeout_s=max(0.0, min(unit_budget, side_deadline - time.monotonic())),
                 extra=extra,
             )
+            # The unit counts only if it ran from the recorded bytes: the file must still hash to
+            # them, and so must what the benchmark says it read.
+            reported = outcome.extra.get("prompt_sha256")
+            if (changed := prompt.changed()) is not None:
+                outcome = voided(f"no prompt: {changed} during the unit", wall_s=outcome.wall_s)
+            elif isinstance(reported, str) and reported != prompt.sha256:
+                outcome = voided(
+                    f"no prompt: the benchmark read a prompt hashing to {reported[:12]}..., "
+                    f"not the recorded {str(prompt.sha256)[:12]}...",
+                    wall_s=outcome.wall_s,
+                )
         if outcome.void:
             log.warning("%s %s void: %s", side, unit_id, outcome.error)
         elif outcome.success is False and outcome.error:

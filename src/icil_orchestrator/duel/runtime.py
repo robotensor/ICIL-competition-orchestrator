@@ -29,6 +29,8 @@ with no sandbox at all, for development and the tests.
 
 from __future__ import annotations
 
+import os
+import stat
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
@@ -112,6 +114,26 @@ class PreparedSubmission:
             "policy": self.policy,
             "action_type": self.action_type,
         }
+
+
+def copy_log(source: Path, target: Path, limit: int) -> None:
+    """Append at most `limit` bytes of a policy's log to `target`. The policy can write where its
+    log is, so it may have made it a link or a pipe: only a regular file is read, and nothing is
+    followed or waited on."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(source, flags)
+    except OSError:
+        return
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return
+        with open(fd, "rb", closefd=False) as fh, open(target, "ab") as out:
+            out.write(fh.read(limit))
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
 
 
 def _alive() -> PolicyEnd | None:

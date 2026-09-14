@@ -47,14 +47,17 @@ from .runtime import (
     RuntimeUnavailable,
     ServedPolicy,
     SubmissionRefused,
+    copy_log,
 )
 
 #: The variable a served policy's key travels in, as in the sandbox.
 AUTHKEY_ENV = "ICIL_POLICY_AUTHKEY"
 AUTHKEY_BYTES = 32
 SOCKET_FILE = "policy.sock"
-#: In the unit's directory: the server's log and everything the policy printed.
+#: In the unit's directory once the unit is over: the server's log and what the policy printed.
 LOG_FILE = "policy.log"
+#: The most of a policy's log copied out: the policy writes it and nothing else bounds it.
+MAX_LOG_BYTES = 16 << 20
 POLL_S = 0.05
 #: How long a server whose client has gone gets to exit on its own before its status is read.
 EXIT_GRACE_S = 5.0
@@ -156,9 +159,9 @@ class SubprocessPolicyRuntime:
                 "manifest", f"{name}: api {manifest.api} is not this competition's {wanted}"
             )
         try:
-            with self._serve(path, Path(workdir)) as (served, key):
+            with self._serve(path, Path(workdir)) as (served, key, live_log):
                 with RemotePolicy(
-                    served.address, key, timeout_s=self.start_timeout_s, log_file=served.log_file
+                    served.address, key, timeout_s=self.start_timeout_s, log_file=live_log
                 ) as policy:
                     reply = policy.hello()
         except PolicyDied as exc:
@@ -177,19 +180,23 @@ class SubprocessPolicyRuntime:
 
     @contextmanager
     def serve(self, prepared: PreparedSubmission, *, workdir: Path) -> Iterator[ServedPolicy]:
-        with self._serve(Path(prepared.handle), Path(workdir)) as (served, _):
+        with self._serve(Path(prepared.handle), Path(workdir)) as (served, _, _live):
             yield served
 
     # -- a server ---------------------------------------------------------------------------
 
     @contextmanager
-    def _serve(self, manifest: Path, workdir: Path) -> Iterator[tuple[ServedPolicy, bytes]]:
-        """One `icil_policy.serve` process, listening; killed with its group on the way out."""
+    def _serve(self, manifest: Path, workdir: Path) -> Iterator[tuple[ServedPolicy, bytes, Path]]:
+        """One `icil_policy.serve` process, listening; killed with its group on the way out.
+
+        Its log is written beside its socket, in a temporary directory of its own, and copied into
+        `workdir` when it is over: nothing on the policy's command line names the run directory,
+        which would tell it which side it is on and where the other side's results are."""
         workdir.mkdir(parents=True, exist_ok=True)
         # A Unix socket's path is limited to about 100 bytes, which a run directory can exceed.
         sockets = Path(tempfile.mkdtemp(prefix="icil-duel-"))
         address = sockets / SOCKET_FILE
-        log_file = workdir / LOG_FILE
+        log_file = sockets / LOG_FILE
         key = secrets.token_bytes(AUTHKEY_BYTES)
         env = {**benchmark_environment(os.environ, AUTHKEY_ENV), AUTHKEY_ENV: key.hex()}
         argv = [
@@ -226,14 +233,15 @@ class SubprocessPolicyRuntime:
                 address=str(address),
                 authkey_env=AUTHKEY_ENV,
                 env={AUTHKEY_ENV: key.hex()},
-                log_file=log_file,
+                log_file=workdir / LOG_FILE,
                 died=lambda: self._died(process, log_file),
             )
             self._started(process, served)
-            yield served, key
+            yield served, key, log_file
         finally:
             _kill_group(process)
             ledger.ended(process.pid)
+            copy_log(log_file, workdir / LOG_FILE, MAX_LOG_BYTES)
             shutil.rmtree(sockets, ignore_errors=True)
 
     def _wait_listening(self, process: subprocess.Popen, address: Path, log_file: Path) -> None:

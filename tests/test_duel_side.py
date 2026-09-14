@@ -259,6 +259,54 @@ def test_an_interrupted_unit_is_reaped_and_moved_aside_before_it_runs_again(
     assert runs(tmp_path, first) == 1 and not (unit_dir / "pids.json").exists()
 
 
+def test_a_prompt_changed_while_its_unit_ran_voids_the_unit(
+    duel_spec, fake, units, prompts, tmp_path
+):
+    target = prompts.prompts[units[1]["unit_id"]].path
+
+    class Tampering(FakePolicyRuntime):
+        def _started(self, process, served):
+            super()._started(process, served)
+            if served.log_file.parent.name == units[1]["unit_id"]:
+                os.chmod(target, 0o644)
+                target.write_bytes(target.read_bytes() + b"\0")
+
+    results = side(duel_spec, fake, units, prompts, tmp_path, Tampering(duel_spec))
+    changed = results[units[1]["unit_id"]]
+    assert changed["void"] and "changed after it was materialized" in changed["error"]
+    assert runs(tmp_path, units[1]["unit_id"]) == 1, "the check is after the unit, not before"
+    assert results[units[0]["unit_id"]]["success"] is True
+
+
+def test_a_unit_the_benchmark_says_ran_from_another_prompt_is_void(
+    duel_spec, fake, units, prompts, tmp_path
+):
+    class Misreading(type(fake)):
+        def read_result(self, *, out_dir):
+            result = super().read_result(out_dir=out_dir)
+            if Path(out_dir).name == units[2]["unit_id"]:
+                result["prompt_sha256"] = "f" * 64
+            return result
+
+    misreading = Misreading()
+    runtime = FakePolicyRuntime(duel_spec)
+    results = run_side(
+        duel_spec,
+        side="challenger",
+        units=units,
+        prompts=prompts,
+        side_dir=tmp_path / "challenger",
+        benchmark_of=lambda unit: misreading,
+        runtime=runtime,
+        prepared=runtime.prepare(
+            runtime.fetch(REPLAY_REF, workdir=tmp_path), workdir=tmp_path / "check"
+        ),
+    )
+    other = results[units[2]["unit_id"]]
+    assert other["void"] and "the benchmark read a prompt hashing to ffffffffffff" in other["error"]
+    assert [results[u["unit_id"]]["void"] for u in units[:2]] == [False, False]
+
+
 def test_a_side_given_less_than_its_budget_stops_at_its_share(
     duel_spec, fake, units, prompts, tmp_path
 ):

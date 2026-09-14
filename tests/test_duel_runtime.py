@@ -92,6 +92,30 @@ def test_each_serve_is_a_fresh_server_with_its_own_key_gone_after_its_unit(runti
     assert seen[0][0] != seen[1][0] and seen[0][1] != seen[1][1]
 
 
+def test_a_local_policy_is_told_nothing_of_the_run_directory_and_its_log_lands_there(
+    spec, tmp_path
+):
+    from icil_policy.client import RemotePolicy
+
+    seen = []
+
+    class Watching(FakePolicyRuntime):
+        def _started(self, process, served):
+            seen.append(" ".join(process.args))
+
+    runtime = Watching(spec)
+    prepared = runtime.prepare(runtime.fetch(REPLAY_REF, workdir=tmp_path), workdir=tmp_path)
+    unit_dir = tmp_path / "runs" / "challenger" / "fp-000"
+    with runtime.serve(prepared, workdir=unit_dir) as served:
+        key = bytes.fromhex(served.env[served.authkey_env])
+        with RemotePolicy(served.address, key, timeout_s=10) as policy:
+            policy.hello()
+    assert len(seen) == 2 and all(str(tmp_path / "runs") not in argv for argv in seen), seen
+    assert "challenger" not in seen[1], "the policy's command line names its side"
+    assert served.log_file == unit_dir / "policy.log"
+    assert "listening on" in served.log_file.read_text()
+
+
 def test_a_server_killed_under_its_unit_is_reported_dead_by_its_own_doing(spec, tmp_path):
     runtime = FakePolicyRuntime(spec, kill_on_serve={0})
     prepared = runtime.prepare(runtime.fetch(REPLAY_REF, workdir=tmp_path), workdir=tmp_path)

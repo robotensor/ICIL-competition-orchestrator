@@ -35,7 +35,6 @@ import logging
 import os
 import secrets
 import shutil
-import stat
 import tempfile
 import time
 from collections.abc import Iterator, Mapping
@@ -60,6 +59,7 @@ from .runtime import (
     RuntimeUnavailable,
     ServedPolicy,
     SubmissionRefused,
+    copy_log,
 )
 
 log = logging.getLogger(__name__)
@@ -241,7 +241,7 @@ class DockerPolicyRuntime:
             try:
                 container.close()
             finally:
-                _copy_log(container.log_path, workdir / LOG_FILE)
+                copy_log(container.log_path, workdir / LOG_FILE, MAX_LOG_BYTES)
                 shutil.rmtree(sockets, ignore_errors=True)
 
     def _wait_listening(self, container: PolicyContainer) -> None:
@@ -313,22 +313,3 @@ def _mapped() -> Iterator[None]:
         raise SubmissionRefused(exc.step, exc.reason) from None
     except SubmissionError as exc:
         raise RuntimeUnavailable(str(exc)) from None
-
-
-def _copy_log(source: Path, target: Path) -> None:
-    """Copy at most `MAX_LOG_BYTES` of a log the policy could have replaced with a link or a pipe:
-    only a regular file is read, and nothing is followed."""
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
-    try:
-        fd = os.open(source, flags)
-    except OSError:
-        return
-    try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
-            return
-        with open(fd, "rb", closefd=False) as fh, open(target, "ab") as out:
-            out.write(fh.read(MAX_LOG_BYTES))
-    except OSError:
-        pass
-    finally:
-        os.close(fd)
