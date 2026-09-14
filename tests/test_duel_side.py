@@ -307,6 +307,31 @@ def test_a_unit_the_benchmark_says_ran_from_another_prompt_is_void(
     assert [results[u["unit_id"]]["void"] for u in units[:2]] == [False, False]
 
 
+def test_starting_the_policy_is_taken_from_its_units_budget_and_counted_in_its_wall_time(
+    duel_spec, fake, units, prompts, tmp_path, monkeypatch
+):
+    from icil_orchestrator.duel import side as side_module
+
+    timeouts = []
+    run_unit = side_module.run_unit
+
+    def spying(*args, **kwargs):
+        timeouts.append(kwargs["timeout_s"])
+        return run_unit(*args, **kwargs)
+
+    monkeypatch.setattr(side_module, "run_unit", spying)
+
+    class SlowStart(FakePolicyRuntime):
+        def serve(self, prepared, *, workdir):
+            time.sleep(2.0)  # a policy loading its weights before it listens
+            return super().serve(prepared, workdir=workdir)
+
+    results = side(duel_spec, fake, units[:1], prompts, tmp_path, SlowStart(duel_spec))
+    budget = float(duel_spec.budgets["unit_wall_seconds"])
+    assert timeouts[0] <= budget - 2.0, "starting the policy was not taken from the unit's budget"
+    assert results[units[0]["unit_id"]]["wall_s"] >= 2.0, "the wall time left out the start"
+
+
 def test_a_side_given_less_than_its_budget_stops_at_its_share(
     duel_spec, fake, units, prompts, tmp_path
 ):

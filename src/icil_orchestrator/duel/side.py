@@ -216,7 +216,7 @@ def run_side(
                 side=side,
                 prompt_path=str(prompt.path),
                 unit_dir=side_dir / unit_id,
-                timeout_s=max(0.0, min(unit_budget, side_deadline - time.monotonic())),
+                deadline=min(time.monotonic() + unit_budget, side_deadline),
                 extra=extra,
             )
             # The unit counts only if it ran from the recorded bytes: the file must still hash to
@@ -251,10 +251,14 @@ def _play(
     side: str,
     prompt_path: str,
     unit_dir: Path,
-    timeout_s: float,
+    deadline: float,
     extra: Mapping[str, Any],
 ) -> Outcome:
-    """One unit against a policy served for it, attributed to whoever ended it."""
+    """One unit against a policy served for it, attributed to whoever ended it.
+
+    `deadline` (a `time.monotonic()`) bounds the whole of it: the benchmark gets only what starting
+    the policy left, and the wall time recorded - which a resumed side's budget counts - is all of
+    it, starting the policy and waiting for it to end included."""
     started = time.monotonic()
     try:
         with runtime.serve(prepared, workdir=unit_dir) as served:
@@ -269,7 +273,7 @@ def _play(
                 out_dir=unit_dir,
                 policy_address=served.address,
                 authkey_env=served.authkey_env,
-                timeout_s=timeout_s,
+                timeout_s=max(0.0, deadline - time.monotonic()),
                 env=env,
                 extra=extra,
                 ledger=Ledger(unit_dir),
@@ -281,4 +285,4 @@ def _play(
     except RuntimeUnavailable as exc:
         wall = round(time.monotonic() - started, 3)
         return voided(f"the {side}'s policy could not be served: {exc}", wall_s=wall)
-    return attribute(outcome, end)
+    return replace(attribute(outcome, end), wall_s=round(time.monotonic() - started, 3))
