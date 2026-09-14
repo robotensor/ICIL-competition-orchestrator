@@ -8,21 +8,30 @@ order. For each one:
 3. the benchmark's `run_command` runs as a subprocess with the allow-listed environment plus the
    policy's key variable, within `min(budgets.unit_wall_seconds, what is left of the side's
    budget)`, and its result is read back as an `Outcome`;
-4. the unit's record is appended to `<side_dir>/results.jsonl` and handed to `on_unit`.
+4. whose the outcome is, when it is not a scored one, is decided (`attribute`);
+5. the unit's record is appended to `<side_dir>/results.jsonl` and handed to `on_unit`.
 
 A restarted duel reads `results.jsonl` first and runs only the units it does not hold, so a unit
 that finished is never run twice; the side's budget counts the wall time already recorded.
 
-What makes a unit void rather than a loss, beyond what `subprocess_runner` already voids:
+**Whose a unit is.** A unit is void - void for both sides, since the duel merges it so - only for
+a cause outside either submission. Anything a side's own submission brings about is that side's
+failure on the unit, scored like any failed episode:
 
-- its prompt is void (materialization failed) or changed on disk;
-- the side's submission was refused (`refused`): every unit, with the reason;
-- the policy runtime died: the policy never listened, or died underneath its unit. That unit is
-  void, and so is **every remaining unit of the side**, with the first death's reason: a runtime
-  that died is not asked to start again forty times over the side's budget;
-- the side, or the duel, ran out of wall clock before the unit started;
-- the duel already knows it is void (`void_units`): a unit void on the other side is void for
-  both, so it is not played here only to be thrown away.
+- void: its prompt is void (materialization failed) or changed on disk; the side or the duel ran
+  out of wall clock before it started; the runtime could not serve (`RuntimeUnavailable`: no
+  Docker, a container removed from outside); the benchmark crashed, timed out or wrote nothing
+  while the policy was fine; the benchmark said `void_cause: "harness"`, or the policy was ended
+  from outside whatever the benchmark said; or the duel already
+  knows the unit is void (`void_units`: void on the other side, so not played here only to be
+  thrown away).
+- the side's failure: its policy never listened (`PolicyDied`, which covers
+  `budgets.policy_start_seconds`); the benchmark said `void_cause: "policy"` (an act timeout, a
+  lost policy); or the benchmark gave no cause and the policy ended badly underneath it (a
+  non-zero exit, a signal, running out of memory in its sandbox).
+
+A scored outcome stands whatever the policy did after it: nothing turns a result into a void
+afterwards. A policy that died on one unit is served afresh for the next, like any other.
 """
 
 from __future__ import annotations
@@ -32,13 +41,23 @@ import logging
 import os
 import time
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 from ..benchmarks.subprocess_runner import Outcome, benchmark_environment, run_unit, voided
 from ..canon import sha256_file
 from .materialize import Materialized
-from .runtime import PolicyDied, PolicyRuntime, PreparedSubmission, RuntimeUnavailable
+from .runtime import (
+    CAUSES,
+    HARNESS,
+    POLICY,
+    PolicyDied,
+    PolicyEnd,
+    PolicyRuntime,
+    PreparedSubmission,
+    RuntimeUnavailable,
+)
 
 log = logging.getLogger(__name__)
 
@@ -68,6 +87,38 @@ def _append(side_dir: Path, record: dict[str, Any]) -> None:
         fh.write(json.dumps(record, sort_keys=True) + "\n")
         fh.flush()
         os.fsync(fh.fileno())
+
+
+def failed(reason: str, *, wall_s: float = 0.0) -> Outcome:
+    """A unit the side lost by its own doing: a failed episode, with the reason."""
+    return Outcome(success=False, void=False, steps=None, error=reason, wall_s=wall_s)
+
+
+def attribute(outcome: Outcome, end: PolicyEnd | None) -> Outcome:
+    """The outcome a side is scored with, given how its policy ended.
+
+    A scored outcome stands. A void one is the side's failure when the benchmark names the policy
+    as its cause, or names no cause while the policy ended by its own doing; otherwise it stays
+    void. The one thing the orchestrator knows better than the benchmark is a policy ended from
+    outside (its container removed, Docker gone): a benchmark cannot tell that from a policy that
+    went away, so it is void whatever cause the benchmark gave. What the benchmark reported
+    (steps, progress, its clip) is kept either way.
+    """
+    if not outcome.void:
+        if end is not None:
+            log.warning("a scored unit's policy ended badly afterwards; the score stands: %s", end)
+        return outcome
+    cause = outcome.extra.get("void_cause")
+    if end is not None and end.cause == HARNESS:
+        cause = HARNESS
+    elif cause not in CAUSES:
+        cause = end.cause if end is not None else HARNESS
+    reason = outcome.error or ("the policy failed" if cause == POLICY else "void")
+    if end is not None and end.cause == cause:
+        reason = f"{reason}\n{end.reason}"
+    if cause != POLICY:
+        return replace(outcome, error=reason)
+    return replace(outcome, success=False, void=False, error=reason)
 
 
 def unit_record(
@@ -118,7 +169,6 @@ def run_side(
         side_deadline = min(side_deadline, deadline)
     unit_budget = float(budgets["unit_wall_seconds"])
     extra = {"act_timeout_s": float(budgets["act_timeout_s"])}
-    dead: str | None = None
     if prepared is None and refused is None:
         refused = "the submission was not prepared"
 
@@ -135,8 +185,6 @@ def run_side(
             outcome = voided(f"no prompt: {reason}")
         elif void_units and unit_id in void_units:
             outcome = voided(f"not played: {void_units[unit_id]}")
-        elif dead is not None:
-            outcome = voided(f"the {side}'s policy runtime died earlier in this side: {dead}")
         elif time.monotonic() >= side_deadline:
             outcome = voided("the side ran out of its wall-clock budget")
         elif (changed := prompt.changed()) is not None:
@@ -144,21 +192,21 @@ def run_side(
         else:
             if on_start is not None:
                 on_start(unit)
-            outcome, died = _play(
+            outcome = _play(
                 runtime,  # type: ignore[arg-type]
                 prepared,  # type: ignore[arg-type]
                 benchmark_of(unit),
                 unit,
+                side=side,
                 prompt_path=str(prompt.path),
                 unit_dir=side_dir / unit_id,
                 timeout_s=max(0.0, min(unit_budget, side_deadline - time.monotonic())),
                 extra=extra,
             )
-            if died is not None:
-                dead = f"{unit_id}: {died}"
-                outcome = voided(f"the {side}'s policy runtime died: {died}", wall_s=outcome.wall_s)
         if outcome.void:
             log.warning("%s %s void: %s", side, unit_id, outcome.error)
+        elif outcome.success is False and outcome.error:
+            log.info("%s %s failed: %s", side, unit_id, outcome.error)
         record = unit_record(unit, outcome, side_dir, prompt_sha)
         _append(side_dir, record)
         done[unit_id] = record
@@ -173,12 +221,13 @@ def _play(
     benchmark: Any,
     unit: Mapping[str, Any],
     *,
+    side: str,
     prompt_path: str,
     unit_dir: Path,
     timeout_s: float,
     extra: Mapping[str, Any],
-) -> tuple[Outcome, str | None]:
-    """One unit against a policy served for it: its outcome, and why the policy died, if it did."""
+) -> Outcome:
+    """One unit against a policy served for it, attributed to whoever ended it."""
     started = time.monotonic()
     try:
         with runtime.serve(prepared, workdir=unit_dir) as served:
@@ -197,7 +246,11 @@ def _play(
                 env=env,
                 extra=extra,
             )
-            return outcome, served.died()
-    except (PolicyDied, RuntimeUnavailable) as exc:
+            end = served.died()
+    except PolicyDied as exc:
         wall = round(time.monotonic() - started, 3)
-        return voided(str(exc), wall_s=wall), str(exc)
+        return failed(f"the {side}'s policy did not start: {exc}", wall_s=wall)
+    except RuntimeUnavailable as exc:
+        wall = round(time.monotonic() - started, 3)
+        return voided(f"the {side}'s policy could not be served: {exc}", wall_s=wall)
+    return attribute(outcome, end)

@@ -38,8 +38,10 @@ from icil_policy.manifest import load as load_manifest
 from ..benchmarks.subprocess_runner import benchmark_environment
 from ..ids import SubmissionRef, is_commit_sha
 from .runtime import (
+    POLICY,
     FetchedSubmission,
     PolicyDied,
+    PolicyEnd,
     PreparedSubmission,
     RuntimeUnavailable,
     ServedPolicy,
@@ -207,7 +209,7 @@ class SubprocessPolicyRuntime:
             )
         except OSError as exc:
             shutil.rmtree(sockets, ignore_errors=True)
-            raise PolicyDied(f"the policy could not be started: {exc}") from None
+            raise RuntimeUnavailable(f"the policy server could not be started: {exc}") from None
         try:
             self._wait_listening(process, address, log_file)
             served = ServedPolicy(
@@ -242,8 +244,11 @@ class SubprocessPolicyRuntime:
         """Called once a server listens. The tests stand in here to kill one."""
 
     @staticmethod
-    def _died(process: subprocess.Popen, log_file: Path) -> str | None:
-        """Why the server died underneath its unit: any end but a clean exit after its client."""
+    def _died(process: subprocess.Popen, log_file: Path) -> PolicyEnd | None:
+        """How the server ended underneath its unit: any end but a clean exit after its client.
+        It is killed only on the way out of `_serve`, after this is read, so an end seen here is
+        the policy's own - on this host nothing tells a policy that exited from one killed by the
+        machine's own OOM killer."""
         try:
             code = process.wait(timeout=EXIT_GRACE_S)
         except subprocess.TimeoutExpired:
@@ -251,7 +256,7 @@ class SubprocessPolicyRuntime:
         if code == 0:
             return None
         how = f"was killed by signal {-code}" if code < 0 else f"exited {code}"
-        return f"the policy process {how}\n{tail(log_file)}".rstrip()
+        return PolicyEnd(f"the policy process {how}\n{tail(log_file)}".rstrip(), POLICY)
 
 
 def _kill_group(process: subprocess.Popen) -> None:

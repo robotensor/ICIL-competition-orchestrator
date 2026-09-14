@@ -1,15 +1,19 @@
-"""What the duel tests share: the example policies, a runtime with faults, a recording reporter."""
+"""What the duel tests share: the example policies, a runtime with faults, a recording reporter,
+a benchmark that voids chosen units for the harness, and a `FakeDocker` that answers `inspect`."""
 
 from __future__ import annotations
 
 import os
 import signal
+import subprocess
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from icil_orchestrator.duel.local_runtime import SubprocessPolicyRuntime
 from icil_orchestrator.ids import SubmissionRef
 from icil_orchestrator.live import LiveReporter
+from submission_helpers import FakeDocker
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "packages" / "icil-policy" / "examples"
 REPLAY = EXAMPLES / "replay_policy"
@@ -81,6 +85,45 @@ class FakePolicyRuntime(SubprocessPolicyRuntime):
         if killed:
             os.killpg(process.pid, signal.SIGKILL)
             process.wait()
+
+
+def harness_voiding(units: set[str], side: str = "challenger"):
+    """The fake benchmark, reporting `units` of `side` void for the harness's cause once their
+    policy was driven: a simulator that lost the scene, which is nobody's loss."""
+    import icil_fake_benchmark
+
+    class HarnessVoiding(icil_fake_benchmark.FakeBenchmark):
+        def run_command(self, *, unit, prompt, out_dir, policy_address, authkey_env, **extra):
+            if unit["unit_id"] in units and Path(out_dir).parent.name == side:
+                unit = {**unit, "fake_behaviour": "policy_then_void", "fake_void_cause": "harness"}
+            return super().run_command(
+                unit=unit,
+                prompt=prompt,
+                out_dir=out_dir,
+                policy_address=policy_address,
+                authkey_env=authkey_env,
+                **extra,
+            )
+
+    return HarnessVoiding()
+
+
+@dataclass
+class InspectingFakeDocker(FakeDocker):
+    """`FakeDocker`, answering the `docker inspect` the duel's adapter asks beyond `state`."""
+
+    #: Containers the kernel killed for their memory limit.
+    oom_killed: set[str] = field(default_factory=set)
+
+    def _run(self, args, *, input_text=None, extra_env=None, timeout_s=None, check=True):
+        args = list(args)
+        names = {run[run.index("--name") + 1] for run in self.runs}
+        if args[0] == "inspect" and "{{.State.OOMKilled}}" in args:
+            name = args[-1]
+            found = name in names and name not in self.removed
+            out = ("true" if name in self.oom_killed else "false") if found else ""
+            return subprocess.CompletedProcess(args, 0 if found else 1, out + "\n", "")
+        raise NotImplementedError(f"the fake does not answer docker {' '.join(args[:2])}")
 
 
 class RecordingReporter(LiveReporter):

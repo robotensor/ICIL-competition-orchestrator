@@ -7,7 +7,15 @@ import json
 import pytest
 
 from conftest import FAKE_PIN, fake_spec_doc
-from duel_helpers import REPLAY_REF, ZERO_REF, Crash, FakePolicyRuntime, RecordingReporter
+from duel_helpers import (
+    REPLAY_REF,
+    ZERO_REF,
+    Crash,
+    FakePolicyRuntime,
+    RecordingReporter,
+    harness_voiding,
+)
+from icil_orchestrator.benchmarks.units import plugin_units
 from icil_orchestrator.canon import Signer
 from icil_orchestrator.daemon import Daemon
 from icil_orchestrator.duel.orchestrate import Orchestrator
@@ -37,7 +45,7 @@ def queues(duel_spec, tmp_path):
     return Queues(tmp_path / "queue", duel_spec.tracks)
 
 
-def daemon(spec, store, tmp_path, runtime=None):
+def daemon(spec, store, tmp_path, runtime=None, **kwargs):
     """A daemon as a fresh process would make one: its own store object, runtime and reporter."""
     fresh = Store(store.root, spec, store.signer)
     orchestrator = Orchestrator(
@@ -46,6 +54,7 @@ def daemon(spec, store, tmp_path, runtime=None):
         runtime or FakePolicyRuntime(spec),
         tmp_path / "runs",
         live=RecordingReporter(spec),
+        **kwargs,
     )
     return Daemon(orchestrator, Queues(tmp_path / "queue", spec.tracks), idle_sleep_s=0)
 
@@ -115,8 +124,9 @@ def test_a_void_duel_finishes_its_entry_and_the_king_keeps_the_crown(
 ):
     publish(store, duel_spec, make_record(duel_spec, "genesis", 1, ZERO_REF, None))
     add(queues, REPLAY_REF)
-    runtime = FakePolicyRuntime(duel_spec, kill_on_serve={0})
-    loop = daemon(duel_spec, store, tmp_path, runtime)
+    units = plugin_units(duel_spec, TRACK, "0" * 64, "smoke")
+    lost = harness_voiding({u["unit_id"] for u in units})  # the unit ids do not depend on the id
+    loop = daemon(duel_spec, store, tmp_path, resolve=lambda name: lost)
     assert loop.step(TRACK) is True
     state = queues[TRACK].reload()
     assert state.entries == [] and state.in_progress is None

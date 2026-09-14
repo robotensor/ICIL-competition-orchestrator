@@ -17,10 +17,16 @@ adapter and nothing else in `duel/`:
 
 The submission code's two errors become the seam's: `SubmissionRejected` is `SubmissionRefused`
 (the submission's own fault, with its step and reason), `SubmissionError` is `RuntimeUnavailable`.
+
+Whose a container's end is comes from `docker inspect`: a container that exited non-zero, or that
+the kernel killed for its sandbox's memory limit (`State.OOMKilled`), ended by its policy's doing;
+a container Docker no longer knows (removed from outside, or Docker itself gone) did not. `docker
+run` failing is Docker's failure too. Nothing here removes a container before its end is read.
 """
 
 from __future__ import annotations
 
+import logging
 import os
 import secrets
 import shutil
@@ -40,13 +46,18 @@ from ..submissions.docker import Docker
 from ..submissions.fetch import HubFetcher, LocalFetcher, RepoCache
 from ..submissions.image import base_image, build_submission_image
 from .runtime import (
+    HARNESS,
+    POLICY,
     FetchedSubmission,
     PolicyDied,
+    PolicyEnd,
     PreparedSubmission,
     RuntimeUnavailable,
     ServedPolicy,
     SubmissionRefused,
 )
+
+log = logging.getLogger(__name__)
 
 CONTAINER_PREFIX = "icil-duel"
 #: In the unit's directory once the unit is over: the server's log and what the policy printed.
@@ -134,7 +145,7 @@ class DockerPolicyRuntime:
             try:
                 container.start()
             except SubmissionError as exc:
-                raise PolicyDied(f"the policy container did not start: {exc}") from None
+                raise RuntimeUnavailable(f"docker could not start the container: {exc}") from None
             self._wait_listening(container)
             served = ServedPolicy(
                 address=str(container.socket_path),
@@ -183,8 +194,11 @@ class DockerPolicyRuntime:
             state = self.docker.state(container.name)
             if not state.running:
                 error = f": {state.error}" if state.error else ""
+                if state.exit_code is None:
+                    raise RuntimeUnavailable(f"the policy container is gone{error}")
                 raise PolicyDied(
-                    f"the policy container exited ({state.exit_code}) before listening{error}"
+                    f"the policy container {self._how(container, state.exit_code)} "
+                    f"before listening{error}"
                 )
             if time.monotonic() >= deadline:
                 raise PolicyDied(
@@ -195,8 +209,9 @@ class DockerPolicyRuntime:
     def _started(self, container: PolicyContainer, served: ServedPolicy) -> None:
         """Called once a unit's container listens. The tests stand in here to kill one."""
 
-    def _died(self, container: PolicyContainer) -> str | None:
-        """Why the container died underneath its unit: any end but a clean exit after its client."""
+    def _died(self, container: PolicyContainer) -> PolicyEnd | None:
+        """How the container ended underneath its unit: any end but a clean exit after its client.
+        A container Docker cannot describe any more is the harness's; any other end, the policy's."""
         deadline = time.monotonic() + EXIT_GRACE_S
         state = self.docker.state(container.name)
         while state.running and time.monotonic() < deadline:
@@ -205,8 +220,33 @@ class DockerPolicyRuntime:
         if state.running or state.exit_code == 0:
             return None
         error = f": {state.error}" if state.error else ""
-        how = "was killed (137: out of memory, or a kill)" if state.exit_code == 137 else "exited"
-        return f"the policy container {how} ({state.exit_code}){error}"
+        if state.exit_code is None:
+            return PolicyEnd(f"the policy container is gone{error}", HARNESS)
+        return PolicyEnd(
+            f"the policy container {self._how(container, state.exit_code)}{error}", POLICY
+        )
+
+    def _how(self, container: PolicyContainer, exit_code: int) -> str:
+        if self._oom_killed(container.name):
+            memory = int(self.spec.submission["sandbox"]["memory_bytes"])
+            return f"was killed for going over its {memory} bytes of memory ({exit_code})"
+        return f"exited ({exit_code})"
+
+    def _oom_killed(self, name: str) -> bool:
+        """`State.OOMKilled`, which `Docker.state` does not read; False when it cannot be told."""
+        run = getattr(self.docker, "_run", None)
+        if run is None:
+            return False
+        try:
+            done = run(
+                ["inspect", "--type", "container", "--format", "{{.State.OOMKilled}}", name],
+                check=False,
+                timeout_s=60,
+            )
+        except SubmissionError as exc:
+            log.warning("could not ask docker whether %s ran out of memory: %s", name, exc)
+            return False
+        return done.returncode == 0 and done.stdout.strip() == "true"
 
 
 @contextmanager

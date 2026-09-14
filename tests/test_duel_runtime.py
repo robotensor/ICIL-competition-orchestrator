@@ -10,6 +10,7 @@ import pytest
 from duel_helpers import REPLAY, REPLAY_REF, ZERO, FakePolicyRuntime
 from icil_orchestrator.duel.local_runtime import SubprocessPolicyRuntime, tree_hash
 from icil_orchestrator.duel.runtime import (
+    POLICY,
     PolicyDied,
     PolicyRuntime,
     RuntimeUnavailable,
@@ -91,11 +92,13 @@ def test_each_serve_is_a_fresh_server_with_its_own_key_gone_after_its_unit(runti
     assert seen[0][0] != seen[1][0] and seen[0][1] != seen[1][1]
 
 
-def test_a_server_killed_under_its_unit_is_reported_dead(spec, tmp_path):
+def test_a_server_killed_under_its_unit_is_reported_dead_by_its_own_doing(spec, tmp_path):
     runtime = FakePolicyRuntime(spec, kill_on_serve={0})
     prepared = runtime.prepare(runtime.fetch(REPLAY_REF, workdir=tmp_path), workdir=tmp_path)
     with runtime.serve(prepared, workdir=tmp_path / "fp-000") as served:
-        assert served.died().startswith("the policy process was killed by signal 9")
+        end = served.died()
+        assert end.cause == POLICY
+        assert end.reason.startswith("the policy process was killed by signal 9")
 
 
 def test_a_server_that_never_listens_is_a_dead_policy(runtime, tmp_path):

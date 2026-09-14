@@ -12,7 +12,14 @@ import os
 import pytest
 
 from conftest import fake_spec_doc
-from duel_helpers import REPLAY, REPLAY_REF, ZERO, ZERO_REF, RecordingReporter
+from duel_helpers import (
+    REPLAY,
+    REPLAY_REF,
+    ZERO,
+    ZERO_REF,
+    InspectingFakeDocker,
+    RecordingReporter,
+)
 from icil_orchestrator.canon import Signer
 from icil_orchestrator.duel.docker_runtime import DockerPolicyRuntime
 from icil_orchestrator.duel.orchestrate import DuelRequest, Orchestrator
@@ -21,7 +28,7 @@ from icil_orchestrator.store.verify import verify_store
 from icil_orchestrator.store.writer import Store
 from icil_orchestrator.submissions.fetch import tree_hash
 from store_helpers import make_record, publish
-from submission_helpers import FAKE_BASE_DIGEST, FakeDocker
+from submission_helpers import FAKE_BASE_DIGEST
 
 TRACK = "franka_1arm"
 
@@ -38,20 +45,31 @@ def spec(spec_doc, write_spec, fake_installed):
 
 @pytest.fixture
 def docker():
-    fake = FakeDocker()
+    fake = InspectingFakeDocker()
     fake.images["icil-policy-base:latest"] = FAKE_BASE_DIGEST
     yield fake
     fake.kill_all()
 
 
 class Killing(DockerPolicyRuntime):
-    """Kills the container of the units named in `kill`, as soon as it listens."""
+    """Ends the container of the challenger's units named in `kill` as soon as it listens:
+    removed from outside (`remove`), its process killed (`exit`), or killed for memory (`oom`)."""
 
     kill: set[str] = set()
+    how = "remove"
 
     def _started(self, container, served):
-        if served.log_file.parent.name in self.kill:
+        unit_dir = served.log_file.parent
+        if unit_dir.name not in self.kill or unit_dir.parent.name != "challenger":
+            return
+        if self.how == "remove":
             self.docker.remove(container.name)
+            return
+        if self.how == "oom":
+            self.docker.oom_killed.add(container.name)
+        process = self.docker.processes[container.name]
+        process.kill()
+        process.wait()
 
 
 def runtime_for(spec, docker, tmp_path, cls=DockerPolicyRuntime, **kwargs):
@@ -114,13 +132,31 @@ def test_a_submission_that_does_not_build_is_refused_and_the_duel_void(spec, doc
     assert docker.runs == [] and len(store.iter_index(TRACK)) == 1
 
 
-def test_a_container_that_dies_under_its_unit_voids_the_rest_of_its_side(spec, docker, tmp_path):
+def test_a_container_removed_from_outside_voids_its_unit_and_the_next_one_runs(
+    spec, docker, tmp_path
+):
     runtime = runtime_for(spec, docker, tmp_path, cls=Killing)
-    runtime.kill = {"fp-000"}
+    runtime.kill, runtime.how = {"fp-000"}, "remove"
     store, result = duel(spec, runtime, tmp_path)
-    assert result.status == "void"
-    assert "the policy container exited" in result.units[0]["challenger_error"]
-    assert "died earlier in this side" in result.units[1]["challenger_error"]
+    first, second, _ = result.units
+    assert first["void"] and "the policy container is gone" in first["challenger_error"]
+    assert second["challenger_success"] is True, "a removed container stopped its side"
+    assert result.status == "void" and "1 of 3 units are void" in result.reason
+
+
+@pytest.mark.parametrize(
+    "how, said", [("exit", "exited (-9)"), ("oom", "was killed for going over its")]
+)
+def test_a_container_that_ends_by_its_own_doing_fails_its_unit(spec, docker, tmp_path, how, said):
+    runtime = runtime_for(spec, docker, tmp_path, cls=Killing)
+    runtime.kill, runtime.how = {"fp-000"}, how
+    store, result = duel(spec, runtime, tmp_path)
+    assert result.published, result.reason
+    first, second, third = result.units
+    assert (first["challenger_success"], first["void"]) == (False, False)
+    assert said in first["challenger_error"]
+    assert second["challenger_success"] is True and third["challenger_success"] is True
+    assert result.record["void"] == 0 and verify_store(store.root, spec).ok
 
 
 def test_the_seams_errors_are_the_sandboxs_mapped(spec, docker, tmp_path):

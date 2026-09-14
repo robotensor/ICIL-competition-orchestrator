@@ -12,9 +12,15 @@ things, in order:
 - `serve(prepared, workdir=...)`: a context manager that serves the policy **for one unit** and
   yields where to reach it. `python -m icil_policy.serve` accepts exactly one client and exits
   when it hangs up, so every unit gets a fresh policy process - which is also what keeps
-  whatever a policy remembers from leaking from one unit into the next. When the policy never
-  listens, `serve` raises `PolicyDied`; after the unit, `ServedPolicy.died()` says whether it died
-  underneath the benchmark. Either way the unit is void, and so are the side's remaining units.
+  whatever a policy remembers from leaking from one unit into the next, and why a policy that died
+  on one unit is simply served again for the next.
+
+Whose a failure is decides what it costs, so the seam keeps the two apart. A policy that never
+listens within `budgets.policy_start_seconds`, or exits before it does, raises `PolicyDied`: the
+submission's own doing, that side's failure on the unit. A runtime that cannot serve at all (no
+Docker, a container removed from outside) raises `RuntimeUnavailable`: nobody's doing, void for
+both. After the unit, `ServedPolicy.died()` says how the policy ended if it did not end cleanly, as
+a `PolicyEnd` whose `cause` is one or the other.
 
 Two runtimes implement it: `docker_runtime.DockerPolicyRuntime`, the sandbox (#4's containers),
 and `local_runtime.SubprocessPolicyRuntime`, which runs a local directory's policy on this host
@@ -46,7 +52,28 @@ class RuntimeUnavailable(RuntimeError):
 
 
 class PolicyDied(RuntimeError):
-    """A served policy never listened, or ended while its unit was being played."""
+    """A served policy never listened: it exited first, or did not listen in time. Its side's
+    failure on the unit, never a void."""
+
+
+#: Who brought about a unit's end: the side's own submission, or the harness around it. The same
+#: two words a benchmark's `read_result` may give as `void_cause`.
+POLICY = "policy"
+HARNESS = "harness"
+CAUSES = (POLICY, HARNESS)
+
+
+@dataclass(frozen=True)
+class PolicyEnd:
+    """How a unit's policy ended underneath it, when it did not end cleanly.
+
+    `cause` is `policy` for an end its submission can bring about - a non-zero exit, a signal,
+    running out of the sandbox's memory - and `harness` for one it cannot: its container removed
+    from outside, or Docker not answering about it.
+    """
+
+    reason: str
+    cause: str
 
 
 @dataclass(frozen=True)
@@ -87,7 +114,7 @@ class PreparedSubmission:
         }
 
 
-def _alive() -> str | None:
+def _alive() -> PolicyEnd | None:
     return None
 
 
@@ -104,8 +131,8 @@ class ServedPolicy:
     authkey_env: str
     env: dict[str, str]
     log_file: Path
-    #: Called once the unit is over: why the policy died underneath it, or None if it did not.
-    died: Callable[[], str | None] = _alive
+    #: Called once the unit is over: how the policy ended underneath it, or None if it did not.
+    died: Callable[[], PolicyEnd | None] = _alive
 
 
 @runtime_checkable

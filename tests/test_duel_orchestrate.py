@@ -13,6 +13,7 @@ from duel_helpers import (
     Crash,
     FakePolicyRuntime,
     RecordingReporter,
+    harness_voiding,
 )
 from icil_orchestrator.benchmarks.units import plugin_units
 from icil_orchestrator.canon import Signer
@@ -33,6 +34,8 @@ from store_helpers import make_record, publish
 from submission_helpers import write_policy_repo
 
 TRACK = "franka_1arm"
+#: The replay example under another name: a king that wins every unit it gets to play.
+BOMB_REF = SubmissionRef.make("org/bomb-policy", "4" * 40)
 
 
 @pytest.fixture
@@ -187,22 +190,49 @@ def test_genesis_crowns_the_first_challenger_of_an_empty_track_with_its_own_scor
     verified(store, duel_spec)
 
 
-def test_a_side_whose_runtime_dies_voids_the_rest_and_the_duel_above_max_void_fraction(
+def test_a_king_whose_policy_dies_on_every_unit_loses_them_and_the_crown(
     duel_spec, store, tmp_path
 ):
+    """A king cannot keep the crown by making its own policy die: each death is its failure, not
+    a void that would make the duel stand still."""
+    crowned(store, duel_spec, BOMB_REF)
+    runtime = FakePolicyRuntime(
+        duel_spec,
+        {REPLAY_REF.repo: REPLAY, BOMB_REF.repo: REPLAY},
+        kill_repo=BOMB_REF.repo,
+    )
+    duel = orchestrator(duel_spec, store, tmp_path, runtime)
+    result = duel.run(DuelRequest(TRACK, REPLAY_REF, BOMB_REF, "smoke", block=2))
+
+    assert result.published and result.record["dethroned"] is True, result.reason
+    assert result.record["void"] == 0 and result.record["wins"] == 3
+    for unit in result.units:
+        assert (unit["challenger_success"], unit["king_success"], unit["void"]) == (
+            True,
+            False,
+            False,
+        )
+        assert "killed by signal 9" in unit["king_error"]
+    assert [repo for repo, _ in runtime.serves].count(BOMB_REF.repo) == 3, "a king unit unplayed"
+    assert store.head(TRACK)["king"] == REPLAY_REF.as_dict()
+    verified(store, duel_spec)
+
+
+def test_a_duel_with_too_many_units_void_for_the_harness_is_void(duel_spec, store, tmp_path):
     crowned(store, duel_spec, ZERO_REF)
-    runtime = FakePolicyRuntime(duel_spec, kill_on_serve={1})
+    runtime = FakePolicyRuntime(duel_spec)
     live = RecordingReporter(duel_spec)
     req = DuelRequest(TRACK, REPLAY_REF, ZERO_REF, "smoke", block=2)
-    duel = orchestrator(duel_spec, store, tmp_path, runtime, live=live)
+    ids = [u["unit_id"] for u in plugin_units(duel_spec, TRACK, req.duel_id(duel_spec), "smoke")]
+    lost = harness_voiding(set(ids[1:]))
+    duel = orchestrator(duel_spec, store, tmp_path, runtime, live=live, resolve=lambda name: lost)
     result = duel.run(req)
 
     assert result.status == "void" and "2 of 3 units are void after the challenger" in result.reason
     first, second, third = result.units
     assert not first["void"] and second["void"] and third["void"]
-    assert "policy runtime died" in second["challenger_error"]
-    assert "died earlier in this side" in third["challenger_error"]
-    assert [repo for repo, _ in runtime.serves] == [REPLAY_REF.repo] * 2, "the king was played"
+    assert "the simulator lost it" in second["challenger_error"]
+    assert [repo for repo, _ in runtime.serves] == [REPLAY_REF.repo] * 3, "the king was played"
     assert len(store.iter_index(TRACK)) == 1, "a void duel was published"
     assert store.head(TRACK)["king"] == ZERO_REF.as_dict()
     outcome = json.loads((duel.run_dir(req) / OUTCOME_FILE).read_text())
@@ -223,10 +253,11 @@ def test_a_unit_void_on_one_side_is_void_for_both_and_a_duel_within_the_limit_st
     spec = write_spec(doc, name="lenient.json")
     store.spec = spec
     crowned(store, spec, ZERO_REF)
-    runtime = FakePolicyRuntime(spec, kill_on_serve={2})  # the challenger's last unit
-    result = orchestrator(spec, store, tmp_path, runtime).run(
-        DuelRequest(TRACK, REPLAY_REF, ZERO_REF, "smoke", block=2)
-    )
+    runtime = FakePolicyRuntime(spec)
+    req = DuelRequest(TRACK, REPLAY_REF, ZERO_REF, "smoke", block=2)
+    ids = [u["unit_id"] for u in plugin_units(spec, TRACK, req.duel_id(spec), "smoke")]
+    lost = harness_voiding({ids[2]})  # the challenger's last unit
+    result = orchestrator(spec, store, tmp_path, runtime, resolve=lambda name: lost).run(req)
     assert result.published, result.reason
     last = result.units[2]
     assert last["void"] and last["challenger_success"] is None and last["king_success"] is None
