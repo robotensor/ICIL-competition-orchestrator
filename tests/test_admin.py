@@ -253,6 +253,9 @@ def test_a_health_check_during_a_submission_does_not_lose_it(server, paths, monk
         ({"repo": "not a repo"}, 422, "repo"),
         ({"repo": "org/policy", "revision": 7}, 422, "revision"),
         ({"repo": "org/policy", "revision": "has space"}, 422, "revision"),
+        # A pull request's commits are pushed by anyone on the Hub, not the repository's owner.
+        ({"repo": "org/policy", "revision": "refs/pr/1"}, 422, "revision"),
+        ({"repo": "org/policy", "revision": "refs/heads/main"}, 422, "revision"),
         ({"repo": "org/policy", "source": "<script>"}, 422, "source"),
         ({}, 422, "repo"),
         ([{"repo": "org/policy"}], 400, "body"),

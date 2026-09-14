@@ -308,6 +308,15 @@ class AdminServer:
                 "default branch.",
                 "revision",
             )
+        if revision is not None and revision.startswith("refs/"):
+            # A pull request's ref (refs/pr/N) holds commits anyone on the Hub can push to the
+            # repository, which would be queued and published as its owner's.
+            raise Refused(
+                422,
+                "revision must name a branch or a tag as such (main, not refs/heads/main), or a "
+                "commit; a ref under refs/, a pull request's included, is not queued.",
+                "revision",
+            )
 
         track = body.get("track")
         if track is None:
