@@ -19,6 +19,8 @@ orchestrator counts that as the side's failure, not a void for both.
 policy was done with it.
 
 Every run appends a line to `runs.log` in its directory, so a test can count how often a unit ran.
+Both commands write `given.json` there first: the arguments they were given and their environment,
+the policy's key left out, so a test can see what the orchestrator passed a benchmark.
 """
 
 from __future__ import annotations
@@ -46,11 +48,20 @@ def clip(tag: str) -> bytes:
     return CLIP + hashlib.sha256(tag.encode()).hexdigest().encode()
 
 
+def record_given(out: Path, args: argparse.Namespace) -> None:
+    """`given.json`: the command's arguments and environment, without the policy's key."""
+    secret = getattr(args, "authkey_env", None)
+    environ = {k: v for k, v in os.environ.items() if k != secret}
+    given = {"args": vars(args), "environ": environ}
+    (out / "given.json").write_text(json.dumps(given, sort_keys=True))
+
+
 def materialize(args: argparse.Namespace) -> int:
     import numpy as np
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+    record_given(out, args)
     behaviour = args.behaviour
     if behaviour == "crash":
         print("the expert lost the GPU", file=sys.stderr)
@@ -84,6 +95,7 @@ def run(args: argparse.Namespace) -> int:
     out.mkdir(parents=True, exist_ok=True)
     with open(out / "runs.log", "a") as fh:
         fh.write(f"{os.getpid()}\n")
+    record_given(out, args)
     if args.authkey_env not in os.environ:
         print(f"no policy authkey in ${args.authkey_env}", file=sys.stderr)
         return 4

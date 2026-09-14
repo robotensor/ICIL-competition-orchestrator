@@ -7,6 +7,7 @@ that moved from one that did not.
 
 from __future__ import annotations
 
+import json
 import os
 import secrets
 import shutil
@@ -123,6 +124,9 @@ def test_the_replay_policy_solves_a_unit_and_the_zero_policy_does_not(
     assert outcome.success is wins and outcome.steps == 5
     assert outcome.progress == (1.0 if wins else 0.0)
     assert outcome.clip and (tmp_path / "run" / "runs.log").read_text().count("\n") == 1
+    given = (tmp_path / "run" / "given.json").read_text()
+    assert json.loads(given)["args"]["act_timeout_s"] == 10.0
+    assert AUTHKEY_ENV not in json.loads(given)["environ"] and key.hex() not in given
 
 
 def test_a_policy_that_is_not_there_is_void_for_the_policys_cause_with_the_reason(fake, tmp_path):
