@@ -55,19 +55,73 @@ class FakeInfo:
 
 
 @dataclass
+class FakeRef:
+    name: str
+    ref: str
+    target_commit: str
+
+
+@dataclass
+class FakeRefs:
+    branches: list[FakeRef]
+    tags: list[FakeRef]
+    pull_requests: list[FakeRef] | None
+
+
+@dataclass
+class FakeCommit:
+    commit_id: str
+
+
+@dataclass
 class FakeHub:
     """`HfApi.repo_info` over a table of repositories: `{repo: {revision: (sha, files)}}`, where
-    `files` maps a path to its size. Every commit sha is also a revision of its repository."""
+    `files` maps a path to its size. Every commit sha is also a revision of its repository.
+
+    `list_repo_refs` and `list_repo_commits` answer from what `add` was told: each name is a branch
+    at the commit, each of `tags` a tag, and `pr=N` makes it `refs/pr/N`'s alone. A commit added
+    with none of them is the tip of a branch of its own, so it can be queued. `parent` puts the
+    commit's history behind it: a commit added under a branch's name again moves the branch on and
+    keeps the one before in its history."""
 
     repos: dict[str, dict[str, tuple[str, dict[str, int | None]]]] = field(default_factory=dict)
     calls: list[tuple[str, str]] = field(default_factory=list)
     trees: dict[str, Path] = field(default_factory=dict)
+    #: `{repo: {name: sha}}` for branches and tags, `{repo: {number: sha}}` for pull requests.
+    branches: dict[str, dict[str, str]] = field(default_factory=dict)
+    tags: dict[str, dict[str, str]] = field(default_factory=dict)
+    pull_requests: dict[str, dict[int, str]] = field(default_factory=dict)
+    #: `{repo: {sha: [sha, parent, grandparent, ...]}}`, as the Hub lists a revision's commits.
+    history: dict[str, dict[str, list[str]]] = field(default_factory=dict)
+    ref_calls: list[str] = field(default_factory=list)
+    commit_calls: list[tuple[str, str]] = field(default_factory=list)
 
-    def add(self, repo: str, sha: str, files: dict[str, int | None], *names: str) -> None:
+    def add(
+        self,
+        repo: str,
+        sha: str,
+        files: dict[str, int | None],
+        *names: str,
+        tags: tuple[str, ...] = (),
+        pr: int | None = None,
+        parent: str | None = None,
+    ) -> None:
         entry = self.repos.setdefault(repo, {})
         entry[sha] = (sha, files)
-        for name in names:
+        history = self.history.setdefault(repo, {})
+        history[sha] = [sha, *history.get(parent, [parent])] if parent else [sha]
+        if pr is not None:
+            assert not names and not tags, "a pull request's commit is on no branch or tag"
+            entry[f"refs/pr/{pr}"] = (sha, files)
+            self.pull_requests.setdefault(repo, {})[pr] = sha
+            return
+        for name in (*names, *tags):
             entry[name] = (sha, files)
+        branches = self.branches.setdefault(repo, {})
+        for name in names or (() if tags else (f"unnamed-{sha[:12]}",)):
+            branches[name] = sha
+        for name in tags:
+            self.tags.setdefault(repo, {})[name] = sha
 
     def repo_info(self, repo_id, *, revision=None, repo_type=None, files_metadata=False):
         self.calls.append((repo_id, revision))
@@ -82,6 +136,37 @@ class FakeHub:
             )
         sha, files = self.repos[repo_id][revision]
         return FakeInfo(sha, [FakeSibling(p, s) for p, s in files.items()])
+
+    def list_repo_refs(self, repo_id, *, repo_type=None, include_pull_requests=False):
+        self.ref_calls.append(repo_id)
+        assert repo_type == "model"
+        if repo_id not in self.repos:
+            raise not_found(
+                RepositoryNotFoundError, "Repository", "Repository not found", repo_id, "refs"
+            )
+
+        def refs(table: dict, prefix: str) -> list[FakeRef]:
+            return [FakeRef(str(n), f"{prefix}{n}", s) for n, s in table.get(repo_id, {}).items()]
+
+        return FakeRefs(
+            branches=refs(self.branches, "refs/heads/"),
+            tags=refs(self.tags, "refs/tags/"),
+            pull_requests=refs(self.pull_requests, "refs/pr/") if include_pull_requests else None,
+        )
+
+    def list_repo_commits(self, repo_id, *, repo_type=None, revision=None):
+        self.commit_calls.append((repo_id, revision))
+        assert repo_type == "model"
+        if repo_id not in self.repos:
+            raise not_found(
+                RepositoryNotFoundError, "Repository", "Repository not found", repo_id, revision
+            )
+        history = self.history.get(repo_id, {})
+        if revision not in history:
+            raise not_found(
+                RevisionNotFoundError, "Revision", f"Invalid rev id: {revision}", repo_id, revision
+            )
+        return [FakeCommit(sha) for sha in history[revision]]
 
 
 def write_policy_repo(root: Path, policy: str = "pkg.policy:Policy", **manifest: Any) -> Path:

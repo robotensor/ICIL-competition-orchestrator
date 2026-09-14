@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import time
 from pathlib import Path
 
 import httpx
@@ -22,7 +23,12 @@ from icil_orchestrator.submissions.fetch import (
     measure,
     tree_hash,
 )
-from icil_orchestrator.submissions.resolve import Resolved, resolve
+from icil_orchestrator.submissions.resolve import (
+    Resolved,
+    check_reachable,
+    resolve,
+    resolve_for_queue,
+)
 from submission_helpers import SHA_A, SHA_B, FakeHub, hub_response, write_policy_repo
 
 # -- resolve ------------------------------------------------------------------------------------
@@ -104,6 +110,74 @@ def test_a_hub_that_cannot_be_asked_is_the_harness_problem_not_the_submissions(h
         resolve("org/policy", "main", api=Lying())
     with pytest.raises(SubmissionError, match="to another"):
         resolve("org/policy", SHA_A, api=Swapping())
+
+
+OLD, TIP, TAGGED, PROPOSED, CLOSED = (c * 40 for c in "12345")
+
+
+@pytest.fixture
+def history():
+    """org/policy: main moved from OLD to TIP, v1 tags TAGGED off OLD, pull request 1 proposes
+    PROPOSED on TIP, and pull request 2, closed, left CLOSED on no ref at all."""
+    hub = FakeHub()
+    files = {"icil.yaml": 80}
+    hub.add("org/policy", OLD, files, "main")
+    hub.add("org/policy", TIP, files, "main", parent=OLD)
+    hub.add("org/policy", TAGGED, files, tags=("v1",), parent=OLD)
+    hub.add("org/policy", PROPOSED, files, pr=1, parent=TIP)
+    hub.add("org/policy", CLOSED, files, pr=2, parent=OLD)
+    del hub.pull_requests["org/policy"][2]
+    return hub
+
+
+def test_a_commit_is_queued_only_from_a_branch_or_a_tag(history):
+    """The Hub serves any commit it holds by its sha, a pull request's included, and anyone on the
+    Hub can open a pull request: a commit only a pull request holds is refused for the queue."""
+    for sha in (TIP, OLD, TAGGED):
+        assert resolve_for_queue("org/policy", sha, api=history).sha == sha
+    assert resolve_for_queue("org/policy", "main", api=history).sha == TIP
+    assert resolve_for_queue("org/policy", "v1", api=history).sha == TAGGED
+    for sha in (PROPOSED, CLOSED):
+        with pytest.raises(SubmissionRejected) as info:
+            resolve_for_queue("org/policy", sha, api=history)
+        assert info.value.step == "resolve"
+        assert info.value.reason == (
+            f"org/policy@{sha}: no branch or tag of the repository holds this commit; a pull "
+            "request's commit (refs/pr/N), or one no branch holds any more, is not queued"
+        )
+    # Resolving alone still serves it: a king already crowned is not refused for where it lives.
+    assert resolve("org/policy", PROPOSED, api=history).sha == PROPOSED
+
+    history.calls.clear()
+    history.ref_calls.clear()
+    for name in ("refs/pr/1", "refs/heads/main"):
+        with pytest.raises(
+            SubmissionRejected, match="a ref under refs/, a pull request's included"
+        ):
+            resolve_for_queue("org/policy", name, api=history)
+    assert history.calls == [] and history.ref_calls == [], "the Hub was asked about a refs/ name"
+
+
+def test_a_history_is_asked_for_only_when_no_tip_is_the_commit(history):
+    check_reachable("org/policy", TIP, api=history)
+    check_reachable("org/policy", TAGGED, api=history)
+    assert history.commit_calls == [], "a branch's or tag's tip needs no history"
+    check_reachable("org/policy", OLD, api=history)
+    assert history.commit_calls == [("org/policy", TIP)], "the walk went past the first holder"
+
+
+def test_a_hub_that_cannot_confirm_a_commit_in_time_is_the_harness_problem(history):
+    with pytest.raises(SubmissionError, match="took too long listing org/policy's history"):
+        check_reachable("org/policy", PROPOSED, api=history, deadline=time.monotonic() - 1)
+
+    def unreachable(*args, **kwargs):
+        raise httpx.ConnectError("[Errno 101] Network is unreachable")
+
+    history.list_repo_refs = unreachable
+    with pytest.raises(SubmissionError, match="the Hub is unreachable resolving org/policy@"):
+        resolve_for_queue("org/policy", "main", api=history)
+    with pytest.raises(SubmissionRejected, match="repository not found"):
+        check_reachable("org/missing", TIP, api=FakeHub())
 
 
 def test_an_entry_the_hub_gives_no_size_for_counts_nothing_and_is_not_downloaded(
