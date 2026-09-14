@@ -1,0 +1,5 @@
+# A competitor whose act runs a torch.compile'd function on the CPU. tests/test_submission_jit.py
+# builds and serves it in the sandbox (marked slow: the build downloads torch).
+api: 1
+policy: compiled.policy:CompiledPolicy
+requirements: requirements.txt

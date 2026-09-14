@@ -73,4 +73,21 @@
   uses. The checkout is copied into its image rather than bind-mounted read-only as issue #4's
   scope put it: the requirements install needs it at build time, the recorded image id is the code
   that ran, and the container mounts nothing of the host but its socket directory.
+- (feat): a policy may compile at run time - `torch.compile`, Triton, cffi,
+  `torch.utils.cpp_extension` (with `ninja` in its requirements). The sandbox's `/tmp` is a tmpfs mounted `exec,nosuid,nodev` and
+  capped, by two keys added beside `spec.submission.sandbox.tmpfs`, which keeps its shape:
+  `tmpfs_exec` (true) and `tmpfs_bytes` (8 GiB for each path, all of them together no more than
+  `memory_bytes`, which their pages count against); `spec_version` stays 7. `validate_spec` also
+  refuses a tmpfs path Docker would not take as spelled, a repeated one, and one at `/` or at or
+  under `/proc`, `/sys`, `/dev`, the checkout or the socket's directory. The container starts with `HOME=/tmp/home`, made at start,
+  and `TMPDIR`, `XDG_CACHE_HOME`, `TRITON_CACHE_DIR`, `TORCHINDUCTOR_CACHE_DIR` and
+  `TORCH_EXTENSIONS_DIR` pointing into `/tmp`. `docker/policy-base` is built from CUDA 12.8.1
+  `devel` (nvcc and the CUDA headers) with build-essential and python3.10-dev: 9.49 GB, where the
+  runtime base was 3.52 GB. Submission code already runs natively in its container, so exec on a
+  capped nosuid,nodev tmpfs removes a speed bump, not a boundary: no network, the read-only root,
+  the non-root user and the limits are unchanged. The shared socket directory's tmpfs is now
+  mounted `nosuid,nodev,noexec` as well, so the spec's tmpfs is the only place code a policy
+  writes can run from. `tests/test_submission_jit.py` serves a policy that compiles C on its
+  first act and, under `slow`, one whose act runs `torch.compile` on the CPU, and walks every
+  mount inside to check where the sandbox user can write and run code.
 - (chore): scaffold the orchestrator: package, pure test suite, CI and the repository's rules.

@@ -8,6 +8,7 @@ kernel's isolation, which the container tests check for real.
 
 from __future__ import annotations
 
+import json
 import os
 import socket
 import subprocess
@@ -21,17 +22,25 @@ from icil_orchestrator.submissions import SubmissionRejected
 from icil_orchestrator.submissions.checks import check_repository
 from icil_orchestrator.submissions.container import (
     AUTHKEY_ENV,
+    CACHE_ENV,
     HARDENING,
+    PREPARE_HOME,
     SHARED_DIR_BYTES,
     SHARED_DIR_INODES,
+    SHARED_DIR_SOURCE,
+    TMPFS_HARDENING,
     Owner,
     PolicyContainer,
     can_bound_shared_dir,
+    container_argv,
     is_socket,
+    mount_shared_dir,
+    policy_environment,
     prepare_socket_dir,
     reap_orphans,
     run_argv,
     serve_argv,
+    tmpfs_options,
 )
 from icil_orchestrator.submissions.docker import DockerError
 from icil_orchestrator.submissions.image import (
@@ -97,7 +106,11 @@ def test_run_argv_is_exactly_the_specs_sandbox_and_one_shared_directory(spec, tm
         "--network",
         sandbox["network"],
         "--read-only",
-        *[flag for path in sandbox["tmpfs"] for flag in ("--tmpfs", path)],
+        *[
+            flag
+            for path in sandbox["tmpfs"]
+            for flag in ("--tmpfs", f"{path}:exec,nosuid,nodev,size={sandbox['tmpfs_bytes']}")
+        ],
         "--user",
         sandbox["user"],
         "--gpus",
@@ -114,12 +127,33 @@ def test_run_argv_is_exactly_the_specs_sandbox_and_one_shared_directory(spec, tm
         "--mount",
         f"type=bind,src={tmp_path},dst=/run/icil",
         "--env",
+        "HOME=/tmp/home",
+        "--env",
+        "TMPDIR=/tmp",
+        "--env",
+        "XDG_CACHE_HOME=/tmp/home/.cache",
+        "--env",
+        "TRITON_CACHE_DIR=/tmp/home/.cache/triton",
+        "--env",
+        "TORCHINDUCTOR_CACHE_DIR=/tmp/home/.cache/torchinductor",
+        "--env",
+        "TORCH_EXTENSIONS_DIR=/tmp/home/.cache/torch_extensions",
+        "--env",
         AUTHKEY_ENV,
         "icil-submission:k-s",
+        "sh",
+        "-c",
+        PREPARE_HOME,
+        "sh",
         *serve_argv(spec),
     ]
     assert sandbox["network"] == "none" and sandbox["read_only_root"] is True
+    assert sandbox["tmpfs"] == ["/tmp"] and sandbox["tmpfs_exec"] is True
     assert args.count("--mount") == 1 and "--volume" not in args and "-v" not in args
+    assert HARDENING == ("--cap-drop", "ALL", "--security-opt", "no-new-privileges")
+    assert not {"--cap-add", "--privileged", "--device", "--security-opt=seccomp=unconfined"} & set(
+        args
+    ), "the relaxation is the tmpfs's exec, and nothing else"
     assert serve_argv(spec) == [
         "python",
         "-m",
@@ -136,6 +170,72 @@ def test_run_argv_is_exactly_the_specs_sandbox_and_one_shared_directory(spec, tm
     # A policy that needs no GPU gets none; the spec's count is the default.
     without = run_argv(spec, image="i", name="n", socket_dir=tmp_path, gpus=0)
     assert "--gpus" not in without and without.count("--memory") == 1
+
+
+def test_the_scratch_tmpfs_options_and_the_cache_variables_come_from_the_spec(
+    spec_doc, write_spec, tmp_path
+):
+    """Whether /tmp runs code and how big it is are the spec's; nosuid and nodev are not, and
+    every cache variable points under the first tmpfs path, whatever it is."""
+    spec = write_spec(spec_doc)
+    sandbox = spec.submission["sandbox"]
+    assert tmpfs_options(spec) == f"exec,nosuid,nodev,size={sandbox['tmpfs_bytes']}"
+    assert TMPFS_HARDENING == ("nosuid", "nodev")
+    doc = json.loads(json.dumps(spec_doc))
+    doc["submission"]["sandbox"].update(
+        tmpfs=["/scratch", "/var/tmp"], tmpfs_exec=False, tmpfs_bytes=1 << 30
+    )
+    closed = write_spec(doc, name="noexec.json")
+    assert tmpfs_options(closed) == f"noexec,nosuid,nodev,size={1 << 30}"
+    args = run_argv(closed, image="i", name="n", socket_dir=tmp_path)
+    assert [args[i + 1] for i, a in enumerate(args) if a == "--tmpfs"] == [
+        f"/scratch:noexec,nosuid,nodev,size={1 << 30}",
+        f"/var/tmp:noexec,nosuid,nodev,size={1 << 30}",
+    ]
+    env = policy_environment(closed)
+    assert env == {
+        "HOME": "/scratch/home",
+        "TMPDIR": "/scratch",
+        "XDG_CACHE_HOME": "/scratch/home/.cache",
+        "TRITON_CACHE_DIR": "/scratch/home/.cache/triton",
+        "TORCHINDUCTOR_CACHE_DIR": "/scratch/home/.cache/torchinductor",
+        "TORCH_EXTENSIONS_DIR": "/scratch/home/.cache/torch_extensions",
+    }
+    assert {name for name, _ in CACHE_ENV} <= set(env)
+    assert [f"{k}={v}" for k, v in env.items()] == [
+        args[i + 1] for i, a in enumerate(args) if a == "--env" and "=" in args[i + 1]
+    ]
+
+
+def test_the_container_command_makes_the_home_then_becomes_the_server(spec, tmp_path):
+    """The tmpfs is empty at every start, so a shell makes the home and cache root first and then
+    execs the server with its arguments intact (run here on the host, in the same shell syntax)."""
+    command = container_argv(spec)
+    assert command[:4] == ["sh", "-c", PREPARE_HOME, "sh"] and command[4:] == serve_argv(spec)
+    home = tmp_path / "home"
+    probe = "import os, sys; print(os.getpid()); print(sys.argv[1:])"
+    done = subprocess.Popen(
+        [*command[:4], sys.executable, "-c", probe, "an arg with spaces", "$HOME"],
+        env={"PATH": os.environ["PATH"], "HOME": str(home), "XDG_CACHE_HOME": str(home / ".cache")},
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    out, _ = done.communicate(timeout=60)
+    assert done.returncode == 0
+    pid, argv = out.splitlines()
+    assert int(pid) == done.pid, "exec: the server is the shell's process, not its child"
+    assert argv == "['an arg with spaces', '$HOME']", "arguments pass through unexpanded"
+    assert (home / ".cache").is_dir()
+    assert (home.stat().st_mode & 0o777, (home / ".cache").stat().st_mode & 0o777) == (0o700, 0o700)
+    # A home that cannot be made stops the container before the server starts.
+    failed = subprocess.run(
+        [*command[:4], sys.executable, "-c", "print('ran')"],
+        env={"PATH": os.environ["PATH"], "HOME": "/proc/no-home", "XDG_CACHE_HOME": "/proc/x"},
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert failed.returncode != 0 and "ran" not in failed.stdout
 
 
 def test_the_shared_directory_is_private_to_the_sandbox_user(sandbox_spec, tmp_path, shared_mounts):
@@ -182,6 +282,27 @@ def test_the_shared_directory_is_a_bounded_tmpfs_for_the_containers_lifetime(
         is None
     )
     assert can_bound_shared_dir() == (os.geteuid() == 0)
+
+
+def test_nothing_written_to_the_shared_tmpfs_runs(monkeypatch, tmp_path):
+    """The policy writes its socket and log to the shared directory, and nothing else it writes
+    there may run: the tmpfs is mounted nosuid, nodev and noexec, which the bind mount into the
+    container keeps (the container tests read it from /proc/mounts), so the spec's tmpfs is the
+    only place code a policy writes runs from. `mount_shared_dir` is the real one, imported before
+    the pure suite stands a recorder in; only the `mount` command is caught."""
+    calls: list[list[str]] = []
+    monkeypatch.setattr("icil_orchestrator.submissions.container._mount_command", calls.append)
+    mount_shared_dir(tmp_path, 1000, 1001)
+    ((*command, options, source, target),) = calls
+    assert (command, source, target) == (
+        ["mount", "-t", "tmpfs", "-o"],
+        SHARED_DIR_SOURCE,
+        str(tmp_path),
+    )
+    flags = options.split(",")
+    assert {"nosuid", "nodev", "noexec"} <= set(flags), options
+    assert {f"size={SHARED_DIR_BYTES}", f"nr_inodes={SHARED_DIR_INODES}"} <= set(flags), options
+    assert {"uid=1000", "gid=1001", "mode=0700"} <= set(flags), options
 
 
 def test_only_a_socket_itself_counts_as_listening(tmp_path):

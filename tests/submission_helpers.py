@@ -224,12 +224,17 @@ class FakeDocker:
         )
         mount = next(a for a in args if a.startswith("type=bind,src="))
         shared = mount.removeprefix("type=bind,src=").split(",")[0]
-        image = args[args.index("--env") + 2]
+        # The authkey's `--env NAME` is the last flag; the image follows it, then the command.
+        last_env = len(args) - 1 - args[::-1].index("--env")
+        image = args[last_env + 2]
         self.container_images[name] = image
         checkout = self.contexts[self.images[image]]
+        command = args[last_env + 3 :]
+        # The shell that makes the home on the container's tmpfs has no tmpfs to make it on here:
+        # the server runs directly.
+        command = command[command.index("python") :]
         argv = [
-            a.replace("/submission", str(checkout)).replace("/run/icil", shared)
-            for a in args[args.index(image) + 1 :]
+            a.replace("/submission", str(checkout)).replace("/run/icil", shared) for a in command
         ]
         argv[0] = sys.executable
         environ = {"PATH": os.environ.get("PATH", ""), **(env or {})}
