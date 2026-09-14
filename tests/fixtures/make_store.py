@@ -3,8 +3,11 @@
     python tests/fixtures/make_store.py [OUT]      # default: tests/fixtures/store
 
 It holds a genesis, one `light` duel in which a replay challenger dethrones a zero-action king (one
-unit void), and a queue with one entry waiting. Units are derived through the fake benchmark exactly
-as a duel derives them, so their ids, seeds and skills are what the orchestrator would publish.
+unit void for the harness), and a queue with one entry waiting, in the shapes the orchestrator
+publishes: a genesis names its duel id and carries its units and scores, every unit its
+`prompt_sha256`, and every event its `sides`, `scoring`, `benchmarks` and `runtime`. Units are
+derived through the fake benchmark exactly as a duel derives them, so their ids, seeds and skills
+are what the orchestrator would publish.
 
 It is NOT a competition result. It is signed with a key derived from a public string (below), so
 anyone can forge records under it; its only use is rendering the dashboard against the layout this
@@ -30,12 +33,12 @@ import icil_fake_benchmark  # noqa: E402
 
 from icil_orchestrator.benchmarks.units import plugin_units  # noqa: E402
 from icil_orchestrator.canon import Signer, canonical_sha256  # noqa: E402
+from icil_orchestrator.duel import score  # noqa: E402
 from icil_orchestrator.ids import SubmissionRef, duel_id, event_id  # noqa: E402
 from icil_orchestrator.queue import Queue  # noqa: E402
 from icil_orchestrator.spec import load_spec_file  # noqa: E402
 from icil_orchestrator.store.records import (  # noqa: E402
     duel_event,
-    empty_skill_scores,
     index_record,
     unit_tally,
     unit_verdict_from_unit,
@@ -44,12 +47,14 @@ from icil_orchestrator.store.writer import Store  # noqa: E402
 
 TRACK = "franka_1arm"
 SIZE = "light"
+GENESIS_SIZE = "smoke"
 #: Public on purpose: this key signs nothing that matters.
 FIXTURE_SEED = hashlib.sha256(b"icil-orchestrator fixture store; not a secret").digest()
 
 KING = SubmissionRef.make("robotensor/icil-zero-policy", "0" * 39 + "1")
 CHALLENGER = SubmissionRef.make("robotensor/icil-replay-policy", "0" * 39 + "2")
 WAITING = SubmissionRef.make("robotensor/icil-example-policy", "0" * 39 + "3")
+BASE_DIGEST = "sha256:" + "b" * 64
 
 
 def build(out: Path) -> Path:
@@ -61,41 +66,55 @@ def build(out: Path) -> Path:
     store.init(signer.verify_key_hex)
     schema = int(spec.store["schema"])
     margin = spec.score_margin(TRACK)
+    skills = spec.skills(TRACK)
 
-    # -- genesis: the zero-action policy takes the empty throne
+    # -- genesis: the zero-action policy takes the empty throne, scored on its own units
+    gid = duel_id(spec.version, TRACK, KING, None)
+    units, prompts = _units(spec, gid, GENESIS_SIZE)
+    for n, unit in enumerate(units):
+        unit.update(king_success=False, king_steps=100 + n, king_progress=0.0, outcome="tie")
+    king_scores = score.skill_scores(units, "king", skills)
     genesis = index_record(
         schema=schema,
-        event_id=event_id("genesis", TRACK, 1, KING.key),
+        event_id=event_id("genesis", TRACK, 1, gid),
         kind="genesis",
         track=TRACK,
         block=1,
         finished_at="2026-09-13T09:00:00Z",
         king=KING,
         challenger=None,
-        king_scores=None,
+        king_scores=king_scores,
         challenger_scores=None,
         score_margin=margin,
         dethroned=False,
         new_king=None,
+        tally=unit_tally(units),
+        duel_size=GENESIS_SIZE,
+        duel_id=gid,
     )
-    _publish(store, spec, genesis, units=[], started_at="2026-09-13T09:00:00Z", wall=0.0)
+    _publish(
+        store,
+        spec,
+        genesis,
+        units=units,
+        prompts=prompts,
+        size=GENESIS_SIZE,
+        started_at="2026-09-13T08:30:00Z",
+        wall=1800.0,
+        sides={"king": _side(KING, units, "king", wall=1500.0)},
+        scoring={"reason": "genesis", "score_margin": margin, "delta_points": None},
+        notes=["The first entrant took the empty throne, scored on its own units."],
+    )
 
     # -- one duel on the fake benchmark's units
     did = duel_id(spec.version, TRACK, CHALLENGER, KING)
-    derived = plugin_units(
-        spec, TRACK, did, SIZE, resolve=lambda name: icil_fake_benchmark.BENCHMARK
-    )
-    units, prompts = [], []
-    for n, unit in enumerate(derived):
-        verdict = unit_verdict_from_unit(unit, view=spec.demo_view(TRACK))
-        prompt_sha = canonical_sha256({"unit_id": unit["unit_id"], "task": unit["task"]})
-        verdict["prompt"]["sha256"] = prompt_sha
-        prompts.append({"unit_id": unit["unit_id"], "sha256": prompt_sha})
+    units, prompts = _units(spec, did, SIZE)
+    for n, unit in enumerate(units):
         if n == 4:
-            verdict.update(void=True, challenger_error="fake: unit exceeded its 600s budget")
+            unit.update(void=True, challenger_error="fake: the simulator lost the scene")
         else:
             won = n % 3 != 2
-            verdict.update(
+            unit.update(
                 king_success=False,
                 challenger_success=won,
                 outcome="challenger" if won else "tie",
@@ -104,11 +123,7 @@ def build(out: Path) -> Path:
                 king_progress=0.0,
                 challenger_progress=1.0 if won else 0.5,
             )
-        units.append(verdict)
-
-    king_scores, challenger_scores = _scores(spec, units)
-    tally = unit_tally(units)
-    dethroned = challenger_scores["average"] >= king_scores["average"] + margin / 100
+    verdict = score.verdict(units, margin, skills)
     duel = index_record(
         schema=schema,
         event_id=event_id("duel", TRACK, 2, did),
@@ -118,36 +133,40 @@ def build(out: Path) -> Path:
         finished_at="2026-09-13T11:30:00Z",
         king=KING,
         challenger=CHALLENGER,
-        king_scores=king_scores,
-        challenger_scores=challenger_scores,
+        king_scores=verdict.king_scores,
+        challenger_scores=verdict.challenger_scores,
         score_margin=margin,
-        dethroned=dethroned,
-        new_king=CHALLENGER if dethroned else None,
-        tally=tally,
+        dethroned=verdict.dethroned,
+        new_king=CHALLENGER if verdict.dethroned else None,
+        tally=unit_tally(units),
         duel_size=SIZE,
         duel_id=did,
     )
-    sides = {
-        side: {"commit": ref.revision, "base_image_digest": None, "wall_seconds": 1800.0}
-        for side, ref in (("king", KING), ("challenger", CHALLENGER))
-    }
     _publish(
         store,
         spec,
         duel,
         units=units,
-        started_at="2026-09-13T10:00:00Z",
-        wall=5400.0,
-        sides=sides,
         prompts=prompts,
         size=SIZE,
+        started_at="2026-09-13T10:00:00Z",
+        wall=5400.0,
+        sides={
+            "challenger": _side(CHALLENGER, units, "challenger", wall=1800.0),
+            "king": _side(KING, units, "king", wall=1800.0),
+        },
+        scoring=verdict.as_dict(),
+        notes=[
+            f"Crown rule: {verdict.reason} ({verdict.delta_points:+.2f} points against a margin "
+            f"of {margin:g})."
+        ],
     )
 
     # -- the queue as the dashboard sees it
     queue = Queue(out.parent / f".{out.name}-queue.json")
     queue.set_block(2)
     queue.add(WAITING.repo, WAITING.revision, duel_size="smoke", now="2026-09-13T11:45:00Z")
-    king = CHALLENGER if dethroned else KING
+    king = CHALLENGER if verdict.dethroned else KING
     snapshot = queue.snapshot(TRACK, king, schema, now="2026-09-13T12:00:00Z")
     store.write_queue(TRACK, snapshot)
     queue.path.unlink()
@@ -159,21 +178,39 @@ def build(out: Path) -> Path:
     return out
 
 
-def _scores(spec, units):
-    skills = spec.skills(TRACK)
-    out = []
-    for side in ("king", "challenger"):
-        scores = empty_skill_scores(skills)
-        for skill in skills:
-            runs = [u[f"{side}_success"] for u in units if u["skill"] == skill and not u["void"]]
-            scores[skill] = sum(runs) / len(runs) if runs else None
-        rated = [scores[s] for s in skills if scores[s] is not None]
-        scores["average"] = sum(rated) / len(rated) if rated else None
-        out.append(scores)
-    return out
+def _units(spec, did: str, size: str) -> tuple[list[dict], list[dict]]:
+    """A duel's published unit rows, with a stand-in prompt hash each, and its `prompts`."""
+    derived = plugin_units(
+        spec, TRACK, did, size, resolve=lambda name: icil_fake_benchmark.BENCHMARK
+    )
+    units, prompts = [], []
+    for unit in derived:
+        row = unit_verdict_from_unit(unit, view=spec.demo_view(TRACK))
+        prompt_sha = canonical_sha256({"unit_id": unit["unit_id"], "task": unit["task"]})
+        row["prompt"]["sha256"] = row["prompt_sha256"] = prompt_sha
+        units.append(row)
+        prompts.append({"unit_id": unit["unit_id"], "sha256": prompt_sha, "demo_video": None})
+    return units, prompts
 
 
-def _publish(store, spec, record, *, units, started_at, wall, sides=None, prompts=None, size=None):
+def _side(ref: SubmissionRef, units: list[dict], side: str, *, wall: float) -> dict:
+    """What an event records of one side, as the docker runtime prepares it."""
+    return {
+        **ref.as_dict(),
+        "commit": ref.revision,
+        "base_image_digest": BASE_DIGEST,
+        "image": "sha256:" + hashlib.sha256(ref.key.encode()).hexdigest(),
+        "policy": "replay.policy:ReplayPolicy" if ref == CHALLENGER else "zero.policy:ZeroPolicy",
+        "action_type": "qpos",
+        "runtime": "docker",
+        "refused": None,
+        "wall_seconds": wall,
+        "units": len(units),
+        "void": sum(1 for u in units if u["void"] and u.get(f"{side}_error")),
+    }
+
+
+def _publish(store, spec, record, *, units, prompts, size, started_at, wall, sides, scoring, notes):
     event = duel_event(
         record,
         spec_version=spec.version,
@@ -185,8 +222,18 @@ def _publish(store, spec, record, *, units, started_at, wall, sides=None, prompt
         sides=sides,
         demonstration=spec.demonstration(TRACK),
         prompts=prompts,
-        notes=["Fixture store written by tests/fixtures/make_store.py; not a competition result."],
+        notes=[*notes, "Fixture store written by tests/fixtures/make_store.py; not a result."],
     )
+    event["runtime"] = "docker"
+    event["scoring"] = {
+        **scoring,
+        "void_fraction": score.void_fraction(units),
+        "max_void_fraction": spec.max_void_fraction(TRACK),
+    }
+    event["benchmarks"] = {
+        name: {"info": {"id": name}, "pin": spec.benchmark_pin(name), "installed_version": None}
+        for name in spec.benchmarks_of(TRACK)
+    }
     store.write_event(TRACK, event)
     store.append(TRACK, record)
 
