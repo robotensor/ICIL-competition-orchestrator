@@ -152,14 +152,20 @@ class Daemon:
             ran |= self.step(track)
         return ran
 
-    def run(self, *, once: bool = False) -> None:
-        """Hold the store and serve the queues until killed, or for one round with `once`."""
+    def run(self, *, once: bool = False, serving: Callable[[], Any] | None = None) -> None:
+        """Hold the store and serve the queues until killed, or for one round with `once`.
+
+        `serving` is called once the store is held and every queue's snapshot published: what
+        serves beside the loop (the submission intake) starts there, so it never serves beside
+        another daemon, and a daemon that cannot take its store never starts it."""
         with store_lock(self.store.root):
             key = self.store.signer.verify_key_hex if self.store.signer else "?"
             log.info("orchestrator %s serving %s", key[:12], self.store.root)
             self.orchestrator.reap_orphans()
             for track in self.queues.tracks:
                 self.publish_queue(track)
+            if serving is not None:
+                serving()
             crashes = 0
             while True:
                 try:

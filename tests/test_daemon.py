@@ -356,6 +356,29 @@ def test_one_daemon_per_store(duel_spec, store, tmp_path):
             daemon(duel_spec, store, tmp_path).run(once=True)
 
 
+def test_what_serves_beside_the_loop_starts_once_the_store_is_held(
+    duel_spec, store, queues, tmp_path
+):
+    """The intake starts once its daemon holds the store and has published the queues, never beside
+    another daemon, and never for a daemon that could not take its store."""
+    add(queues, ZERO_REF)
+    started: list[list[str]] = []
+
+    def serving() -> None:
+        with pytest.raises(RuntimeError, match="another orchestrator is publishing"):
+            with store_lock(store.root):
+                pass
+        snapshot = json.loads((store.root / "tracks" / TRACK / "queue.json").read_text())
+        started.append([e["key"] for e in snapshot["entries"]])
+
+    with store_lock(store.root):
+        with pytest.raises(RuntimeError, match="another orchestrator is publishing"):
+            daemon(duel_spec, store, tmp_path).run(once=True, serving=serving)
+    assert started == [], "it started beside another daemon"
+    daemon(duel_spec, store, tmp_path).run(once=True, serving=serving)
+    assert started == [[ZERO_REF.key]]
+
+
 class RecordingMirror:
     """A mirror that keeps what it was asked to push."""
 
