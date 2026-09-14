@@ -498,6 +498,10 @@ class Orchestrator:
             row["king_error"] = row["challenger_error"] = prompt.error
         else:
             row["prompt"]["sha256"] = row["prompt_sha256"] = prompt.sha256
+            if prompt.scene_seed is not None:
+                # The scene the benchmark built the prompt on, and both sides played: a benchmark
+                # may choose it only while materializing, among the candidates its unit names.
+                row["instance_params"]["scene_seed"] = prompt.scene_seed
             if prompt.demo_clip is not None and self.spec.media.get("demo_video", True):
                 row["demo_video"] = self.store.put_media(prompt.demo_clip, self.spec.video_format)
         done = sum(1 for u in duel.units if u["prompt_sha256"] or u["void"])

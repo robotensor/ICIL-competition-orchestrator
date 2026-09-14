@@ -156,3 +156,33 @@ def test_a_prompt_changed_on_disk_is_void_on_resume_not_trusted(fake_spec, fake,
     assert prompt.void and "changed after it was materialized" in prompt.error
     lines = (tmp_path / MANIFEST_FILE).read_text().splitlines()
     assert json.loads(lines[-1])["void"] is True and len(lines) == 2
+
+
+def test_a_prompt_keeps_the_scene_seed_its_benchmark_chose_and_a_resumed_duel_does_too(
+    fake_spec, fake, units, tmp_path
+):
+    """The expert rejects the unit's first candidate and builds the prompt on the second."""
+    units[0]["instance_params"].update(scene_seed=None, scene_seeds=[7, 8])
+    units[0]["fake_materialize"] = "reject_first"
+    first = materialize_units(fake_spec, units[:2], tmp_path, benchmark_of=lambda u: fake)
+    chosen, plain = (first.prompts[u["unit_id"]] for u in units[:2])
+    assert not chosen.void, chosen.error
+    assert chosen.scene_seed == 8
+    assert plain.scene_seed == units[1]["instance_params"]["scene_seed"]
+    again = materialize_units(fake_spec, units[:2], tmp_path, benchmark_of=lambda u: fake)
+    assert again.prompts[units[0]["unit_id"]].scene_seed == 8
+
+
+def test_a_result_naming_another_scene_seed_than_its_prompt_is_void(
+    fake_spec, fake, units, tmp_path
+):
+    class Misremembers(type(fake)):
+        def read_result(self, *, out_dir):
+            return {**super().read_result(out_dir=out_dir), "scene_seed": 12345}
+
+    out = materialize_units(
+        fake_spec, units[:1], tmp_path, benchmark_of=lambda unit: Misremembers()
+    )
+    prompt = out.prompts[units[0]["unit_id"]]
+    assert prompt.void and prompt.scene_seed is None
+    assert "built on scene seed 12345, but the prompt's own is" in prompt.error

@@ -219,6 +219,35 @@ def test_genesis_crowns_the_first_challenger_of_an_empty_track_with_its_own_scor
     verified(store, duel_spec)
 
 
+def test_a_published_unit_names_the_scene_seed_its_prompt_was_built_on(duel_spec, store, tmp_path):
+    """A unit derived with candidate seeds and no scene yet, as RoboTwin derives them: the event
+    names the candidate the expert kept, which is the scene both sides played."""
+    import icil_fake_benchmark
+
+    class Candidates(icil_fake_benchmark.FakeBenchmark):
+        def derive_units(self, **kwargs):
+            units = super().derive_units(**kwargs)
+            for unit in units:
+                seed = unit["instance_params"]["scene_seed"]
+                unit["instance_params"].update(scene_seed=None, scene_seeds=[seed, seed + 1])
+                unit["fake_materialize"] = "reject_first"
+            return units
+
+    benchmark = Candidates()
+    duel = orchestrator(duel_spec, store, tmp_path, resolve=lambda name: benchmark)
+    result = duel.run(DuelRequest(TRACK, REPLAY_REF, None, "smoke", block=1))
+    assert result.published, result.reason
+    event = event_of(store, result.record)
+    derived = plugin_units(duel_spec, TRACK, result.duel_id, "smoke", resolve=duel.resolve)
+    assert len(event["units"]) == len(derived) == 3
+    for unit, plan in zip(event["units"], derived, strict=True):
+        candidates = plan["instance_params"]["scene_seeds"]
+        assert plan["instance_params"]["scene_seed"] is None
+        assert unit["instance_params"] == {**plan["instance_params"], "scene_seed": candidates[1]}
+        assert unit["king_success"] is True, unit["king_error"]
+    verified(store, duel_spec)
+
+
 def test_a_king_whose_policy_dies_on_every_unit_loses_them_and_the_crown(
     duel_spec, store, tmp_path
 ):

@@ -16,6 +16,11 @@ For each unit, in order, and resumably:
 3. `verify_prompt(path, unit)` must say ok, and hash the file to what this module hashes it to:
    the published `prompt_sha256` is the sha256 of the file's bytes, which is what a third party
    holding the file checks.
+4. The scene seed the prompt was built on is kept (`Prompt.scene_seed`): the result's
+   `scene_seed`, which must be the one `verify_prompt` read from the file when it names one. A
+   benchmark may choose the scene only here - RoboTwin's expert tries a unit's candidate seeds in
+   order and keeps the first it solves - so the duel publishes it as the unit's
+   `instance_params.scene_seed`, the scene both sides played.
 
 A unit whose materialization fails or is rejected is **void for both sides**, with the reason; it
 is not retried, since a second try would be a different demonstration than the one already
@@ -49,6 +54,11 @@ MANIFEST_FILE = "manifest.jsonl"
 LOG_FILE = "materialize.log"
 
 
+def scene_seed_of(value: Any) -> int | None:
+    """`value` as a scene seed: an integer, never a bool; None for anything else."""
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
 @dataclass
 class Prompt:
     """One unit's prompt on this host, or why it has none."""
@@ -61,6 +71,8 @@ class Prompt:
     void: bool = False
     error: str | None = None
     wall_s: float = 0.0
+    #: The scene seed the benchmark built the prompt on, when it says.
+    scene_seed: int | None = None
 
     def changed(self) -> str | None:
         """Why the file is no longer the prompt that was recorded, or None while it is."""
@@ -91,6 +103,7 @@ class Prompt:
             "void": self.void,
             "error": self.error,
             "wall_s": self.wall_s,
+            "scene_seed": self.scene_seed,
         }
 
     @classmethod
@@ -107,6 +120,7 @@ class Prompt:
             void=bool(doc.get("void")),
             error=doc.get("error"),
             wall_s=float(doc.get("wall_s") or 0.0),
+            scene_seed=scene_seed_of(doc.get("scene_seed")),
         )
 
 
@@ -273,6 +287,15 @@ def materialize_unit(
             f"verify_prompt hashed the prompt to {str(verdict.get('sha256'))[:12]}..., "
             f"not the sha256 of its bytes {sha[:12]}..."
         )
+    reported, read = (
+        scene_seed_of(outcome.extra.get("scene_seed")),
+        scene_seed_of(verdict.get("scene_seed")),
+    )
+    if reported is not None and read is not None and reported != read:
+        return void(
+            f"its result says the prompt was built on scene seed {reported}, but the prompt's "
+            f"own is {read}"
+        )
     # Both sides read this file; neither benchmark run may change it in between.
     os.chmod(prompt, 0o444)
     clip = out_dir / DEMONSTRATION_CLIP
@@ -284,4 +307,5 @@ def materialize_unit(
         demo_clip=clip if has_clip else None,
         demo_sha256=sha256_file(clip) if has_clip else None,
         wall_s=round(time.monotonic() - started, 3),
+        scene_seed=reported if reported is not None else read,
     )

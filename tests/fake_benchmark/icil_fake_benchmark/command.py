@@ -5,7 +5,9 @@ real command half imports SAPIEN, so the "simulator" is loaded here and only her
 
 `materialize` writes a prompt shaped like RoboTwin's: named arrays (`frames_head_camera`, `qpos`,
 `actions`, ...) and a privileged `meta` array (the task and the scene seed as JSON bytes) that
-never reaches a policy. The actions are a function of the scene seed.
+never reaches a policy. The actions are a function of the scene seed. Given several `--scene-seed`
+candidates, its "expert" builds on the first, or rejects it and builds on the second under
+`--behaviour reject_first`; its result names the seed it built on, as RoboTwin's does.
 
 `run` with `--behaviour policy` (what a duel's units get) drives the served policy through
 `icil_policy.client.RemotePolicy`: hello, the demonstration without `meta`, reset, then one `act`
@@ -84,8 +86,10 @@ def materialize(args: argparse.Namespace) -> int:
     if behaviour == "hang":
         time.sleep(600)
         return 0
-    rng = np.random.default_rng(args.scene_seed)
-    seed = args.scene_seed + (1 if behaviour == "wrong" else 0)
+    candidates = args.scene_seed
+    chosen = candidates[1] if behaviour == "reject_first" and len(candidates) > 1 else candidates[0]
+    rng = np.random.default_rng(chosen)
+    seed = chosen + (1 if behaviour == "wrong" else 0)
     meta = {"task": args.task, "scene_seed": seed, "sim": icil_fake_simulator.NAME}
     arrays = {
         "frames_head_camera": rng.integers(0, 255, (STEPS, 4, 4, 3), dtype=np.uint8),
@@ -96,9 +100,9 @@ def materialize(args: argparse.Namespace) -> int:
     }
     with open(out / "prompt.npz", "wb") as fh:
         np.savez(fh, **arrays)
-    (out / "demonstration.mp4").write_bytes(clip(f"demo|{args.task}|{args.scene_seed}"))
+    (out / "demonstration.mp4").write_bytes(clip(f"demo|{args.task}|{chosen}"))
     expert = behaviour != "expert_fails"
-    result = {"success": expert, "void": False, "steps": STEPS - 1}
+    result = {"success": expert, "void": False, "steps": STEPS - 1, "scene_seed": chosen}
     if not expert:
         result["error"] = "the expert never succeeded"
     (out / "result.json").write_text(json.dumps(result))
@@ -255,7 +259,7 @@ def main() -> int:
     m = sub.add_parser("materialize")
     m.add_argument("--out", required=True)
     m.add_argument("--task", required=True)
-    m.add_argument("--scene-seed", type=int, required=True)
+    m.add_argument("--scene-seed", type=int, action="append", required=True)
     m.add_argument("--behaviour", default="succeed")
     r = sub.add_parser("run")
     r.add_argument("--prompt", required=True)

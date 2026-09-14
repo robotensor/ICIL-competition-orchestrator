@@ -11,8 +11,14 @@ It never imports `icil_orchestrator`, as the ABI requires of every benchmark.
 test can make a unit fail, crash, hang or write nothing, the ways a real benchmark subprocess goes
 wrong, its `fake_void_cause` for `policy_then_void`, and its `fake_step_s`, how long the simulator
 takes over each step; `materialize_command` reads its `fake_materialize` (default `succeed`) the
-same way. The time limits a duel passes in `extra` become flags under the names the RoboTwin plugin
-reads them by, and `info()["limits"]` says what the command keeps back from a unit's timeout.
+same way. The time limits and the policy log a duel passes in `extra` become flags under the names
+the RoboTwin plugin reads them by, and `info()["limits"]` says what the command keeps back from a
+unit's timeout.
+
+A unit's `instance_params` name its `scene_seed`, or, as RoboTwin's do, `scene_seeds` to choose
+from and no `scene_seed` yet: `materialize` builds on the first candidate (the second under
+`fake_materialize: reject_first`) and says which in its result, and `verify_prompt` accepts a
+prompt built on any of them.
 """
 
 from __future__ import annotations
@@ -40,6 +46,12 @@ SUITES = {"franka_1arm": sorted(TASKS)}
 EMBODIMENT = ["franka-panda", "franka-panda", 0.6]
 #: What `run` keeps back from `--unit-timeout-s` to write its result, as RoboTwin's run-unit does.
 RESULT_RESERVE_S = 1.0
+
+
+def candidate_seeds(unit: Any) -> list[int]:
+    """The scene seeds a unit's prompt may be built on: its `scene_seeds`, or its `scene_seed`."""
+    params = unit["instance_params"]
+    return list(params.get("scene_seeds") or [params["scene_seed"]])
 
 
 class FakeBenchmark:
@@ -106,13 +118,14 @@ class FakeBenchmark:
             return {"ok": False, "sha256": "", "problems": ["the prompt's meta is not an object"]}
         if doc.get("task") != unit["task"]:
             problems.append(f"task {doc.get('task')!r} is not the unit's {unit['task']!r}")
-        seed = unit["instance_params"]["scene_seed"]
-        if doc.get("scene_seed") != seed:
-            problems.append(f"scene_seed {doc.get('scene_seed')} is not the unit's {seed}")
+        candidates = candidate_seeds(unit)
+        if doc.get("scene_seed") not in candidates:
+            problems.append(f"scene_seed {doc.get('scene_seed')} is not the unit's {candidates}")
         return {
             "ok": not problems,
             "sha256": hashlib.sha256(data).hexdigest(),
             "problems": problems,
+            "scene_seed": doc.get("scene_seed"),
         }
 
     def read_result(self, *, out_dir: str) -> dict[str, Any]:
@@ -122,7 +135,7 @@ class FakeBenchmark:
             return {"success": None, "void": True, "steps": None, "error": "unreadable result.json"}
 
     def materialize_command(self, *, unit: Any, out_dir: str) -> list[str]:
-        return [
+        argv = [
             sys.executable,
             COMMAND,
             "materialize",
@@ -130,11 +143,10 @@ class FakeBenchmark:
             out_dir,
             "--task",
             str(unit["task"]),
-            "--scene-seed",
-            str(unit["instance_params"]["scene_seed"]),
-            "--behaviour",
-            str(unit.get("fake_materialize", "succeed")),
         ]
+        for seed in candidate_seeds(unit):
+            argv += ["--scene-seed", str(seed)]
+        return [*argv, "--behaviour", str(unit.get("fake_materialize", "succeed"))]
 
     def run_command(
         self,
