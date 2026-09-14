@@ -73,11 +73,43 @@ once, before either side runs: both run from those files, and the event publishe
 sha256. Each unit gets a freshly served policy - a container per unit under `--runtime docker`,
 the default - and the benchmark's unit command drives it over the policy socket. Every unit's
 result is written to the run directory as it finishes, so a duel or a daemon that is killed and
-started again resumes where it stopped, running no unit twice. A duel with more than
-`max_void_fraction` of its units void, or with a side refused, is void and publishes nothing; the
-first entrant of an empty track is crowned by genesis. `--runtime local --local REPO=DIR` serves a
-directory's policy as a subprocess on the host, with no sandbox at all: for development with code
-you trust, never for a competitor's.
+started again resumes where it stopped, running no unit twice. The first entrant of an empty track
+is crowned by genesis (or the track's declared baseline, by the daemon). `--runtime local --local
+REPO=DIR` serves a directory's policy as a subprocess on the host, with no sandbox at all: for
+development with code you trust, never for a competitor's.
+
+What a unit counts as depends on whose doing its end was:
+
+- **Void, for both sides**, only for a harness cause: its prompt failed to materialize or was
+  rejected, the benchmark crashed or timed out while the policy was fine (or reported
+  `void_cause: "harness"`), Docker or the host failed, or the orchestrator stopped the run. A duel
+  with more than `max_void_fraction` of its units void is void and publishes nothing; once that is
+  certain, nothing more is materialized or played.
+- **That side's failure** for anything its own submission did: its policy container exiting on its
+  own or OOM-killed in its sandbox (read from `docker inspect`), not listening within
+  `budgets.policy_start_seconds`, an act timeout, an error reply or a non-zero exit (a benchmark
+  reports those as `void_cause: "policy"`). A scored result is never turned into a void
+  afterwards, and a policy that died on one unit is simply served again for the next.
+- **A refused king forfeits**: when the king's repository is gone or private, its image no longer
+  builds or its manifest is invalid, every king unit is a failure and the duel is published with
+  the note `king forfeit: <reason>`; the challenger takes the crown if its own average clears the
+  margin. A refused challenger is refused: nothing is published and its entry is used up.
+
+A duel is never published against a king who no longer holds the crown: before it starts or
+resumes, and again before it publishes, the request's king is compared with the track head's, and a
+stale duel's run is moved aside as `<dir>.stale-<n>` while the daemon puts its challenger back at
+the head of the queue. A duel resumed after its record was appended rebuilds `head.json` from the
+index and pushes its files to the mirror again. `duel` numbers its block from the queue's counter
+(`--queue`) and refuses to run while a daemon holds the store's lock. The daemon keeps a duel in
+progress while the harness is only unavailable (benchmark not installed, Docker down, the Hub
+unreachable), moves aside a run directory holding another request, and backs off exponentially,
+up to `--max-backoff` (300 s), when a step keeps crashing. SIGTERM and SIGINT tear the running
+unit's policy and benchmark down before exiting; after a SIGKILL, the next start reaps what was
+left - `icil-duel-*` containers labelled with the store and run directory, and the process groups
+recorded in each unit's `pids.json` - before any unit runs again.
+
+Deploy the dashboard before this orchestrator: its live ingest must accept the `materializing`
+phase, which every duel reports between `checking` and `evaluating`, or those frames are refused.
 
 `store init` writes the store's ed25519 signing key to `keys/orchestrator.ed25519` (mode 0600)
 unless `--key` says otherwise. It is the only thing that can publish as this store, so keep it out

@@ -26,8 +26,9 @@ runnable policy code and weights, run in a sandboxed container.
   command half is a script). After an intended change to `spec.json` or the store layout,
   regenerate the fixture store with `python tests/fixtures/make_store.py` and commit it.
 - `live.PHASES` must equal the dashboard's `PHASES` (`lib/live/types.ts`); a new phase is a
-  dashboard change too. `materializing` is ahead of the dashboard, which refuses those frames
-  until it adds the phase (`AWAITING_DASHBOARD` in `tests/test_live.py`).
+  dashboard change first, deployed before the orchestrator that reports it. `materializing` is
+  being added to the dashboard; until that is deployed it refuses those frames
+  (`AWAITING_DASHBOARD` in `tests/test_live.py`).
 - `packages/icil-policy/` is the policy protocol, a distribution of its own installed into every
   competitor's image: numpy and PyYAML only, never an import of `icil_orchestrator`. CI also tests
   it alone, installed with nothing but pytest: `pytest packages/icil-policy`.
@@ -49,9 +50,12 @@ runnable policy code and weights, run in a sandboxed container.
   `daemon.py`, run by `icil-orchestrator duel` and `daemon`. A duel reaches a policy only through
   `duel.runtime.PolicyRuntime`; `duel/docker_runtime.py` is the one module of it that imports
   `submissions`, and `duel/local_runtime.py` serves a local directory with no sandbox (development
-  and tests only). The duel tests use `duel_spec` (a short `act_timeout_s`), `FakePolicyRuntime`
-  and `RecordingReporter` from `tests/duel_helpers.py`, and the example policies; the container
-  test (`tests/test_duel_container.py`) runs a smoke duel through Docker.
+  and tests only). `duel/orphans.py` keeps each unit's process groups in a `pids.json` ledger and
+  reaps what a killed orchestrator left. The duel tests use `duel_spec` (a short `act_timeout_s`),
+  `FakePolicyRuntime`, `RecordingReporter`, `harness_voiding` and `InspectingFakeDocker` from
+  `tests/duel_helpers.py`, and the example policies; `tests/test_duel_signals.py` signals and
+  kills a real `duel` process; the container test (`tests/test_duel_container.py`) runs a smoke
+  duel through Docker.
 
 ## Rules
 
@@ -75,11 +79,18 @@ runnable policy code and weights, run in a sandboxed container.
   stays on the benchmark side of the socket.
 - Everything published is deterministic from `spec.json`, the duel id and the two submission refs:
   unit lists, seeds, ids. No clocks and no global RNG in anything that is published.
-- A unit that fails for a harness reason is void, not a loss; `max_void_fraction` decides whether
-  the duel stands. A unit void on either side is void for both, and a void duel publishes nothing.
+- A unit is void only for a harness cause (its prompt, the benchmark while the policy was fine, a
+  benchmark `void_cause: "harness"`, Docker or the host, the orchestrator stopping); anything a
+  side's own submission does (exits, is OOM-killed in its sandbox, never listens, times out, errs,
+  `void_cause: "policy"`) is that side's failure, and a scored result is never undone. A unit void
+  on either side is void for both; `max_void_fraction` decides whether the duel stands, and a void
+  duel publishes nothing. A refused king forfeits (every unit a failure, `king forfeit: <reason>`);
+  a refused challenger is refused.
+- Never publish against a king who no longer holds the crown: compare the request's king with the
+  head's before a duel starts or resumes and before it publishes.
 - Everything a duel does is resumable from its run directory, and nothing in it runs twice: a
   prompt, a side's finished unit and the published record are each looked for before they are
-  made.
+  made. What a killed orchestrator left running is reaped before a unit with no result runs again.
 - The index is the store's truth: a record's seq comes from the index's last signed line, and the
   record signs its event's bytes (`event_sha256`), so everything published hangs off one signature.
   The signing key lives outside the store and outside the checkout (`/keys/` is git-ignored), and

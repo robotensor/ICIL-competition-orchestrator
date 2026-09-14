@@ -103,13 +103,29 @@
   `duel.local_runtime`. Scoring: per-skill success rates over non-void units, their mean, the
   crown to the challenger iff it beats the king's mean by `score_margin` points; a unit void on
   either side is void for both, and a duel with more than `max_void_fraction` void is void and
-  publishes nothing. A policy runtime that dies voids its unit and the rest of its side; a refused
-  challenger or king voids the duel and the king keeps the crown. An empty track crowns its first
-  challenger (or its declared baseline) by genesis, with its own scores. A duel resumes from its
-  run directory - prompts, each side's `results.jsonl`, the index checked for its own event - so a
-  killed daemon restarted runs every unit once per side and publishes one record. The event also
-  carries both sides' commits and image digests, the benchmark's `info()` and pin, and the
-  scoring.
+  publishes nothing. A unit is void only for a harness cause; what a side's own submission does -
+  its container exiting or OOM-killed, never listening, an act timeout or error, a benchmark's
+  `void_cause: "policy"` - is that side's failure, and a policy that died is served again for the
+  next unit. A refused challenger is refused and publishes nothing; a refused king forfeits every
+  unit and the duel is published with the note `king forfeit: <reason>`. An empty track crowns its
+  first challenger (or its declared baseline) by genesis, with its own scores. A duel resumes from
+  its run directory - prompts, each side's `results.jsonl`, the index checked for its own event -
+  so a killed daemon restarted runs every unit once per side and publishes one record. The event
+  also carries both sides' commits and image digests, the benchmark's `info()` and pin, and the
+  scoring. The dashboard must be deployed first, to accept the `materializing` phase.
+- (fix): a duel is never published against a king who lost the crown while it was stopped: its run
+  is moved aside as `<dir>.stale-<n>` and its challenger queued again at the head. A duel resumed
+  after its record was appended rebuilds `head.json` from the index and pushes to the mirror again.
+- (fix): SIGTERM and SIGINT tear the running unit's policy and benchmark down before `duel` or
+  `daemon` exits (128+signal); after a SIGKILL, the next start reaps the labelled `icil-duel-*`
+  containers and the process groups in each unit's `pids.json` before a unit runs again.
+- (fix): `duel` numbers its block from the queue's counter (`--queue`) and refuses to run beside a
+  daemon; it leaves a declared baseline's empty throne to the daemon. The daemon keeps a duel in
+  progress while the harness is unavailable, moves aside a run directory holding another request,
+  and backs off exponentially up to `--max-backoff` when a step keeps crashing.
+- (fix): each side gets at most an even share of what materializing left of the duel's wall clock,
+  materializing stops at the duel's deadline, serving a policy counts in its unit's budget, and a
+  prompt is re-checked after its unit and against the hash the benchmark read.
 - (feat): `icil-orchestrator duel --track T --challenger repo@revision [--size S] --store DIR
   --run-dir DIR` and `icil-orchestrator daemon --store DIR --run-dir DIR [--queue DIR] [--once]`,
   with `--runtime docker|local`, `--local REPO=DIR`, `--live-url` and `--live-token-env`, and
