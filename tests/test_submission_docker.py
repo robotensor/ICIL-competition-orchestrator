@@ -10,7 +10,12 @@ from pathlib import Path
 
 import pytest
 
-from icil_orchestrator.submissions.docker import BuildTimedOut, Docker, DockerError
+from icil_orchestrator.submissions.docker import (
+    BuildTimedOut,
+    ContainerState,
+    Docker,
+    DockerError,
+)
 
 
 def fake_binary(path: Path, script: str) -> str:
@@ -107,6 +112,28 @@ def test_policy_containers_are_listed_with_their_labels_and_a_vanished_one_skipp
     assert found.name == "icil-policy-one" and found.running
     assert found.labels["icil.shared-dir"] == "/work/a b,c/policy", "a path is taken whole"
     assert "label=icil.orchestrator=policy" in (tmp_path / "ps").read_text()
+
+
+def test_a_containers_state_says_its_exit_its_error_and_whether_it_ran_out_of_memory(tmp_path):
+    seen = tmp_path / "format"
+    script = (
+        f'echo "$5" > {seen}\n'
+        'case "$6" in\n'
+        '  icil-policy-oom) echo "false true 137 " ;;\n'
+        '  icil-policy-live) echo "true false 0 " ;;\n'
+        "  icil-policy-err) echo 'false false 127 exec: \"python\": not found' ;;\n"
+        '  *) echo "Error: No such container: $6" >&2; exit 1 ;;\n'
+        "esac\n"
+    )
+    docker = Docker(binary=fake_binary(tmp_path / "docker", script))
+    assert docker.state("icil-policy-oom") == ContainerState(False, 137, "", oom_killed=True)
+    assert "{{.State.OOMKilled}}" in seen.read_text()
+    assert docker.state("icil-policy-live") == ContainerState(True, 0, "")
+    err = docker.state("icil-policy-err")
+    assert (err.exit_code, err.error, err.oom_killed) == (127, 'exec: "python": not found', False)
+    gone = docker.state("icil-policy-gone")
+    assert (gone.running, gone.exit_code, gone.oom_killed) == (False, None, False)
+    assert gone.error.startswith("no such container: Error: No such container")
 
 
 def test_images_are_listed_by_repository_and_removed_unforced_with_the_reason(tmp_path):
