@@ -10,9 +10,13 @@ never reaches a policy. The actions are a function of the scene seed.
 `run` with `--behaviour policy` (what a duel's units get) drives the served policy through
 `icil_policy.client.RemotePolicy`: hello, the demonstration without `meta`, reset, then one `act`
 per demonstrated action. The episode succeeds iff the policy's actions are the demonstration's, so
-the replay example wins and the zero example loses. A policy that fails is a failed episode, not a
-void one: the benchmark cannot tell a broken policy from a dead container, and the orchestrator,
-which can, voids the unit when it was the container.
+the replay example wins and the zero example loses. A policy that is lost or does not answer in
+time ends the episode void with `void_cause: "policy"`, as the RoboTwin plugin reports it: the
+orchestrator counts that as the side's failure, not a void for both.
+
+`--behaviour policy_then_void` drives the policy the same way and then reports the unit void, with
+`--void-cause` as its `void_cause` when one is given: a simulator that lost the scene after the
+policy was done with it.
 
 Every run appends a line to `runs.log` in its directory, so a test can count how often a unit ran.
 """
@@ -98,6 +102,11 @@ def run(args: argparse.Namespace) -> int:
     prompt_sha256 = icil_fake_simulator.digest(Path(args.prompt))
     if behaviour == "policy":
         result = drive_policy(args)
+    elif behaviour == "policy_then_void":
+        drive_policy(args)
+        result = {"success": None, "void": True, "steps": None, "error": "the simulator lost it"}
+        if args.void_cause:
+            result["void_cause"] = args.void_cause
     else:
         result = {
             "success": behaviour == "succeed",
@@ -142,11 +151,20 @@ def drive_policy(args: argparse.Namespace) -> dict:
         for t, action in enumerate(taken)
         if action.shape == demonstrated[t].shape and np.allclose(action, demonstrated[t])
     )
+    if error is not None:
+        return {
+            "success": None,
+            "void": True,
+            "void_cause": "policy",
+            "steps": len(taken),
+            "error": error,
+            "progress": matched / len(demonstrated),
+        }
     return {
-        "success": error is None and matched == len(demonstrated),
+        "success": matched == len(demonstrated),
         "void": False,
         "steps": len(taken),
-        "error": error,
+        "error": None,
         "progress": matched / len(demonstrated),
     }
 
@@ -166,6 +184,7 @@ def main() -> int:
     r.add_argument("--authkey-env", required=True)
     r.add_argument("--behaviour", default="policy")
     r.add_argument("--act-timeout-s", type=float, default=30.0)
+    r.add_argument("--void-cause", default="")
     args = parser.parse_args()
     return materialize(args) if args.cmd == "materialize" else run(args)
 

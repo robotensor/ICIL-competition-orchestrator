@@ -9,7 +9,8 @@ It never imports `icil_orchestrator`, as the ABI requires of every benchmark.
 
 `run_command` reads the unit's `fake_behaviour` (default `policy`: drive the served policy) so a
 test can make a unit fail, crash, hang or write nothing, the ways a real benchmark subprocess goes
-wrong; `materialize_command` reads its `fake_materialize` (default `succeed`) the same way.
+wrong, and its `fake_void_cause` for `policy_then_void`; `materialize_command` reads its
+`fake_materialize` (default `succeed`) the same way.
 """
 
 from __future__ import annotations
@@ -156,6 +157,8 @@ class FakeBenchmark:
             str(unit.get("fake_behaviour", "policy")),
             "--act-timeout-s",
             str(float(extra.get("act_timeout_s", 30.0))),
+            "--void-cause",
+            str(unit.get("fake_void_cause", "")),
         ]
 
 

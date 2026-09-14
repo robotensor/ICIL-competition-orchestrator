@@ -125,7 +125,7 @@ def test_the_replay_policy_solves_a_unit_and_the_zero_policy_does_not(
     assert outcome.clip and (tmp_path / "run" / "runs.log").read_text().count("\n") == 1
 
 
-def test_a_policy_that_is_not_there_is_a_failed_episode_with_the_reason(fake, tmp_path):
+def test_a_policy_that_is_not_there_is_void_for_the_policys_cause_with_the_reason(fake, tmp_path):
     unit = a_unit(fake)
     prompt = materialized(fake, unit, tmp_path / "prompt")
     outcome = runner.run_unit(
@@ -139,5 +139,6 @@ def test_a_policy_that_is_not_there_is_a_failed_episode_with_the_reason(fake, tm
         env={"PATH": "/usr/bin:/bin", AUTHKEY_ENV: "00" * 32},
         extra={"act_timeout_s": 0.5},
     )
-    assert (outcome.success, outcome.void) == (False, False)
-    assert outcome.error.startswith("policy: connect:")
+    assert (outcome.success, outcome.void) == (None, True)
+    assert outcome.extra["void_cause"] == "policy", "the orchestrator counts it against the policy"
+    assert outcome.error.startswith("fake: policy: connect:")
