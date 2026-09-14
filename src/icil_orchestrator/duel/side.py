@@ -25,7 +25,9 @@ failure on the unit, scored like any failed episode:
   from outside whatever the benchmark said; or the duel already
   knows the unit is void (`void_units`: void on the other side, so not played here only to be
   thrown away).
-- the side's failure: its policy never listened (`PolicyDied`, which covers
+- the side's failure: its submission was refused or could not be prepared at all (`refused`: a
+  king that forfeits), on every unit that has a prompt; its policy never listened (`PolicyDied`,
+  which covers
   `budgets.policy_start_seconds`); the benchmark said `void_cause: "policy"` (an act timeout, a
   lost policy); or the benchmark gave no cause and the policy ended badly underneath it (a
   non-zero exit, a signal, running out of memory in its sandbox).
@@ -178,13 +180,13 @@ def run_side(
             continue
         prompt = prompts.prompts.get(unit_id)
         prompt_sha = prompt.sha256 if prompt is not None and not prompt.void else None
-        if refused is not None:
-            outcome = voided(f"the {side}'s submission was refused: {refused}")
-        elif prompt is None or prompt.void:
+        if prompt is None or prompt.void:
             reason = prompt.error if prompt is not None else "no prompt was materialized"
             outcome = voided(f"no prompt: {reason}")
         elif void_units and unit_id in void_units:
             outcome = voided(f"not played: {void_units[unit_id]}")
+        elif refused is not None:
+            outcome = failed(f"the {side}'s submission was refused: {refused}")
         elif time.monotonic() >= side_deadline:
             outcome = voided("the side ran out of its wall-clock budget")
         elif (changed := prompt.changed()) is not None:

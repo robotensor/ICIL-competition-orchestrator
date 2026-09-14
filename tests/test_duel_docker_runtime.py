@@ -123,11 +123,11 @@ def test_a_duel_runs_through_the_sandbox_one_container_per_unit(spec, docker, tm
             assert (result.run_dir / side / unit["unit_id"] / "policy.log").is_file()
 
 
-def test_a_submission_that_does_not_build_is_refused_and_the_duel_void(spec, docker, tmp_path):
+def test_a_challenger_that_does_not_build_is_refused(spec, docker, tmp_path):
     docker.build_failure = "ERROR: No matching distribution found for numpy"
     runtime = runtime_for(spec, docker, tmp_path)
     store, result = duel(spec, runtime, tmp_path)
-    assert result.status == "void"
+    assert result.status == "refused"
     assert result.reason.startswith("the challenger's submission was refused: build: installing")
     assert docker.runs == [] and len(store.iter_index(TRACK)) == 1
 

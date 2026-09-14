@@ -15,7 +15,8 @@ this host lives in `<run_root>/<track>/<event_id[:16]>/`:
     request.json                  what was asked, and when it started
     prompts/<unit_id>/prompt.npz  every unit's prompt, and prompts/manifest.jsonl
     <side>/results.jsonl          each side's finished units, and <side>/<unit_id>/ its run logs
-    outcome.json                  what was decided: published (with the record) or void
+    forfeit.json                  why the king forfeits, when it does
+    outcome.json                  what was decided: published (with the record), refused or void
     failed.txt                    why the last attempt stopped, for a duel that did not finish
 
 **Resuming.** Every stage is resumable from that directory: prompts are re-used after their hash
@@ -28,11 +29,19 @@ returns it.
 
 - `DuelFailed`: the harness could not run it (no benchmark, no Docker, the Hub unreachable, a
   bug). Nothing is published and nothing is decided; running it again resumes it.
+- Refused: the challenger's submission cannot run (a bad manifest, an image that does not build,
+  no `hello`). Nothing else runs - the king is not fetched and no prompt is made - nothing is
+  published, and `outcome.json` says why.
 - Void: the duel ran and cannot stand. The crown does not move, nothing is published, and
   `outcome.json` says why. A duel is void when more than `max_void_fraction` of its units are void
   (checked after materializing and after each side, so the king is not run for a duel the
-  challenger's side already voided), or when a side's submission is refused. A refused challenger
-  is refused; a refused king keeps the crown - a duel never publishes a vacancy (as in icilval).
+  challenger's side already voided). A unit is void only for a harness cause (`side`); what a
+  side's own submission does to a unit is that side's failure.
+- A king whose submission is refused (its repository gone or private, an image that no longer
+  builds, a manifest no longer valid) forfeits: every one of its units is a failure, the duel is
+  scored and published as any other with the note `king forfeit: <reason>`, and the challenger
+  takes the crown if its own average clears the margin. The forfeit is recorded in
+  `forfeit.json`, so a resumed duel keeps it.
 - A published duel moves the crown iff `score.crown_moves`.
 
 **Genesis.** A track with no king (`baselines` null and nothing crowned yet) crowns its first
@@ -76,6 +85,8 @@ log = logging.getLogger(__name__)
 REQUEST_FILE = "request.json"
 OUTCOME_FILE = "outcome.json"
 FAILED_FILE = "failed.txt"
+#: The king's refusal, recorded once: a resumed duel keeps the forfeit rather than asking again.
+FORFEIT_FILE = "forfeit.json"
 SIDES = ("challenger", "king")
 
 
@@ -195,6 +206,8 @@ class _Duel:
     message: str = ""
     #: Finished clips not yet in the store: `(side, unit_id) -> path`.
     pending_media: dict[tuple[str, str], Path] = field(default_factory=dict)
+    #: Why the king forfeits, when its submission was refused.
+    forfeit: str | None = None
 
     def row(self, unit_id: str) -> dict[str, Any]:
         return next(u for u in self.units if u["unit_id"] == unit_id)
@@ -297,22 +310,31 @@ class Orchestrator:
         self._derive(duel)
         sides = self._sides(req)
 
-        # ---- fetching and checking: a refused side decides the duel before anything runs
+        # ---- fetching and checking: a refused challenger decides the duel before anything runs;
+        # a refused king forfeits, once, and a resumed duel keeps the forfeit it recorded
+        refused: dict[str, str] = {}
+        forfeit = read_json(duel.run_dir / FORFEIT_FILE)
+        if req.king is not None and isinstance(forfeit, dict) and forfeit.get("reason"):
+            refused["king"] = str(forfeit["reason"])
         self._post(duel, force=True, phase="fetching", message="fetching the submissions")
         fetched: dict[str, Any] = {}
-        refused: dict[str, str] = {}
         for side, ref in sides:
+            if side in refused:
+                continue
             try:
                 fetched[side] = self.runtime.fetch(ref, workdir=duel.run_dir / side)
             except SubmissionRefused as exc:
                 refused[side] = str(exc)
-                break
+                if side == "challenger":
+                    break
             except RuntimeUnavailable as exc:
                 raise DuelFailed(f"fetching the {side}: {exc}") from exc
         self._post(duel, force=True, phase="checking", message="checking and building")
         for side, _ in sides:
-            if refused or side not in fetched:
+            if "challenger" in refused:
                 break
+            if side in refused or side not in fetched:
+                continue
             self._post(duel, message=f"checking the {side}")
             try:
                 duel.prepared[side] = self.runtime.prepare(
@@ -324,10 +346,14 @@ class Orchestrator:
                 raise DuelFailed(f"checking the {side}: {exc}") from exc
         for side, ref in sides:
             duel.sides[side] = self._side_meta(duel, side, ref, refused.get(side))
-        if refused:
-            side, reason = next(iter(refused.items()))
-            self._refuse(duel, side, reason)
-            return self._void(duel, f"the {side}'s submission was refused: {reason}")
+        if "challenger" in refused:
+            return self._refused(
+                duel, f"the challenger's submission was refused: {refused['challenger']}"
+            )
+        duel.forfeit = refused.get("king")
+        if duel.forfeit is not None:
+            log.warning("duel %s: the king forfeits: %s", duel.event_id[:16], duel.forfeit)
+            atomic_write_json(duel.run_dir / FORFEIT_FILE, {"side": "king", "reason": duel.forfeit})
 
         # ---- materializing
         self._post(
@@ -395,21 +421,6 @@ class Orchestrator:
         done = sum(1 for u in duel.units if u["prompt_sha256"] or u["void"])
         self._post(duel, message=f"materialized {done} of {len(duel.units)}: {prompt.unit_id}")
 
-    def _refuse(self, duel: _Duel, side: str, reason: str) -> None:
-        """A refused side: every unit of it void with the reason, in its results file."""
-        run_side(
-            self.spec,
-            side=side,
-            units=duel.unit_defs,
-            prompts=Materialized(root=duel.run_dir / "prompts", prompts={}),
-            side_dir=duel.run_dir / side,
-            benchmark_of=lambda unit: duel.benchmarks[unit["benchmark"]],
-            runtime=self.runtime,
-            prepared=None,
-            refused=reason,
-            on_unit=lambda unit, record: self._merge(duel, side, record),
-        )
-
     def _evaluate(self, duel: _Duel, side: str) -> None:
         side_dir = duel.run_dir / side
         self._post(duel, force=True, phase="evaluating", side=side, message=f"evaluating {side}")
@@ -431,6 +442,7 @@ class Orchestrator:
             benchmark_of=lambda unit: duel.benchmarks[unit["benchmark"]],
             runtime=self.runtime,
             prepared=duel.prepared.get(side),
+            refused=duel.forfeit if side == "king" else None,
             deadline=duel.deadline,
             void_units=void_units,
             on_start=lambda unit: self._on_start(duel, side, unit),
@@ -583,7 +595,8 @@ class Orchestrator:
                 sides=sides,
                 demonstration=spec.demonstration(track),
                 prompts=duel.prompts.manifest() if duel.prompts else [],
-                notes=[_note(req.kind, scoring)],
+                notes=[_note(req.kind, scoring)]
+                + ([f"king forfeit: {duel.forfeit}"] if duel.forfeit else []),
             )
             event["runtime"] = self.runtime.name
             event["scoring"] = {
@@ -610,10 +623,20 @@ class Orchestrator:
         self._post(duel, force=True, phase="done", message=f"the crown {moved}: {reason}")
         return result
 
+    def _refused(self, duel: _Duel, reason: str) -> DuelResult:
+        """A refused challenger: nothing runs, nothing is published, and the king is not asked."""
+        log.warning("duel %s is refused: %s", duel.event_id[:16], reason)
+        for row in duel.units:
+            row["challenger_success"], row["challenger_error"] = False, reason
+        return self._decided(duel, "refused", reason)
+
     def _void(self, duel: _Duel, reason: str) -> DuelResult:
         log.warning("duel %s is void: %s", duel.event_id[:16], reason)
+        return self._decided(duel, "void", reason)
+
+    def _decided(self, duel: _Duel, status: str, reason: str) -> DuelResult:
         result = DuelResult(
-            status="void",
+            status=status,
             kind=duel.req.kind,
             event_id=duel.event_id,
             duel_id=duel.duel_id,
@@ -622,7 +645,7 @@ class Orchestrator:
             units=duel.units,
         )
         atomic_write_json(duel.run_dir / OUTCOME_FILE, {**result.as_dict(), "sides": duel.sides})
-        self._post(duel, force=True, phase="failed", side=None, message=f"void: {reason}")
+        self._post(duel, force=True, phase="failed", side=None, message=f"{status}: {reason}")
         return result
 
     def _failed(self, duel: _Duel, reason: str) -> None:

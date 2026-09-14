@@ -186,14 +186,14 @@ def test_whose_a_void_is(void_cause, end, outcome):
     assert attribute(scored, PolicyEnd("exited 1", POLICY)) is scored, "a score was undone"
 
 
-def test_a_refused_submission_voids_every_unit_with_the_reason_and_serves_nothing(
+def test_a_refused_submission_fails_every_unit_with_the_reason_and_serves_nothing(
     duel_spec, fake, units, prompts, tmp_path
 ):
     runtime = FakePolicyRuntime(duel_spec)
     results = side(
         duel_spec, fake, units, prompts, tmp_path, runtime, refused="manifest: icil.yaml: api"
     )
-    assert all(r["void"] for r in results.values())
+    assert all((r["success"], r["void"]) == (False, False) for r in results.values())
     assert {r["error"] for r in results.values()} == {
         "the challenger's submission was refused: manifest: icil.yaml: api"
     }

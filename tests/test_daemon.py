@@ -133,6 +133,34 @@ def test_a_void_duel_finishes_its_entry_and_the_king_keeps_the_crown(
     assert store.head(TRACK)["king"] == ZERO_REF.as_dict() and len(store.iter_index(TRACK)) == 1
 
 
+def test_a_king_whose_repository_is_gone_forfeits_and_the_challenger_is_crowned(
+    duel_spec, store, queues, tmp_path
+):
+    """A king cannot hold the track by taking its repository private: it forfeits, and each
+    challenger's entry buys a duel it can win."""
+    from icil_orchestrator.duel.runtime import SubmissionRefused
+
+    publish(store, duel_spec, make_record(duel_spec, "genesis", 1, ZERO_REF, None))
+    add(queues, REPLAY_REF)
+
+    class Private(FakePolicyRuntime):
+        def fetch(self, ref, *, workdir):
+            if ref == ZERO_REF:
+                raise SubmissionRefused("resolve", "404 Client Error. Repository Not Found")
+            return super().fetch(ref, workdir=workdir)
+
+    runtime = Private(duel_spec)
+    assert daemon(duel_spec, store, tmp_path, runtime).step(TRACK) is True
+    records = store.iter_index(TRACK)
+    assert [r["kind"] for r in records] == ["genesis", "duel"] and records[1]["dethroned"]
+    assert store.head(TRACK)["king"] == REPLAY_REF.as_dict()
+    event = store.event(TRACK, records[1]["event_id"])
+    assert "king forfeit: resolve: 404 Client Error. Repository Not Found" in event["notes"]
+    assert runtime.prepared == [REPLAY_REF.repo]
+    state = queues[TRACK].reload()
+    assert state.entries == [] and state.in_progress is None
+
+
 def test_the_king_queued_again_is_dropped_without_a_duel(duel_spec, store, queues, tmp_path):
     publish(store, duel_spec, make_record(duel_spec, "genesis", 1, ZERO_REF, None))
     add(queues, ZERO_REF)

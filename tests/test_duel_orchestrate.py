@@ -9,6 +9,7 @@ import pytest
 from duel_helpers import (
     REPLAY,
     REPLAY_REF,
+    ZERO,
     ZERO_REF,
     Crash,
     FakePolicyRuntime,
@@ -36,6 +37,8 @@ from submission_helpers import write_policy_repo
 TRACK = "franka_1arm"
 #: The replay example under another name: a king that wins every unit it gets to play.
 BOMB_REF = SubmissionRef.make("org/bomb-policy", "4" * 40)
+#: A king whose repository has gone.
+GONE_REF = SubmissionRef.make("org/gone-policy", "5" * 40)
 
 
 @pytest.fixture
@@ -314,38 +317,75 @@ def test_a_duel_killed_after_it_published_does_not_publish_twice(duel_spec, stor
     verified(store, duel_spec)
 
 
-def test_a_refused_challenger_voids_the_duel_and_the_king_keeps_the_crown(
-    duel_spec, store, tmp_path
-):
+def test_a_refused_challenger_is_refused_and_the_king_keeps_the_crown(duel_spec, store, tmp_path):
     crowned(store, duel_spec, ZERO_REF)
     broken = write_policy_repo(tmp_path / "broken", policy="pkg.policy:Missing")
     ref = SubmissionRef.make("org/broken", "3" * 40)
     runtime = FakePolicyRuntime(duel_spec, {ref.repo: broken, ZERO_REF.repo: tmp_path})
     req = DuelRequest(TRACK, ref, ZERO_REF, "smoke", block=2)
-    duel = orchestrator(duel_spec, store, tmp_path, runtime)
+    live = RecordingReporter(duel_spec)
+    duel = orchestrator(duel_spec, store, tmp_path, runtime, live=live)
     result = duel.run(req)
-    assert result.status == "void"
+    assert result.status == "refused" and not result.published
     assert result.reason.startswith("the challenger's submission was refused: hello: ")
-    assert all(u["void"] and "refused" in u["challenger_error"] for u in result.units)
+    assert all("refused" in u["challenger_error"] for u in result.units)
     assert runtime.prepared == [ref.repo] and runtime.serves == []
     assert not (duel.run_dir(req) / "prompts").exists(), "prompts were made for a refused duel"
     assert store.head(TRACK)["king"] == ZERO_REF.as_dict() and len(store.iter_index(TRACK)) == 1
+    outcome = json.loads((duel.run_dir(req) / OUTCOME_FILE).read_text())
+    assert (outcome["status"], outcome["reason"]) == ("refused", result.reason)
+    assert live.frames[-1]["phase"] == "failed"
+    assert live.frames[-1]["message"].startswith("refused: the challenger's submission")
 
 
-def test_a_refused_king_voids_the_duel_and_keeps_the_crown(duel_spec, store, tmp_path):
-    crowned(store, duel_spec, ZERO_REF)
+@pytest.mark.parametrize(
+    "challenger, crowned_after", [(REPLAY_REF, REPLAY_REF), (ZERO_REF, GONE_REF)]
+)
+def test_a_refused_king_forfeits_every_unit_and_the_duel_is_published(
+    duel_spec, store, tmp_path, challenger, crowned_after
+):
+    crowned(store, duel_spec, GONE_REF)
     (tmp_path / "gone").mkdir()  # the king's repository no longer holds a manifest
     runtime = FakePolicyRuntime(
-        duel_spec, {REPLAY_REF.repo: REPLAY, ZERO_REF.repo: tmp_path / "gone"}
+        duel_spec, {REPLAY_REF.repo: REPLAY, ZERO_REF.repo: ZERO, GONE_REF.repo: tmp_path / "gone"}
     )
-    result = orchestrator(duel_spec, store, tmp_path, runtime).run(
-        DuelRequest(TRACK, REPLAY_REF, ZERO_REF, "smoke", block=2)
+    req = DuelRequest(TRACK, challenger, GONE_REF, "smoke", block=2)
+    duel = orchestrator(duel_spec, store, tmp_path, runtime)
+    result = duel.run(req)
+
+    assert result.published and result.kind == "duel", result.reason
+    record = result.record
+    assert record["dethroned"] is (crowned_after == challenger)
+    assert record["king_scores"]["average"] == 0.0 and record["void"] == 0
+    for unit in result.units:
+        assert (unit["king_success"], unit["void"]) == (False, False)
+        assert unit["king_error"].startswith("the king's submission was refused: manifest: ")
+    assert [repo for repo, _ in runtime.serves] == [challenger.repo] * 3, "the king was served"
+    event = event_of(store, record)
+    forfeits = [n for n in event["notes"] if n.startswith("king forfeit: ")]
+    assert forfeits == [f"king forfeit: {event['sides']['king']['refused']}"]
+    assert forfeits[0].startswith("king forfeit: manifest: ")
+    assert store.head(TRACK)["king"] == crowned_after.as_dict()
+    verified(store, duel_spec)
+
+
+def test_a_resumed_duel_keeps_the_kings_forfeit(duel_spec, store, tmp_path):
+    crowned(store, duel_spec, GONE_REF)
+    (tmp_path / "gone").mkdir()
+    local = {REPLAY_REF.repo: REPLAY, GONE_REF.repo: tmp_path / "gone"}
+    req = DuelRequest(TRACK, REPLAY_REF, GONE_REF, "smoke", block=2)
+    with pytest.raises(Crash):
+        orchestrator(
+            duel_spec, store, tmp_path, FakePolicyRuntime(duel_spec, local, crash_on_serve=1)
+        ).run(req)
+    # The king's repository is back; the duel it forfeited is still the duel it forfeited.
+    back = FakePolicyRuntime(duel_spec, {**local, GONE_REF.repo: ZERO})
+    result = orchestrator(duel_spec, store, tmp_path, back).run(req)
+    assert result.published and result.record["dethroned"] is True
+    assert back.prepared == [REPLAY_REF.repo], "the forfeited king was asked again"
+    assert all(
+        u["king_error"].startswith("the king's submission was refused") for u in result.units
     )
-    assert result.status == "void"
-    assert result.reason.startswith("the king's submission was refused: manifest: ")
-    assert all(u["void"] and "refused" in u["king_error"] for u in result.units)
-    assert store.head(TRACK)["king"] == ZERO_REF.as_dict() and runtime.serves == []
-    assert len(store.iter_index(TRACK)) == 1, "a refused king published a vacancy"
 
 
 def test_too_many_void_prompts_void_the_duel_before_either_side_runs(duel_spec, store, tmp_path):
