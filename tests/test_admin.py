@@ -6,6 +6,7 @@ import http.client
 import json
 import logging
 import socket
+import threading
 
 import httpx
 import pytest
@@ -19,6 +20,7 @@ from store_helpers import TRACK
 from submission_helpers import SHA_A, SHA_B, FakeHub
 
 TOKEN = "tok-3f9a1c7e-never-in-a-log"
+HEALTH = "/admin/health"
 DASHBOARD = {"track": TRACK, "duel_size": "smoke", "source": "dashboard-dev-mode"}
 
 
@@ -176,6 +178,32 @@ def test_a_second_post_answers_with_the_place_it_already_has(server, hub, paths)
     assert (again["accepted_at"], again["duel_size"]) == (first["accepted_at"], "smoke")
     assert "nothing new was queued" in again["message"]
     assert [e.repo for e in queued(paths)] == ["org/policy", "org/other"]
+
+
+def test_a_health_check_during_a_submission_does_not_lose_it(server, paths, monkeypatch):
+    """Handler threads share the track's Queue; a health check landing between the offer's append
+    and its save must neither drop the entry answered as queued nor miscount it."""
+    save = Queue.save
+    checks: list[threading.Thread] = []
+    answers: list[dict] = []
+
+    def save_during_a_health_check(self):
+        if not checks:
+            checks.append(
+                threading.Thread(target=lambda: answers.append(call(server, "GET", HEALTH)[1]))
+            )
+            checks[0].start()
+            checks[0].join(0.3)  # a check that does not wait has reloaded the queue by now
+        save(self)
+
+    monkeypatch.setattr(Queue, "save", save_during_a_health_check)
+    status, body, _ = call(
+        server, "POST", "/admin/submissions", {"repo": "org/policy", **DASHBOARD}
+    )
+    checks[0].join(10)
+    assert status == 200 and body["queued"] is True
+    assert [e.key for e in queued(paths)] == [body["key"]], "an entry answered as queued was lost"
+    assert answers == [call(server, "GET", HEALTH)[1]] and answers[0]["queue_lengths"] == {TRACK: 1}
 
 
 @pytest.mark.parametrize(

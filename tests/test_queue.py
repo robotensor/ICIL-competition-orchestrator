@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 
 import pytest
 
@@ -39,6 +40,29 @@ def test_offer_keeps_a_waiting_submission_where_it_is(tmp_path):
     assert [e.key for e in Queue(tmp_path / "q.json").entries()] == [first.key, second.key]
     with pytest.raises(ValueError, match="resolved commit sha"):
         q.offer("a/x", "main")
+
+
+def test_a_reader_does_not_swap_out_the_state_a_writer_is_saving(tmp_path, monkeypatch):
+    """The intake's handler threads share one Queue: a health check reading it while another thread
+    offers a submission must not have that thread save the file without the entry it added."""
+    path = tmp_path / "q.json"
+    q = Queue(path)
+    q.offer("org/first", "1" * 40)
+    save = Queue.save
+    readers: list[threading.Thread] = []
+
+    def save_while_a_reader_reads(self):
+        if not readers:
+            readers.append(threading.Thread(target=q.entries))
+            readers[0].start()
+            readers[0].join(0.3)  # a reader that does not wait has reloaded the file by now
+        save(self)
+
+    monkeypatch.setattr(Queue, "save", save_while_a_reader_reads)
+    entry, position, queued = q.offer("org/second", "2" * 40)
+    readers[0].join(5)
+    assert (entry.repo, position, queued) == ("org/second", 2, True)
+    assert [e.repo for e in Queue(path).entries()] == ["org/first", "org/second"]
 
 
 def test_the_snapshot_is_the_schema_4_shape_the_dashboard_reads(tmp_path):
