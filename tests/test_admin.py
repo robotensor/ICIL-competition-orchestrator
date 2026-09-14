@@ -9,6 +9,7 @@ import select
 import socket
 import threading
 import time
+from typing import Any
 
 import httpx
 import pytest
@@ -464,6 +465,65 @@ def test_the_hub_refusing_is_422_with_its_reason_and_an_outage_503(server, hub, 
     assert queued(paths) == []
 
 
+def test_a_commit_only_a_pull_request_holds_is_refused(server, hub, paths):
+    """Anyone on the Hub can open a pull request on a public repository, and the Hub serves its
+    commit by sha: queued, it would be duelled and published as the owner's code."""
+    proposed = "9" * 40
+    hub.add("org/policy", proposed, {"icil.yaml": 80}, pr=1, parent=SHA_A)
+    body = {"repo": "org/policy", "revision": proposed, **DASHBOARD}
+    status, answer, _ = call(server, "POST", "/admin/submissions", body)
+    assert status == 422 and answer["ok"] is False, answer
+    assert answer["error"] == (
+        f"org/policy@{proposed}: no branch or tag of the repository holds this commit; a pull "
+        "request's commit (refs/pr/N), or one no branch holds any more, is not queued"
+    )
+    assert queued(paths) == []
+    status, answer, _ = call(server, "POST", "/admin/submissions", {**body, "revision": SHA_A})
+    assert status == 200 and answer["revision"] == SHA_A, answer
+
+    def unreachable(*args, **kwargs):
+        raise httpx.ConnectError("[Errno 101] Network is unreachable")
+
+    hub.list_repo_refs = unreachable
+    status, answer, _ = call(server, "POST", "/admin/submissions", {"repo": "org/other"})
+    assert status == 503 and "the Hub is unreachable" in answer["error"], answer
+    assert [e.repo for e in queued(paths)] == ["org/policy"]
+
+
+def test_the_hub_client_gives_every_call_its_timeout_and_reads_history_lazily(monkeypatch):
+    """`HfApi.list_repo_refs` and `list_repo_commits` take no timeout, and the latter reads every
+    page before it returns; the intake's client asks the same endpoints with its own."""
+    asked: list[Any] = []
+
+    class Session:
+        def get(self, url, *, headers, timeout, params=None):
+            asked.append((url, timeout))
+            refs = {"branches": [{"name": "main", "ref": "refs/heads/main", "targetCommit": SHA_A}]}
+            return httpx.Response(200, json={**refs, "tags": []}, request=httpx.Request("GET", url))
+
+    def paginate(path, params, headers, timeout=None):
+        asked.append((path, timeout))
+        yield {"id": SHA_B}
+        asked.append("the next page")
+        yield {"id": SHA_A}
+
+    # Made first: making it imports huggingface_hub.hf_api, which binds get_session for good, and
+    # would keep the stand-in past this test.
+    api = admin.HubApi(timeout_s=3.5)
+    monkeypatch.setattr("huggingface_hub.utils.get_session", lambda: Session())
+    monkeypatch.setattr("huggingface_hub.utils.paginate", paginate)
+    refs = api.list_repo_refs("org/policy", repo_type="model")
+    assert [(r.name, r.target_commit) for r in refs.branches] == [
+        ("main", SHA_A)
+    ] and refs.tags == []
+    commits = api.list_repo_commits("org/policy", repo_type="model", revision="refs/pr/1")
+    assert next(commits).commit_id == SHA_B
+    assert asked == [
+        (f"{api._api.endpoint}/api/models/org/policy/refs", 3.5),
+        (f"{api._api.endpoint}/api/models/org/policy/commits/refs%2Fpr%2F1", 3.5),
+    ], "a page was asked for before it was needed"
+
+
 def test_nothing_is_queued_once_resolving_outlasted_its_budget(serve, hub, paths):
     """The Hub's timeout is per step of its request, so resolving can outlast the dashboard's wait.
     An entry resolved past its budget is not queued: the form has already reported a timeout."""
@@ -591,3 +651,30 @@ def test_a_real_repository_resolves_through_the_hub(serve, paths):
     assert is_commit_sha(body["revision"]) and body["queued"] is True
     (entry,) = queued(paths)
     assert entry.revision == body["revision"]
+
+
+@pytest.mark.network
+def test_a_pull_requests_commit_is_refused_through_the_real_hub(serve, paths):
+    try:
+        socket.create_connection(("huggingface.co", 443), timeout=3).close()
+    except OSError:
+        pytest.skip("the Hugging Face Hub cannot be reached from here")
+    repo = "openai-community/gpt2"  # a public repository with many pull requests
+    api = admin.HubApi(timeout_s=10)
+    refs = api._api.list_repo_refs(repo, include_pull_requests=True)
+    held = {
+        commit.commit_id
+        for ref in [*refs.branches, *refs.tags]
+        for commit in api.list_repo_commits(repo, revision=ref.target_commit)
+    }
+    proposed = next(
+        (pr.target_commit for pr in refs.pull_requests or [] if pr.target_commit not in held), None
+    )
+    if proposed is None:
+        pytest.skip(f"no pull request of {repo} proposes a commit its branches and tags lack")
+    server = serve(api=None)
+    status, body, _ = call(
+        server, "POST", "/admin/submissions", {"repo": repo, "revision": proposed, **DASHBOARD}
+    )
+    assert status == 422 and "no branch or tag of the repository holds" in body["error"], body
+    assert queued(paths) == []

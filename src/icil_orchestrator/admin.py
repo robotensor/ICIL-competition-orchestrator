@@ -37,10 +37,11 @@ import sys
 import threading
 import time
 import traceback
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from .ids import SubmissionRef, is_repo
@@ -48,7 +49,7 @@ from .queue import Queues
 from .spec import Spec
 from .store.writer import Store, store_lock
 from .submissions.errors import SubmissionError, SubmissionRejected
-from .submissions.resolve import resolve
+from .submissions.resolve import resolve_for_queue
 
 log = logging.getLogger(__name__)
 
@@ -155,8 +156,10 @@ class Refused(Exception):
 
 
 class HubApi:
-    """`HfApi.repo_info` with a timeout, which `resolve` does not pass and the Hub client does not
-    set: without one a Hub that stops answering holds the request until the dashboard gives up."""
+    """The Hub calls resolving a submission makes - `repo_info`, `list_repo_refs`,
+    `list_repo_commits` - each with a timeout, which `resolve_for_queue` does not pass and the Hub
+    client does not set: without one a Hub that stops answering holds the request until the
+    dashboard gives up."""
 
     def __init__(self, timeout_s: float = RESOLVE_TIMEOUT_S) -> None:
         from huggingface_hub import HfApi
@@ -166,6 +169,46 @@ class HubApi:
 
     def repo_info(self, repo_id: str, **kwargs: Any) -> Any:
         return self._api.repo_info(repo_id, timeout=self.timeout_s, **kwargs)
+
+    def list_repo_refs(self, repo_id: str, *, repo_type: str | None = None) -> Any:
+        """The branches and tags, as `HfApi.list_repo_refs` asks for them (it takes no timeout)."""
+        from huggingface_hub.hf_api import GitRefInfo, GitRefs
+        from huggingface_hub.utils import build_hf_headers, get_session, hf_raise_for_status
+
+        response = get_session().get(
+            f"{self._api.endpoint}/api/{repo_type or 'model'}s/{repo_id}/refs",
+            headers=build_hf_headers(),
+            timeout=self.timeout_s,
+        )
+        hf_raise_for_status(response)
+        data = response.json()
+
+        def refs(items: list[dict[str, Any]]) -> list[GitRefInfo]:
+            return [GitRefInfo(i["name"], i["ref"], i["targetCommit"]) for i in items]
+
+        return GitRefs(
+            branches=refs(data.get("branches", [])),
+            converts=refs(data.get("converts", [])),
+            tags=refs(data.get("tags", [])),
+            pull_requests=None,
+        )
+
+    def list_repo_commits(
+        self, repo_id: str, *, repo_type: str | None = None, revision: str
+    ) -> Iterator[Any]:
+        """A revision's history, newest first, as `HfApi.list_repo_commits` asks for it - which
+        takes no timeout and reads every page before it returns: here a page at a time, so a walk
+        that has found its commit asks for no more."""
+        from urllib.parse import quote
+
+        from huggingface_hub.utils import build_hf_headers, paginate
+
+        url = (
+            f"{self._api.endpoint}/api/{repo_type or 'model'}s/{repo_id}/commits/"
+            f"{quote(revision, safe='')}"
+        )
+        for item in paginate(url, params={}, headers=build_hf_headers(), timeout=self.timeout_s):
+            yield SimpleNamespace(commit_id=item["id"])
 
 
 class AdminServer:
@@ -382,14 +425,17 @@ class AdminServer:
         return repo, revision, track, duel_size, source
 
     def resolve(self, repo: str, revision: str | None) -> str:
-        """The commit `repo@revision` names on the Hub, through `submissions.resolve`. No revision
+        """The commit `repo@revision` names on the Hub, as `queue add` resolves it: one a branch or a
+        tag of the repository holds, never a pull request's alone (`resolve_for_queue`). No revision
         is the default branch, `main` on the Hub (huggingface_hub's `DEFAULT_REVISION`)."""
         if revision is None:
             from huggingface_hub.constants import DEFAULT_REVISION
 
             revision = DEFAULT_REVISION
         try:
-            return resolve(repo, revision, api=self.api).sha
+            return resolve_for_queue(
+                repo, revision, api=self.api, deadline=time.monotonic() + self.resolve_budget_s
+            ).sha
         except SubmissionRejected as exc:
             raise Refused(422, exc.reason) from None
         except SubmissionError as exc:
