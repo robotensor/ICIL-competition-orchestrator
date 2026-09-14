@@ -173,6 +173,8 @@ class FakeBenchmark:
         ):
             if extra.get(key) is not None:
                 argv += [flag, repr(float(extra[key]))]
+        if extra.get("policy_log"):
+            argv += ["--policy-log", str(extra["policy_log"])]
         return argv
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from icil_orchestrator.duel.runtime import (
     PolicyRuntime,
     RuntimeUnavailable,
     SubmissionRefused,
+    mirror_log,
 )
 from submission_helpers import write_policy_repo
 
@@ -28,6 +30,39 @@ def runtime(spec):
 
 def test_the_subprocess_runtime_is_a_policy_runtime(runtime):
     assert isinstance(runtime, PolicyRuntime) and runtime.name == "local"
+
+
+def eventually(check, within_s: float = 5.0) -> bool:
+    deadline = time.monotonic() + within_s
+    while not check():
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.01)
+    return True
+
+
+def test_the_copy_of_a_policys_log_follows_its_end_and_never_a_link_or_a_pipe(tmp_path):
+    live = tmp_path / "sockets" / "policy.log"
+    live.parent.mkdir()
+    live.write_text("listening on policy.sock\n")
+    secret = tmp_path / "secret.txt"
+    secret.write_text("the other side's results\n")
+    copy = tmp_path / "unit" / "policy-tail.log"
+    with mirror_log(live, copy, limit=64, interval_s=0.01) as mirrored:
+        assert mirrored == copy and copy.read_text() == "listening on policy.sock\n"
+        with open(live, "a") as fh:
+            fh.write("x" * 100 + "\nact raised\n")
+        assert eventually(lambda: copy.read_bytes().endswith(b"act raised\n"))
+        assert len(copy.read_bytes()) == 64, "the copy is the log's end, not all of it"
+        live.unlink()
+        live.symlink_to(secret)
+        time.sleep(0.1)
+        assert copy.read_bytes().endswith(b"act raised\n"), "a link was followed"
+        live.unlink()
+        os.mkfifo(live)
+        time.sleep(0.1)  # a pipe nobody writes to would block a reader that waited on it
+        assert copy.read_bytes().endswith(b"act raised\n")
+    assert not copy.exists(), "the copy outlived the unit"
 
 
 def test_resolve_keeps_a_commit_and_pins_a_name_to_the_directory(runtime):

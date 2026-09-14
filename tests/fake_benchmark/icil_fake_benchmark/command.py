@@ -12,7 +12,8 @@ never reaches a policy. The actions are a function of the scene seed.
 per demonstrated action. The episode succeeds iff the policy's actions are the demonstration's, so
 the replay example wins and the zero example loses. A policy that is lost or does not answer in
 time ends the episode void with `void_cause: "policy"`, as the RoboTwin plugin reports it: the
-orchestrator counts that as the side's failure, not a void for both.
+orchestrator counts that as the side's failure, not a void for both. With `--policy-log`, that
+error ends with the log's tail, as run-unit's does.
 
 It keeps time as RoboTwin's run-unit does. Each call gets the least of `--act-timeout-s`, what is
 left of `--policy-budget-s` (all the calls' time together) and what is left before the unit's
@@ -27,7 +28,8 @@ policy was done with it.
 
 Every run appends a line to `runs.log` in its directory, so a test can count how often a unit ran.
 Both commands write `given.json` there first: the arguments they were given and their environment,
-the policy's key left out, so a test can see what the orchestrator passed a benchmark.
+the policy's key left out, so a test can see what the orchestrator passed a benchmark. A run given
+`--policy-log` also writes `policy-log-seen.txt`: that log's tail as it read it once it was done.
 """
 
 from __future__ import annotations
@@ -140,6 +142,10 @@ def run(args: argparse.Namespace) -> int:
             "error": None,
             "progress": 1.0 if behaviour == "succeed" else 0.25,
         }
+    if args.policy_log:
+        from icil_policy.logs import tail
+
+        (out / "policy-log-seen.txt").write_text(tail(args.policy_log))
     result["prompt_sha256"] = prompt_sha256
     (out / "result.json").write_text(json.dumps(result))
     tag = f"eval|{prompt_sha256}|{result['success']}|{result['steps']}|{result.get('error')}"
@@ -182,7 +188,9 @@ def drive_policy(args: argparse.Namespace) -> dict:
     error = cause = None
     try:
         key = bytes.fromhex(os.environ[args.authkey_env])
-        with RemotePolicy(args.policy_address, key, timeout_s=args.act_timeout_s) as policy:
+        with RemotePolicy(
+            args.policy_address, key, timeout_s=args.act_timeout_s, log_file=args.policy_log
+        ) as policy:
 
             def call(op, method, *call_args):
                 nonlocal used
@@ -258,6 +266,7 @@ def main() -> int:
     r.add_argument("--act-timeout-s", type=float, default=30.0)
     r.add_argument("--unit-timeout-s", type=float, default=None)
     r.add_argument("--policy-budget-s", type=float, default=None)
+    r.add_argument("--policy-log", default=None)
     r.add_argument("--step-s", type=float, default=0.0)
     r.add_argument("--void-cause", default="")
     args = parser.parse_args()

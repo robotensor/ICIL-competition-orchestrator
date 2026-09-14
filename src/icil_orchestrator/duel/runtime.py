@@ -31,8 +31,9 @@ from __future__ import annotations
 
 import os
 import stat
-from collections.abc import Callable
-from contextlib import AbstractContextManager
+import threading
+from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
@@ -63,6 +64,16 @@ class PolicyDied(RuntimeError):
 POLICY = "policy"
 HARNESS = "harness"
 CAUSES = (POLICY, HARNESS)
+
+#: How much of a policy's log the copy a benchmark reads holds: its end, which is all a failure
+#: quotes (`icil_policy.logs.tail` reads at most 8 KiB).
+LOG_TAIL_BYTES = 1 << 16
+#: How often that copy catches up with the log.
+LOG_MIRROR_S = 0.05
+
+#: A policy can write where its log is, so it may have made the log a link or a pipe: the log is
+#: opened without following a link or waiting on a pipe, and read only if it is a regular file.
+_LOG_FLAGS = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
 
 
 @dataclass(frozen=True)
@@ -120,9 +131,8 @@ def copy_log(source: Path, target: Path, limit: int) -> None:
     """Append at most `limit` bytes of a policy's log to `target`. The policy can write where its
     log is, so it may have made it a link or a pipe: only a regular file is read, and nothing is
     followed or waited on."""
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     try:
-        fd = os.open(source, flags)
+        fd = os.open(source, _LOG_FLAGS)
     except OSError:
         return
     try:
@@ -136,6 +146,68 @@ def copy_log(source: Path, target: Path, limit: int) -> None:
         os.close(fd)
 
 
+def _copy_tail(source: Path, target: Path, limit: int, seen: Any) -> Any:
+    """Replace `target` with the last `limit` bytes of the log at `source`, unless the log is as it
+    was when `seen` was returned; what to pass as `seen` next time. A log that is not a regular
+    file, or cannot be read, leaves `target` as it was."""
+    try:
+        fd = os.open(source, _LOG_FLAGS)
+    except OSError:
+        return seen
+    try:
+        info = os.fstat(fd)
+        state = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
+        if not stat.S_ISREG(info.st_mode) or state == seen:
+            return seen
+        with open(fd, "rb", closefd=False) as fh:
+            fh.seek(max(0, info.st_size - limit))
+            data = fh.read(limit)
+        partial = target.with_name(f".{target.name}.partial")
+        partial.write_bytes(data)
+        os.replace(partial, target)  # a reader never sees half of a copy
+        return state
+    except OSError:
+        return seen
+    finally:
+        os.close(fd)
+
+
+@contextmanager
+def mirror_log(
+    source: Path,
+    target: Path,
+    *,
+    limit: int = LOG_TAIL_BYTES,
+    interval_s: float = LOG_MIRROR_S,
+) -> Iterator[Path]:
+    """`target`, holding the end of the policy's log at `source` for as long as the block runs.
+
+    A benchmark quotes a policy's log when the policy fails it, and must not be handed the log
+    itself: the policy can write where its log is, so it could swap the file for a link to
+    something on the benchmark's side, or a pipe that blocks whoever opens it. `target` is a file
+    in a directory the policy never sees, replaced whole with the last `limit` bytes of the log
+    whenever the log changes, read only from a regular file without following a link; it trails
+    the log by up to `interval_s`, catches up once more on the way out, and is removed then."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(b"")
+    seen: Any = _copy_tail(source, target, limit, None)
+    stop = threading.Event()
+
+    def follow() -> None:
+        nonlocal seen
+        while not stop.wait(interval_s):
+            seen = _copy_tail(source, target, limit, seen)
+
+    thread = threading.Thread(target=follow, name="icil-policy-log", daemon=True)
+    thread.start()
+    try:
+        yield target
+    finally:
+        stop.set()
+        thread.join()
+        target.unlink(missing_ok=True)
+
+
 def _alive() -> PolicyEnd | None:
     return None
 
@@ -146,7 +218,8 @@ class ServedPolicy:
 
     The benchmark subprocess gets `address` and the *name* `authkey_env`; `env` is what must be
     added to its environment for that name to hold the key. `log_file` is the server's log (and
-    everything the policy printed), kept in the unit's directory.
+    everything the policy printed), kept in the unit's directory once the unit is over; `live_log`
+    is that log as the policy writes it while it serves, which only `mirror_log` reads.
     """
 
     address: str
@@ -155,6 +228,8 @@ class ServedPolicy:
     log_file: Path
     #: Called once the unit is over: how the policy ended underneath it, or None if it did not.
     died: Callable[[], PolicyEnd | None] = _alive
+    #: The log the policy writes while it serves; None where the runtime has none.
+    live_log: Path | None = None
 
 
 @runtime_checkable

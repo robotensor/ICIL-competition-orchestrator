@@ -167,6 +167,7 @@ class DockerPolicyRuntime:
                 env={AUTHKEY_ENV: container.authkey.hex()},
                 log_file=Path(workdir) / LOG_FILE,
                 died=lambda: self._died(container),
+                live_log=container.log_path,
             )
             self._started(container, served)
             yield served

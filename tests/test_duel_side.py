@@ -449,3 +449,30 @@ def test_a_policy_that_takes_its_whole_budget_to_start_fails_its_unit_unplayed(
     assert (record["success"], record["void"]) == (False, False)
     assert "to start, its whole budget of 1s for the unit" in record["error"]
     assert runs(tmp_path, units[0]["unit_id"]) == 0, "the benchmark ran after the budget was gone"
+
+
+def test_the_benchmark_quotes_a_copy_of_the_policys_log_never_the_log_itself(
+    duel_spec, fake, units, prompts, tmp_path
+):
+    """The policy can write where its log is; the benchmark reads a copy of its end in the unit's
+    directory instead, and quotes that copy when the policy fails it."""
+    live_logs = []
+
+    class Watching(FakePolicyRuntime):
+        def _started(self, process, served):
+            live_logs.append(served.live_log)
+            super()._started(process, served)
+
+    runtime = Watching(duel_spec, kill_on_serve={1})
+    results = side(duel_spec, fake, units[:2], prompts, tmp_path, runtime)
+    fine, killed = (results[u["unit_id"]] for u in units[:2])
+    assert fine["success"] is True
+    unit_dir = tmp_path / "challenger" / units[0]["unit_id"]
+    policy_log = given(tmp_path, units[0]["unit_id"])["policy_log"]
+    assert policy_log == str(unit_dir / "policy-tail.log")
+    assert live_logs[-1] is not None and str(live_logs[-1]) != policy_log
+    assert "listening on" in (unit_dir / "policy-log-seen.txt").read_text()
+    assert not Path(policy_log).exists(), "the copy outlived its unit"
+    # A policy killed under its unit: the benchmark's error ends with the copy's tail.
+    assert (killed["success"], killed["void"]) == (False, False)
+    assert "--- policy log (tail) ---" in killed["error"] and "listening on" in killed["error"]

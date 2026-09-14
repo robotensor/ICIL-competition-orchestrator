@@ -9,9 +9,11 @@ order. For each one:
    policy's key variable, within `min(budgets.unit_wall_seconds, what is left of the side's
    budget)` less the time the policy took to start, and its result is read back as an `Outcome`.
    `run_command` is given `act_timeout_s`; that subprocess timeout as `unit_timeout_s`, so the
-   benchmark can stop calling the policy in time to write why a unit it cannot finish ended; and
+   benchmark can stop calling the policy in time to write why a unit it cannot finish ended;
    `policy_budget_s`, what starting the policy left of `budgets.policy_budget_seconds`, never more
    than that timeout less the benchmark's result reserve (`info()["limits"]["result_reserve_s"]`);
+   and `policy_log`, a copy of the end of the policy's log in the unit's directory, which the
+   benchmark may quote (`runtime.mirror_log`) - never the log the policy itself writes;
 4. whose the outcome is, when it is not a scored one, is decided (`attribute`);
 5. the unit's record is appended to `<side_dir>/results.jsonl` and handed to `on_unit`.
 
@@ -51,6 +53,7 @@ import math
 import os
 import time
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -68,11 +71,15 @@ from .runtime import (
     PolicyRuntime,
     PreparedSubmission,
     RuntimeUnavailable,
+    mirror_log,
 )
 
 log = logging.getLogger(__name__)
 
 RESULTS_FILE = "results.jsonl"
+#: In a unit's directory while its benchmark runs: the end of the policy's log, which the benchmark
+#: is given as `policy_log`. Removed with the unit; the whole log is kept as the runtime's log file.
+POLICY_LOG_COPY = "policy-tail.log"
 
 
 def read_results(side_dir: Path) -> dict[str, dict[str, Any]]:
@@ -328,25 +335,33 @@ def _play(
                     **benchmark_environment(os.environ, served.authkey_env),
                     **served.env,
                 }
-                timeout_s = max(0.0, deadline - time.monotonic())
-                limits = unit_limits(
-                    extra,
-                    timeout_s=timeout_s,
-                    budget_s=policy_budget_s - start_s,
-                    reserve_s=result_reserve_s,
+                copied = (
+                    nullcontext(None)
+                    if served.live_log is None
+                    else mirror_log(served.live_log, unit_dir / POLICY_LOG_COPY)
                 )
-                outcome = run_unit(
-                    benchmark,
-                    unit,
-                    prompt=prompt_path,
-                    out_dir=unit_dir,
-                    policy_address=served.address,
-                    authkey_env=served.authkey_env,
-                    timeout_s=timeout_s,
-                    env=env,
-                    extra=limits,
-                    ledger=Ledger(unit_dir),
-                )
+                with copied as policy_log:
+                    timeout_s = max(0.0, deadline - time.monotonic())
+                    limits = unit_limits(
+                        extra,
+                        timeout_s=timeout_s,
+                        budget_s=policy_budget_s - start_s,
+                        reserve_s=result_reserve_s,
+                    )
+                    if policy_log is not None:
+                        limits["policy_log"] = str(policy_log)
+                    outcome = run_unit(
+                        benchmark,
+                        unit,
+                        prompt=prompt_path,
+                        out_dir=unit_dir,
+                        policy_address=served.address,
+                        authkey_env=served.authkey_env,
+                        timeout_s=timeout_s,
+                        env=env,
+                        extra=limits,
+                        ledger=Ledger(unit_dir),
+                    )
                 end = served.died()
     except PolicyDied as exc:
         wall = round(time.monotonic() - started, 3)

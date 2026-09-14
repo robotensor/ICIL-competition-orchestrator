@@ -142,9 +142,17 @@ def test_a_duel_runs_through_the_sandbox_one_container_per_unit(
         # Each socket directory was its own bounded tmpfs (recorded here, mounted for real under
         # `pytest -m container`).
         assert {call[1] for call in shared_mounts if call[0] == "mount"} == shared_dirs
+    import json
+
     for side in ("challenger", "king"):
         for unit in result.units:
-            assert (result.run_dir / side / unit["unit_id"] / "policy.log").is_file()
+            unit_dir = result.run_dir / side / unit["unit_id"]
+            assert (unit_dir / "policy.log").is_file()
+            # The benchmark read a copy of the container's log beside its result, never the log
+            # in the directory the container shares.
+            given = json.loads((unit_dir / "given.json").read_text())["args"]
+            assert given["policy_log"] == str(unit_dir / "policy-tail.log")
+            assert "listening on" in (unit_dir / "policy-log-seen.txt").read_text()
 
 
 def test_a_challenger_that_does_not_build_is_refused(spec, docker, tmp_path):

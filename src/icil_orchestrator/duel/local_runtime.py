@@ -233,6 +233,7 @@ class SubprocessPolicyRuntime:
                 env={AUTHKEY_ENV: key.hex()},
                 log_file=workdir / LOG_FILE,
                 died=lambda: self._died(process, log_file),
+                live_log=log_file,
             )
             self._started(process, served)
             yield served, key, log_file
