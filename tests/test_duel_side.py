@@ -1,0 +1,510 @@
+"""One side of a duel against the fake benchmark, with the example policies served per unit."""
+
+from __future__ import annotations
+
+import json
+import os
+import time
+from pathlib import Path
+
+import pytest
+
+from conftest import fake_spec_doc
+from duel_helpers import REPLAY_REF, ZERO_REF, Crash, FakePolicyRuntime
+from icil_orchestrator.benchmarks.subprocess_runner import Outcome, voided
+from icil_orchestrator.benchmarks.units import plugin_units
+from icil_orchestrator.duel.materialize import materialize_units
+from icil_orchestrator.duel.runtime import (
+    HARNESS,
+    POLICY,
+    PolicyDied,
+    PolicyEnd,
+    RuntimeUnavailable,
+)
+from icil_orchestrator.duel.side import RESULTS_FILE, attribute, read_results, run_side
+
+TRACK = "franka_1arm"
+
+
+@pytest.fixture
+def fake(fake_installed):
+    import icil_fake_benchmark
+
+    return icil_fake_benchmark.BENCHMARK
+
+
+@pytest.fixture
+def units(duel_spec, fake):
+    return plugin_units(duel_spec, TRACK, "e" * 64, "smoke", resolve=lambda name: fake)
+
+
+@pytest.fixture
+def prompts(duel_spec, fake, units, tmp_path):
+    return materialize_units(duel_spec, units, tmp_path / "prompts", benchmark_of=lambda u: fake)
+
+
+def side(duel_spec, fake, units, prompts, tmp_path, runtime, ref=REPLAY_REF, **kwargs):
+    prepared = kwargs.pop("prepared", None)
+    if prepared is None and "refused" not in kwargs:
+        fetched = runtime.fetch(ref, workdir=tmp_path / "challenger")
+        prepared = runtime.prepare(fetched, workdir=tmp_path / "challenger" / "check")
+    return run_side(
+        duel_spec,
+        side="challenger",
+        units=units,
+        prompts=prompts,
+        side_dir=tmp_path / "challenger",
+        benchmark_of=lambda unit: fake,
+        runtime=runtime,
+        prepared=prepared,
+        **kwargs,
+    )
+
+
+def runs(tmp_path, unit_id):
+    log = tmp_path / "challenger" / unit_id / "runs.log"
+    return log.read_text().count("\n") if log.exists() else 0
+
+
+@pytest.mark.parametrize("ref, wins", [(REPLAY_REF, True), (ZERO_REF, False)])
+def test_every_unit_runs_against_its_own_policy_and_is_recorded(
+    duel_spec, fake, units, prompts, tmp_path, ref, wins
+):
+    runtime = FakePolicyRuntime(duel_spec)
+    seen = []
+    results = side(
+        duel_spec,
+        fake,
+        units,
+        prompts,
+        tmp_path,
+        runtime,
+        ref=ref,
+        on_unit=lambda unit, record: seen.append(record["unit_id"]),
+    )
+    ids = [u["unit_id"] for u in units]
+    assert seen == ids == list(results)
+    assert [s[1] for s in runtime.serves] == ids, "one served policy per unit"
+    for unit in units:
+        record = results[unit["unit_id"]]
+        assert (record["success"], record["void"]) == (wins, False), record["error"]
+        assert record["prompt_sha256"] == prompts.prompts[unit["unit_id"]].sha256
+        assert record["clip"] == f"{unit['unit_id']}/evaluation.mp4" and record["clip_sha256"]
+        assert (tmp_path / "challenger" / unit["unit_id"] / "policy.log").is_file()
+        assert runs(tmp_path, unit["unit_id"]) == 1
+    assert read_results(tmp_path / "challenger") == results
+
+
+def test_a_restarted_side_runs_only_the_units_it_had_not_finished(
+    duel_spec, fake, units, prompts, tmp_path
+):
+    runtime = FakePolicyRuntime(duel_spec, crash_on_serve=1)
+    with pytest.raises(Crash):
+        side(duel_spec, fake, units, prompts, tmp_path, runtime)
+    assert list(read_results(tmp_path / "challenger")) == [units[0]["unit_id"]]
+
+    results = side(duel_spec, fake, units, prompts, tmp_path, FakePolicyRuntime(duel_spec))
+    assert all(r["success"] for r in results.values())
+    for unit in units:
+        assert runs(tmp_path, unit["unit_id"]) == 1, f"{unit['unit_id']} ran twice or never"
+    lines = (tmp_path / "challenger" / RESULTS_FILE).read_text().splitlines()
+    assert len(lines) == len(units)
+
+
+def test_a_policy_that_dies_under_its_unit_fails_it_and_the_next_unit_is_served_afresh(
+    duel_spec, fake, units, prompts, tmp_path
+):
+    runtime = FakePolicyRuntime(duel_spec, kill_on_serve={1})
+    results = side(duel_spec, fake, units, prompts, tmp_path, runtime)
+    first, second, third = (results[u["unit_id"]] for u in units)
+    assert first["success"] is True and not first["void"]
+    assert (second["success"], second["void"]) == (False, False), "a policy's death voided it"
+    assert "policy: " in second["error"] and "killed by signal 9" in second["error"]
+    assert third["success"] is True and not third["void"]
+    assert len(runtime.serves) == 3 and runs(tmp_path, units[2]["unit_id"]) == 1
+
+
+@pytest.mark.parametrize(
+    "behaviour, cause, outcome",
+    [
+        ("policy_then_void", "policy", (False, False)),
+        ("policy_then_void", "harness", (None, True)),
+        ("policy_then_void", "", (None, True)),
+        ("crash", "", (None, True)),
+    ],
+)
+def test_a_void_the_benchmark_reports_is_the_sides_failure_only_for_the_policys_cause(
+    duel_spec, fake, units, prompts, tmp_path, behaviour, cause, outcome
+):
+    units[0].update(fake_behaviour=behaviour, fake_void_cause=cause)
+    results = side(duel_spec, fake, units, prompts, tmp_path, FakePolicyRuntime(duel_spec))
+    record = results[units[0]["unit_id"]]
+    assert (record["success"], record["void"]) == outcome, record["error"]
+    assert record["error"]
+
+
+def test_a_policy_that_never_listens_fails_and_a_runtime_that_cannot_serve_voids(
+    duel_spec, fake, units, prompts, tmp_path
+):
+    class Flaky(FakePolicyRuntime):
+        def serve(self, prepared, *, workdir):
+            unit = Path(workdir).name
+            if unit == units[0]["unit_id"]:
+                raise PolicyDied("the policy did not listen within 600s")
+            if unit == units[1]["unit_id"]:
+                raise RuntimeUnavailable("docker is not running")
+            return super().serve(prepared, workdir=workdir)
+
+    results = side(duel_spec, fake, units, prompts, tmp_path, Flaky(duel_spec))
+    never, unserved, fine = (results[u["unit_id"]] for u in units)
+    assert (never["success"], never["void"]) == (False, False)
+    assert "did not listen" in never["error"]
+    assert (unserved["success"], unserved["void"]) == (None, True)
+    assert "docker is not running" in unserved["error"]
+    assert fine["success"] is True
+
+
+@pytest.mark.parametrize(
+    "void_cause, end, outcome",
+    [
+        (None, None, (None, True)),
+        ("harness", None, (None, True)),
+        ("policy", None, (False, False)),
+        ("nonsense", None, (None, True)),
+        (None, PolicyEnd("the policy process exited 1", POLICY), (False, False)),
+        ("harness", PolicyEnd("the policy process exited 1", POLICY), (None, True)),
+        ("policy", PolicyEnd("the policy container is gone", HARNESS), (None, True)),
+        (None, PolicyEnd("the policy container is gone", HARNESS), (None, True)),
+    ],
+)
+def test_whose_a_void_is(void_cause, end, outcome):
+    reported = voided("fake: policy: act: no answer within 30s")
+    if void_cause is not None:
+        reported.extra["void_cause"] = void_cause
+    attributed = attribute(reported, end)
+    assert (attributed.success, attributed.void) == outcome
+    assert attributed.error.startswith("fake: policy: act")
+    scored = Outcome(success=True, void=False, steps=5, error=None)
+    assert attribute(scored, PolicyEnd("exited 1", POLICY)) is scored, "a score was undone"
+
+
+def test_a_refused_submission_fails_every_unit_with_the_reason_and_serves_nothing(
+    duel_spec, fake, units, prompts, tmp_path
+):
+    runtime = FakePolicyRuntime(duel_spec)
+    results = side(
+        duel_spec, fake, units, prompts, tmp_path, runtime, refused="manifest: icil.yaml: api"
+    )
+    assert all((r["success"], r["void"]) == (False, False) for r in results.values())
+    assert {r["error"] for r in results.values()} == {
+        "the challenger's submission was refused: manifest: icil.yaml: api"
+    }
+    assert runtime.serves == []
+
+
+def test_a_unit_without_a_prompt_is_void_and_the_others_run(duel_spec, fake, units, tmp_path):
+    units[0]["fake_materialize"] = "crash"
+    prompts = materialize_units(duel_spec, units, tmp_path / "prompts", benchmark_of=lambda u: fake)
+    runtime = FakePolicyRuntime(duel_spec)
+    results = side(duel_spec, fake, units, prompts, tmp_path, runtime)
+    bad = results[units[0]["unit_id"]]
+    assert bad["void"] and bad["error"].startswith("no prompt: fake: materialize: exited 3")
+    assert [r["success"] for r in results.values()] == [None, True, True]
+    assert len(runtime.serves) == 2
+
+
+def test_a_prompt_changed_since_it_was_materialized_is_not_run(
+    duel_spec, fake, units, prompts, tmp_path
+):
+    path = prompts.prompts[units[1]["unit_id"]].path
+    os.chmod(path, 0o644)
+    path.write_bytes(b"not the prompt")
+    results = side(duel_spec, fake, units, prompts, tmp_path, FakePolicyRuntime(duel_spec))
+    assert "changed after it was materialized" in results[units[1]["unit_id"]]["error"]
+    assert runs(tmp_path, units[1]["unit_id"]) == 0
+
+
+def test_units_left_when_the_duel_runs_out_of_time_are_void(
+    duel_spec, fake, units, prompts, tmp_path
+):
+    runtime = FakePolicyRuntime(duel_spec)
+    results = side(
+        duel_spec, fake, units, prompts, tmp_path, runtime, deadline=time.monotonic() - 1
+    )
+    assert {r["error"] for r in results.values()} == {"the side ran out of its wall-clock budget"}
+    assert runtime.serves == []
+
+
+def test_an_interrupted_unit_is_reaped_and_moved_aside_before_it_runs_again(
+    duel_spec, fake, units, prompts, tmp_path
+):
+    import subprocess
+
+    from icil_orchestrator.duel.orphans import Ledger
+
+    first = units[0]["unit_id"]
+    unit_dir = tmp_path / "challenger" / first
+    unit_dir.mkdir(parents=True)
+    (unit_dir / "runs.log").write_text("12345\n")
+    orphan = subprocess.Popen(["sleep", "60"], start_new_session=True)
+    try:
+        Ledger(unit_dir).started(orphan.pid)  # what a killed orchestrator's benchmark left
+        results = side(duel_spec, fake, units, prompts, tmp_path, FakePolicyRuntime(duel_spec))
+        assert orphan.wait(timeout=10) == -9, "the orphan was not ended"
+    finally:
+        if orphan.poll() is None:
+            orphan.kill()
+            orphan.wait()
+    assert results[first]["success"] is True
+    aside = unit_dir.with_name(f"{first}.interrupted-1")
+    assert (aside / "runs.log").read_text() == "12345\n"
+    assert runs(tmp_path, first) == 1 and not (unit_dir / "pids.json").exists()
+
+
+def test_a_prompt_changed_while_its_unit_ran_voids_the_unit(
+    duel_spec, fake, units, prompts, tmp_path
+):
+    target = prompts.prompts[units[1]["unit_id"]].path
+
+    class Tampering(FakePolicyRuntime):
+        def _started(self, process, served):
+            super()._started(process, served)
+            if served.log_file.parent.name == units[1]["unit_id"]:
+                os.chmod(target, 0o644)
+                target.write_bytes(target.read_bytes() + b"\0")
+
+    results = side(duel_spec, fake, units, prompts, tmp_path, Tampering(duel_spec))
+    changed = results[units[1]["unit_id"]]
+    assert changed["void"] and "changed after it was materialized" in changed["error"]
+    assert runs(tmp_path, units[1]["unit_id"]) == 1, "the check is after the unit, not before"
+    assert results[units[0]["unit_id"]]["success"] is True
+
+
+def test_a_unit_the_benchmark_says_ran_from_another_prompt_is_void(
+    duel_spec, fake, units, prompts, tmp_path
+):
+    class Misreading(type(fake)):
+        def read_result(self, *, out_dir):
+            result = super().read_result(out_dir=out_dir)
+            if Path(out_dir).name == units[2]["unit_id"]:
+                result["prompt_sha256"] = "f" * 64
+            return result
+
+    misreading = Misreading()
+    runtime = FakePolicyRuntime(duel_spec)
+    results = run_side(
+        duel_spec,
+        side="challenger",
+        units=units,
+        prompts=prompts,
+        side_dir=tmp_path / "challenger",
+        benchmark_of=lambda unit: misreading,
+        runtime=runtime,
+        prepared=runtime.prepare(
+            runtime.fetch(REPLAY_REF, workdir=tmp_path), workdir=tmp_path / "check"
+        ),
+    )
+    other = results[units[2]["unit_id"]]
+    assert other["void"] and "the benchmark read a prompt hashing to ffffffffffff" in other["error"]
+    assert [results[u["unit_id"]]["void"] for u in units[:2]] == [False, False]
+
+
+def test_starting_the_policy_is_taken_from_its_units_budget_and_counted_in_its_wall_time(
+    duel_spec, fake, units, prompts, tmp_path, monkeypatch
+):
+    from icil_orchestrator.duel import side as side_module
+
+    timeouts = []
+    run_unit = side_module.run_unit
+
+    def spying(*args, **kwargs):
+        timeouts.append(kwargs["timeout_s"])
+        return run_unit(*args, **kwargs)
+
+    monkeypatch.setattr(side_module, "run_unit", spying)
+
+    class SlowStart(FakePolicyRuntime):
+        def serve(self, prepared, *, workdir):
+            time.sleep(2.0)  # a policy loading its weights before it listens
+            return super().serve(prepared, workdir=workdir)
+
+    results = side(duel_spec, fake, units[:1], prompts, tmp_path, SlowStart(duel_spec))
+    budget = float(duel_spec.budgets["unit_wall_seconds"])
+    assert timeouts[0] <= budget - 2.0, "starting the policy was not taken from the unit's budget"
+    assert results[units[0]["unit_id"]]["wall_s"] >= 2.0, "the wall time left out the start"
+
+
+def test_a_side_told_to_stop_plays_nothing_more(duel_spec, fake, units, prompts, tmp_path):
+    runtime = FakePolicyRuntime(duel_spec)
+    asked = []
+
+    def stop():
+        asked.append(True)
+        return len(asked) > 1
+
+    results = side(duel_spec, fake, units, prompts, tmp_path, runtime, stop=stop)
+    assert list(results) == [units[0]["unit_id"]] and len(runtime.serves) == 1
+
+
+def test_a_side_given_less_than_its_budget_stops_at_its_share(
+    duel_spec, fake, units, prompts, tmp_path
+):
+    runtime = FakePolicyRuntime(duel_spec)
+    results = side(duel_spec, fake, units, prompts, tmp_path, runtime, budget_s=0)
+    assert {r["error"] for r in results.values()} == {"the side ran out of its wall-clock budget"}
+    assert runtime.serves == []
+
+
+def test_a_unit_the_duel_already_holds_void_is_not_played(
+    duel_spec, fake, units, prompts, tmp_path
+):
+    runtime = FakePolicyRuntime(duel_spec)
+    reason = "void on the challenger's side: the policy runtime died"
+    results = side(
+        duel_spec, fake, units, prompts, tmp_path, runtime, void_units={units[0]["unit_id"]: reason}
+    )
+    assert results[units[0]["unit_id"]]["error"] == f"not played: {reason}"
+    assert [s[1] for s in runtime.serves] == [u["unit_id"] for u in units[1:]]
+
+
+def given(tmp_path, unit_id):
+    """What the fake benchmark's run command was given for one of the challenger's units."""
+    return json.loads((tmp_path / "challenger" / unit_id / "given.json").read_text())["args"]
+
+
+def test_a_unit_whose_harness_runs_long_is_written_void_before_its_benchmark_is_killed(
+    spec_doc, write_spec, fake, units, prompts, tmp_path
+):
+    """Told the seconds its subprocess has (`unit_timeout_s`), the benchmark stops calling the
+    policy in time to write a harness void, rather than being killed with nothing written."""
+    doc = fake_spec_doc(spec_doc)
+    doc["budgets"].update(act_timeout_s=2.0, unit_wall_seconds=6.0, policy_budget_seconds=3.0)
+    short = write_spec(doc, name="short-unit-spec.json")
+    units[0]["fake_step_s"] = 2.0  # a simulator far slower than its unit allows
+    results = side(short, fake, units[:1], prompts, tmp_path, FakePolicyRuntime(short))
+    record = results[units[0]["unit_id"]]
+    assert (record["success"], record["void"]) == (None, True)
+    assert record["error"].startswith("fake: the unit ran out of time during"), record["error"]
+    assert 0 < given(tmp_path, units[0]["unit_id"])["unit_timeout_s"] <= 6.0
+
+
+def slow_policy(root: Path, act_s: float) -> Path:
+    """A competitor repository replaying the demonstration, taking `act_s` over every act."""
+    (root / "slow").mkdir(parents=True)
+    (root / "slow" / "__init__.py").touch()
+    (root / "slow" / "policy.py").write_text(
+        "import time\n"
+        "import numpy as np\n\n\n"
+        "class Policy:\n"
+        "    action_type = 'qpos'\n\n"
+        "    def set_demonstration(self, arrays, info):\n"
+        "        self.actions = np.array(arrays['actions'], dtype=np.float64)\n\n"
+        "    def reset(self, seed):\n"
+        "        self.k = 0\n\n"
+        "    def act(self, observation):\n"
+        f"        time.sleep({act_s!r})\n"
+        "        k, self.k = min(self.k, len(self.actions) - 1), self.k + 1\n"
+        "        return {'action': self.actions[k]}\n"
+    )
+    (root / "icil.yaml").write_text("api: 1\npolicy: slow.policy:Policy\n")
+    return root
+
+
+def test_a_slow_policy_that_uses_up_its_budget_fails_its_unit_rather_than_voiding_it(
+    spec_doc, write_spec, fake, units, prompts, tmp_path
+):
+    """Every act is well within `act_timeout_s`, but together they run past the policy's budget:
+    the benchmark ends the unit on the policy, and the side fails it. Were the budget the unit's
+    whole time, the benchmark's deadline would come first, and the unit be void for both sides."""
+    from icil_orchestrator.ids import SubmissionRef
+
+    slow = SubmissionRef.make("org/slow-policy", "6" * 40)
+    doc = fake_spec_doc(spec_doc)
+    doc["budgets"].update(act_timeout_s=2.0, policy_budget_seconds=3.0)
+    small = write_spec(doc, name="small-budget-spec.json")
+    runtime = FakePolicyRuntime(small, {slow.repo: slow_policy(tmp_path / "slow", act_s=1.0)})
+    results = side(small, fake, units[:1], prompts, tmp_path, runtime, ref=slow)
+    record = results[units[0]["unit_id"]]
+    assert (record["success"], record["void"]) == (False, False), record["error"]
+    assert "its whole budget of" in record["error"]
+    limits = given(tmp_path, units[0]["unit_id"])
+    reserve = fake.info()["limits"]["result_reserve_s"]
+    assert 0 < limits["policy_budget_s"] < 3.0 < limits["unit_timeout_s"] - reserve
+
+
+def test_a_policy_that_takes_its_whole_budget_to_start_fails_its_unit_unplayed(
+    spec_doc, write_spec, fake, units, prompts, tmp_path
+):
+    doc = fake_spec_doc(spec_doc)
+    doc["budgets"].update(act_timeout_s=2.0, policy_budget_seconds=1.0)
+    tiny = write_spec(doc, name="tiny-budget-spec.json")
+
+    class SlowStart(FakePolicyRuntime):
+        def serve(self, prepared, *, workdir):
+            time.sleep(1.5)  # loading weights before it listens
+            return super().serve(prepared, workdir=workdir)
+
+    results = side(tiny, fake, units[:1], prompts, tmp_path, SlowStart(tiny))
+    record = results[units[0]["unit_id"]]
+    assert (record["success"], record["void"]) == (False, False)
+    assert "to start, its whole budget of 1s for the unit" in record["error"]
+    assert runs(tmp_path, units[0]["unit_id"]) == 0, "the benchmark ran after the budget was gone"
+
+
+def test_the_benchmark_quotes_a_copy_of_the_policys_log_never_the_log_itself(
+    duel_spec, fake, units, prompts, tmp_path
+):
+    """The policy can write where its log is; the benchmark reads a copy of its end in the unit's
+    directory instead, and quotes that copy when the policy fails it."""
+    live_logs = []
+
+    class Watching(FakePolicyRuntime):
+        def _started(self, process, served):
+            live_logs.append(served.live_log)
+            super()._started(process, served)
+
+    runtime = Watching(duel_spec, kill_on_serve={1})
+    results = side(duel_spec, fake, units[:2], prompts, tmp_path, runtime)
+    fine, killed = (results[u["unit_id"]] for u in units[:2])
+    assert fine["success"] is True
+    unit_dir = tmp_path / "challenger" / units[0]["unit_id"]
+    policy_log = given(tmp_path, units[0]["unit_id"])["policy_log"]
+    assert policy_log == str(unit_dir / "policy-tail.log")
+    assert live_logs[-1] is not None and str(live_logs[-1]) != policy_log
+    assert "listening on" in (unit_dir / "policy-log-seen.txt").read_text()
+    assert not Path(policy_log).exists(), "the copy outlived its unit"
+    # A policy killed under its unit: the benchmark's error ends with the copy's tail.
+    assert (killed["success"], killed["void"]) == (False, False)
+    assert "--- policy log (tail) ---" in killed["error"] and "listening on" in killed["error"]
+
+
+@pytest.mark.parametrize("reported", [12345, ["f" * 64], ""])
+def test_a_prompt_sha256_the_benchmark_reports_that_is_not_the_recorded_hash_voids_the_unit(
+    duel_spec, fake, units, prompts, tmp_path, reported
+):
+    """Whatever the benchmark's result holds as `prompt_sha256`, if anything, must be the hash
+    both sides ran from: a number, a list or an empty string is not it."""
+
+    class Misreporting(type(fake)):
+        def read_result(self, *, out_dir):
+            return {**super().read_result(out_dir=out_dir), "prompt_sha256": reported}
+
+    misreporting = Misreporting()
+    runtime = FakePolicyRuntime(duel_spec)
+    results = run_side(
+        duel_spec,
+        side="challenger",
+        units=units[:1],
+        prompts=prompts,
+        side_dir=tmp_path / "challenger",
+        benchmark_of=lambda unit: misreporting,
+        runtime=runtime,
+        prepared=runtime.prepare(
+            runtime.fetch(REPLAY_REF, workdir=tmp_path), workdir=tmp_path / "check"
+        ),
+    )
+    record = results[units[0]["unit_id"]]
+    assert (record["success"], record["void"]) == (None, True)
+    assert record["error"].startswith(
+        f"no prompt: the benchmark read a prompt hashing to {str(reported)[:12]}..., not the"
+    )

@@ -1,0 +1,9 @@
+{
+  "schema": 4,
+  "spec_fingerprint": "5edc37813726ac045f1197ea66e5585e69d48e93dfd9e115e3ed23f3d34c42cc",
+  "spec_version": 7,
+  "tracks": [
+    "franka_1arm"
+  ],
+  "validator_key": "e8d15da61302034aac1e8b7036ab80eece97095cf3e6923834d590925985cd5b"
+}
