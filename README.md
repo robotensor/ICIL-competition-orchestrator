@@ -78,17 +78,31 @@ is crowned by genesis (or the track's declared baseline, by the daemon). `--runt
 REPO=DIR` serves a directory's policy as a subprocess on the host, with no sandbox at all: for
 development with code you trust, never for a competitor's.
 
+The unit command is given the unit's time limits: `act_timeout_s`; `unit_timeout_s`, the seconds
+its subprocess has before it is killed, so it can write why a unit it cannot finish ended; and
+`policy_budget_s`, what starting the policy left of `budgets.policy_budget_seconds` for all of its
+calls together, never more than that timeout less the benchmark's own result reserve. It is also
+given `policy_log`, a copy of the end of the policy's log kept beside its result while it runs,
+never the log file the policy itself writes. It runs with an allow-listed environment: the locale,
+the interpreter's paths, what a GPU simulator reads, RoboTwin's `ROBOTWIN_ICIL_PYTHON` and
+`ROBOTWIN_ICIL_DENOISER`, and never `HF_TOKEN` or the live token. A benchmark may choose a unit's
+scene only while it materializes (RoboTwin's expert tries the unit's candidate seeds in order), so
+a published unit's `instance_params.scene_seed` is the seed its prompt was built on.
+
 What a unit counts as depends on whose doing its end was:
 
 - **Void, for both sides**, only for a harness cause: its prompt failed to materialize or was
-  rejected, the benchmark crashed or timed out while the policy was fine (or reported
-  `void_cause: "harness"`), Docker or the host failed (a container removed from outside, a
-  `docker inspect` that does not answer in time), or the orchestrator stopped the run. A duel
-  with more than `max_void_fraction` of its units void is void and publishes nothing; once that is
-  certain, nothing more is materialized or played.
+  rejected, or is not the file both sides ran from (a benchmark reporting another
+  `prompt_sha256`, or another scene seed than the prompt's own), the benchmark crashed or ran out
+  of the unit's time while the policy was within its budget (or reported `void_cause: "harness"`),
+  Docker or the host failed (a container removed from outside, a `docker inspect` that does not
+  answer in time), or the orchestrator stopped the run. A duel with more than `max_void_fraction`
+  of its units void is void and publishes nothing; once that is certain, nothing more is
+  materialized or played.
 - **That side's failure** for anything its own submission did: its policy container exiting on its
   own or OOM-killed in its sandbox (read from `docker inspect`), not listening within
-  `budgets.policy_start_seconds`, an act timeout, an error reply or a non-zero exit (a benchmark
+  `budgets.policy_start_seconds`, taking all of `budgets.policy_budget_seconds` to start or using
+  it up over the unit's calls, an act timeout, an error reply or a non-zero exit (a benchmark
   reports those as `void_cause: "policy"`). A scored result is never turned into a void
   afterwards, and a policy that died on one unit is simply served again for the next.
 - **A refused king forfeits**: when the king's repository is gone or private, its image no longer

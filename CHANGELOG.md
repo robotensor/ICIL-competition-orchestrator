@@ -133,6 +133,21 @@
 - (fix): each side gets at most an even share of what materializing left of the duel's wall clock,
   materializing stops at the duel's deadline, serving a policy counts in its unit's budget, and a
   prompt is re-checked after its unit and against the hash the benchmark read.
+- (feat): a unit's benchmark is told its time limits and given the policy's log, under the names
+  the RoboTwin plugin reads: `unit_timeout_s`, the seconds before its subprocess is killed, so it
+  writes why a unit it cannot finish ended; `policy_budget_s`, what starting the policy left of
+  the new `budgets.policy_budget_seconds` (300, below `unit_wall_seconds`), never more than that
+  timeout less the plugin's `info()["limits"]["result_reserve_s"]`; and `policy_log`, a copy of
+  the end of the policy's log in the unit's directory, never the log the policy writes. A policy
+  that uses up its budget, or takes all of it to start, fails the unit rather than running it
+  into a void for both sides.
+- (feat): a published unit's `instance_params.scene_seed` is the seed its prompt was built on, as
+  the materialize result names it, and a result naming another seed than `verify_prompt` read from
+  the file voids the prompt: RoboTwin chooses the scene among a unit's candidates only then.
+- (fix): a benchmark subprocess keeps `ROBOTWIN_ICIL_PYTHON` and `ROBOTWIN_ICIL_DENOISER` from the
+  orchestrator's environment.
+- (fix): a `prompt_sha256` either benchmark command reports must be the materialized prompt's
+  sha256, whatever its type, or the unit is void on the harness with the reason.
 - (feat): `icil-orchestrator duel --track T --challenger repo@revision [--size S] --store DIR
   --run-dir DIR` and `icil-orchestrator daemon --store DIR --run-dir DIR [--queue DIR] [--once]`,
   with `--runtime docker|local`, `--local REPO=DIR`, `--live-url` and `--live-token-env`, and

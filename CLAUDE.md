@@ -69,7 +69,9 @@ runnable policy code and weights, run in a sandboxed container.
   user and resource limits. The orchestrator never imports, unpickles or executes anything from a
   submission, and a policy container never mounts the store, prompt metadata or the other side's
   files. `/tmp` may run code on purpose (`sandbox.tmpfs_exec`, so JIT compilers work): it is
-  nosuid, nodev and capped by `sandbox.tmpfs_bytes`, and it is not part of the boundary.
+  nosuid, nodev and capped by `sandbox.tmpfs_bytes`, and it is not part of the boundary. A
+  benchmark reads a policy's log only as the copy `runtime.mirror_log` keeps in the unit's
+  directory (`policy_log`), never as the file the policy writes.
 - No architecture or model-type check. A submission satisfies `icil.yaml` and the policy protocol:
   it answers `hello`, accepts one demonstration and returns actions of the benchmark's shape in time.
 - The wire carries named arrays and JSON fields only. Never pickle; object dtypes are refused at
@@ -80,14 +82,18 @@ runnable policy code and weights, run in a sandboxed container.
 - No privileged data reaches a policy: prompt `meta` (scene seed, scene digest, success condition)
   stays on the benchmark side of the socket.
 - Everything published is deterministic from `spec.json`, the duel id and the two submission refs:
-  unit lists, seeds, ids. No clocks and no global RNG in anything that is published.
+  unit lists, seeds, ids. No clocks and no global RNG in anything that is published. The one thing
+  a benchmark decides is a unit's `instance_params.scene_seed`, when it chooses the scene among the
+  unit's candidates while materializing: the published seed is then the prompt's own, which anyone
+  holding the prompt checks by its sha256.
 - A unit is void only for a harness cause (its prompt, the benchmark while the policy was fine, a
   benchmark `void_cause: "harness"`, Docker or the host, the orchestrator stopping); anything a
-  side's own submission does (exits, is OOM-killed in its sandbox, never listens, times out, errs,
-  `void_cause: "policy"`) is that side's failure, and a scored result is never undone. A unit void
-  on either side is void for both; `max_void_fraction` decides whether the duel stands, and a void
-  duel publishes nothing. A refused king forfeits (every unit a failure, `king forfeit: <reason>`);
-  a refused challenger is refused.
+  side's own submission does (exits, is OOM-killed in its sandbox, never listens, times out, uses
+  up `budgets.policy_budget_seconds`, errs, `void_cause: "policy"`) is that side's failure, and a
+  scored result is never undone. A unit void on either side is void for both;
+  `max_void_fraction` decides whether the duel stands, and a void duel publishes nothing. A
+  refused king forfeits (every unit a failure, `king forfeit: <reason>`); a refused challenger is
+  refused.
 - Never publish against a king who no longer holds the crown: compare the request's king with the
   head's before a duel starts or resumes and before it publishes.
 - Everything a duel does is resumable from its run directory, and nothing in it runs twice: a
