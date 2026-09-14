@@ -3,8 +3,8 @@
 The base image carries gcc, g++, make, Python's headers and the CUDA toolkit's nvcc, and the
 sandbox's /tmp is a tmpfs that may run what is written there - nosuid, nodev and no larger than
 `sandbox.tmpfs_bytes` - with HOME, TMPDIR and the compilers' caches pointed into it. These tests
-serve a competitor repository that compiles (`tests/fixtures/jit_policy`) through the real
-sandbox and `RemotePolicy`, and check that
+serve competitor repositories that compile (`tests/fixtures/jit_policy`, and under `slow`
+`tests/fixtures/torch_compile_policy`) through the real sandbox and `RemotePolicy`, and check that
 the relaxation is exactly /tmp: the same compile anywhere else meets the read-only root. The
 network, the user, the limits and what a policy cannot see are `test_submission_container.py`'s.
 
@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import time
 from pathlib import Path
 
 import numpy as np
@@ -35,6 +36,7 @@ pytestmark = pytest.mark.container
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 JIT_POLICY = REPO_ROOT / "tests/fixtures/jit_policy"
+TORCH_POLICY = REPO_ROOT / "tests/fixtures/torch_compile_policy"
 
 #: Run inside a container: compile a one-line C function into argv[1] and call it from there.
 COMPILE_AND_LOAD = """
@@ -226,3 +228,45 @@ def test_nvcc_gcc_and_the_python_headers_are_there_for_the_sandbox_user(spec, ji
         ' && nvcc -c "$TMPDIR/k.cu" -o "$TMPDIR/k.o" && test -s "$TMPDIR/k.o"',
     )
     assert kernel.returncode == 0, kernel.stderr
+
+
+# -- torch.compile ------------------------------------------------------------------------------
+
+
+@pytest.mark.slow
+def test_a_torch_compiled_act_runs_on_the_cpu_in_the_sandbox(spec, docker, build, tmp_path, capsys):
+    """CPU torch installed at build time; inductor compiles C++ with g++ into
+    $TORCHINDUCTOR_CACHE_DIR during hello and act runs it. The times and the image size are
+    printed for the base image's README."""
+    started = time.monotonic()
+    image = build(TORCH_POLICY, "local/torch_compile_policy")
+    build_seconds = time.monotonic() - started
+    size = int(docker._run(["image", "inspect", "--format", "{{.Size}}", image.tag]).stdout)
+    env = policy_environment(spec)
+    with PolicyContainer(
+        spec, docker, image.tag, name="icil-jit-torch", socket_dir=tmp_path / "s", gpus=0
+    ) as container:
+        started = time.monotonic()
+        container.hello(spec.budgets["policy_start_seconds"])
+        hello_seconds = time.monotonic() - started
+        policy = container.session
+        policy.set_demonstration({"actions": np.zeros((4, 16))}, {"fps": 10})
+        policy.reset(0)
+        obs = np.linspace(-3.0, 3.0, 16)
+        started = time.monotonic()
+        reply = policy.act({"qpos": obs})
+        act_seconds = time.monotonic() - started
+        expected = np.sin(obs) * 2.0 + np.cos(obs) ** 2
+        np.testing.assert_allclose(reply["action"], expected, rtol=1e-12, atol=1e-12)
+        found = inside(container, "find", env["TORCHINDUCTOR_CACHE_DIR"], "-name", "*.so")
+        libraries = found.stdout.split()
+        assert found.returncode == 0 and libraries, (found.stdout, found.stderr)
+        maps = inside(container, "cat", "/proc/1/maps").stdout
+        assert any(library in maps for library in libraries), "the server runs what inductor built"
+    with capsys.disabled():
+        print(
+            f"\n[torch.compile in the sandbox] image build {build_seconds:.1f} s, "
+            f"image {size} bytes, hello (import torch and compile) {hello_seconds:.1f} s, "
+            f"compile {float(reply['compile_seconds']):.2f} s, "
+            f"act {act_seconds * 1000:.1f} ms (compiled call {float(reply['act_seconds']) * 1000:.2f} ms)"
+        )
