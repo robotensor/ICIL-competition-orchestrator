@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- (docs): the track's three skills are the benchmark's surveyed `franka_1arm` suite, no longer
+  provisional; stack_bowls_two, an arm-switching task, stands in for stacking.
 - (feat): `spec.json` (spec_version 7) and `store-schema.json` (schema 4) for one track,
   `franka_1arm`, on the `robotwin` benchmark's `franka_1arm` suite. Its three skills are
   provisional until the Franka expert survey. A `submission` block (manifest api, policy protocol,
