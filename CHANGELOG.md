@@ -181,4 +181,12 @@
   at once through the daemon (`Daemon.publish_queue(mirror=False)`, pushed with the daemon's next
   push), and stops with the daemon: after `--once`, when the store cannot be taken, and on SIGTERM
   or SIGINT. Stopping an intake that never served no longer hangs.
+- (fix): `queue add` and the intake queue only a commit a branch or a tag of the repository holds,
+  at its tip or in its history (`submissions.resolve.resolve_for_queue`). A pull request's commit
+  named by its sha was queued, though anyone on the Hub can open a pull request on a public
+  repository and the Hub serves its commits like the owner's; `queue add` also refuses a ref under
+  `refs/` by name. The check lists the branches and tags in one call, then each one's history until
+  one holds the commit - the Hub has no cheaper ancestry check - bounded at the intake by its 5 s
+  budget and each call's timeout. A commit no branch holds any more is refused too; `resolve`
+  alone, which duels and `submission check` use, is unchanged.
 - (chore): scaffold the orchestrator: package, pure test suite, CI and the repository's rules.

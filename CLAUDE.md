@@ -45,7 +45,9 @@ runnable policy code and weights, run in a sandboxed container.
   directory's tmpfs mount instead of making it (the container tests mount it for real, as root).
   Containers carry `icil.orchestrator=policy` and their owner's pid, start time and pid namespace;
   `PolicyContainer.start` reaps those whose owner has ended, and `submission prune` removes the
-  `icil-submission` images no container uses.
+  `icil-submission` images no container uses. A new queue entry (`queue add`, the intake) is
+  resolved by `resolve.resolve_for_queue`: only a commit a branch or a tag holds, never a pull
+  request's alone. `resolve` itself, which duels and `submission check` use, does not look.
 - The duel is `src/icil_orchestrator/duel/` (runtime, materialize, side, score, orchestrate) and
   `daemon.py`, run by `icil-orchestrator duel` and `daemon`. A duel reaches a policy only through
   `duel.runtime.PolicyRuntime`; `duel/docker_runtime.py` is the one module of it that imports

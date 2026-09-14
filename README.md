@@ -53,7 +53,12 @@ icil-orchestrator daemon --store store/ --run-dir runs/ --queue queue/ --admin  
 
 A submission is a Hugging Face repository at a commit: `queue add` resolves a branch or a tag to
 its sha once, through the Hub, confirms a sha it is given, and everything published hangs off that
-sha. `submission check` fetches it into `cache/<sha>/` (git-ignored), reads its `icil.yaml` as a
+sha. The commit must be one a branch or a tag of the repository holds, at its tip or in its
+history: the Hub serves a pull request's commits by sha too, and anyone on the Hub can open a pull
+request, so a commit only a pull request holds - or one no branch holds any more - is refused, and
+so is a ref under `refs/`. The Hub has no cheaper ancestry check than listing histories, so a sha
+that is not a tip costs a history page or two per branch and tag.
+`submission check` fetches it into `cache/<sha>/` (git-ignored), reads its `icil.yaml` as a
 plain file, builds its image `FROM` the pinned base by digest with its checkout copied in and its
 requirements installed at build time (bounded by `--build-timeout`), runs it under
 `spec.submission.sandbox` - no network, a read-only root, `/tmp` a nosuid,nodev tmpfs of
@@ -139,9 +144,9 @@ phase, which every duel reports between `checking` and `evaluating`, or those fr
 `ICIL_ADMIN_URL` and `ICIL_ADMIN_TOKEN`): `GET /admin/health` answers
 `{ok, spec_version, tracks, queue_lengths}`, and `POST /admin/submissions` takes
 `{repo, revision, track, duel_size, source}`, resolves the revision as `queue add` does (null is the
-repository's default branch; a ref under `refs/`, a pull request's included, is refused), queues the
-entry in `--queue` and publishes the track's queue snapshot to `--store`. It answers with the
-entry's `key`, commit `revision`, `entry`, `position` and `accepted_at`; a submission already
+repository's default branch; a ref under `refs/`, and a commit only a pull request holds, are
+refused), queues the entry in `--queue` and publishes the track's queue snapshot to `--store`. It
+answers with the entry's `key`, commit `revision`, `entry`, `position` and `accepted_at`; a submission already
 waiting answers with the place it has and queues nothing, or 409 if it waits at another duel size.
 It is for organizers on a private network, not for competitors and not for the internet: plain
 HTTP, bound to `127.0.0.1` unless `--host` says otherwise, and every request carries exactly one
