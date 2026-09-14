@@ -111,11 +111,9 @@ class SubprocessPolicyRuntime:
 
     # -- the seam ---------------------------------------------------------------------------
 
-    def bind(self, *, store: Path, runs: Path) -> None:
-        """Nothing to label: a policy server here is a process group, in its unit's ledger."""
-
     def reap(self) -> list[str]:
-        """Nothing beyond the ledgers, which the orchestrator reaps."""
+        """Nothing beyond the ledgers, which the orchestrator reaps: a policy server here is a
+        process group in its unit's ledger."""
         return []
 
     def directory(self, ref_or_repo: SubmissionRef | str) -> Path:

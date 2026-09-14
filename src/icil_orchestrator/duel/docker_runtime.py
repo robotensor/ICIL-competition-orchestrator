@@ -106,9 +106,6 @@ class DockerPolicyRuntime:
 
     # -- the seam ---------------------------------------------------------------------------
 
-    def bind(self, *, store: Path, runs: Path) -> None:
-        """Nothing to mark: the sandbox labels every container with the process that starts it."""
-
     def reap(self) -> list[str]:
         """Remove every policy container whose owner process is gone, with its shared tmpfs
         (`reap_orphans`); the names removed. Best effort: a Docker that cannot list them reaps

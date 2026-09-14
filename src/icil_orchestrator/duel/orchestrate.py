@@ -260,7 +260,6 @@ class Orchestrator:
         self.store = store
         self.runtime = runtime
         self.run_root = Path(run_root)
-        runtime.bind(store=store.root, runs=self.run_root)
         self.live = live or LiveReporter(spec, None, None)
         self.mirror = mirror
         if resolve is None:
@@ -274,9 +273,9 @@ class Orchestrator:
     # -- the run directory ------------------------------------------------------------------
 
     def reap_orphans(self) -> list[str]:
-        """End what an orchestrator of this store and run root, killed outright, left running:
-        its policy containers, and the process groups its undecided duels' ledgers name. Call it
-        holding the store's lock, before any duel runs; what was reaped, by name."""
+        """End what an orchestrator killed outright left running: the policy containers whose
+        owner process is gone, and the process groups this run root's undecided duels' ledgers
+        name. Call it holding the store's lock, before any duel runs; what was reaped, by name."""
         reaped = [f"container {name}" for name in self.runtime.reap()]
         reaped += [f"process group {pgid}" for pgid in reap_run_root(self.run_root)]
         if reaped:
