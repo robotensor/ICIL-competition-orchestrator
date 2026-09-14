@@ -30,6 +30,7 @@ the daemon's lifetime.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -75,6 +76,10 @@ class Daemon:
         self._sleep = sleep
         #: Tracks whose baseline genesis did not publish: not retried by this process.
         self.stalled: set[str] = set()
+        #: Held over computing a queue snapshot and writing it, which the submission intake does
+        #: from its own threads too: a snapshot computed before another thread's change and written
+        #: after that thread's own would publish the queue without the change.
+        self._publishing = threading.Lock()
 
     # -- state ------------------------------------------------------------------------------
 
@@ -86,12 +91,17 @@ class Daemon:
         head = self.store.head(track) or {}
         return max(queue.block, int(head.get("block") or 0)) + 1
 
-    def publish_queue(self, track: str) -> None:
-        snapshot = self.queues[track].snapshot(
-            track, self.current_king(track), int(self.spec.store["schema"])
-        )
-        self.store.write_queue(track, snapshot)
-        self._mirror()
+    def publish_queue(self, track: str, *, mirror: bool = True) -> None:
+        """`tracks/{track}/queue.json` as the queue is now, pushed to the mirror unless `mirror` is
+        False: a caller that must not wait on a push (the intake, answering a request) leaves the
+        file touched, and the daemon's next push carries it."""
+        with self._publishing:
+            snapshot = self.queues[track].snapshot(
+                track, self.current_king(track), int(self.spec.store["schema"])
+            )
+            self.store.write_queue(track, snapshot)
+        if mirror:
+            self._mirror()
 
     def _mirror(self) -> None:
         self.orchestrator.push_touched()
