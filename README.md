@@ -32,8 +32,10 @@ icil-orchestrator store mirror store/ --repo owner/dataset
 icil-orchestrator queue --store store/ add owner/policy main --duel-size smoke   # resolved to its commit
 icil-orchestrator queue list
 
-ICIL_ADMIN_TOKEN=<secret> icil-orchestrator admin serve --store store/   # the dashboard's submit form
-                                                         # posts here: 127.0.0.1:8799, bearer token
+python -c 'import secrets; print(secrets.token_urlsafe(32))'   # an admin token, made once
+read -rs ICIL_ADMIN_TOKEN && export ICIL_ADMIN_TOKEN           # pasted, so not in shell history
+icil-orchestrator admin serve --store store/   # the dashboard's submit form posts here:
+                                               # 127.0.0.1:8799, bearer token
 
 icil-orchestrator submission build-base                  # docker/policy-base, prints its digest
 icil-orchestrator submission check owner/policy@main --base-image sha256:<hex>   # resolve, fetch,
@@ -135,17 +137,22 @@ phase, which every duel reports between `checking` and `evaluating`, or those fr
 `ICIL_ADMIN_URL` and `ICIL_ADMIN_TOKEN`): `GET /admin/health` answers
 `{ok, spec_version, tracks, queue_lengths}`, and `POST /admin/submissions` takes
 `{repo, revision, track, duel_size, source}`, resolves the revision as `queue add` does (null is the
-repository's default branch), queues the entry in `--queue` and publishes the track's queue snapshot
-to `--store`. It answers with the entry's `key`, commit `revision`, `entry`, `position` and
-`accepted_at`; a submission already waiting answers with the place it has and queues nothing. It is
-for organizers on a private network, not for competitors and not for the internet: plain HTTP,
-bound to `127.0.0.1` unless `--host` says otherwise, and every request carries
+repository's default branch; a ref under `refs/`, a pull request's included, is refused), queues the
+entry in `--queue` and publishes the track's queue snapshot to `--store`. It answers with the
+entry's `key`, commit `revision`, `entry`, `position` and `accepted_at`; a submission already
+waiting answers with the place it has and queues nothing, or 409 if it waits at another duel size.
+It is for organizers on a private network, not for competitors and not for the internet: plain
+HTTP, bound to `127.0.0.1` unless `--host` says otherwise, and every request carries exactly one
 `Authorization: Bearer <token>`. The token is read from the environment variable `--token-env`
-names (`ICIL_ADMIN_TOKEN` by default) and never from the command line; it is compared in constant
-time, never logged, and without it the server does not start. A body is JSON of at most 8 KB with a
-`Content-Length` (chunked is refused), and an unknown field, track or duel size is refused before the
-Hub is asked. The Hub refusing a revision is a 422 with its reason, a Hub that cannot be asked a
-503; it is given 5 s, inside the dashboard's default `ICIL_ADMIN_TIMEOUT_MS` of 6 s.
+names (`ICIL_ADMIN_TOKEN` by default) and never from the command line; it must be 32 or more
+printable ASCII characters with no space, it is compared in constant time and never logged, and
+without it the server does not start. A request has 10 s to arrive whole, with headers of at most
+16 KB and a JSON body of at most 8 KB with a `Content-Length` (chunked is refused); at most 64
+connections are served at once. An unknown field, track or duel size is refused before the Hub is
+asked. The Hub refusing a revision is a 422 with its reason, a Hub that cannot be asked a 503. The
+Hub is given 5 s for each step of its request and resolving 5 s in all: past that nothing is queued
+and the answer is 503, because the dashboard, waiting `ICIL_ADMIN_TIMEOUT_MS` (6 s by default), has
+already reported a timeout.
 
 `store init` writes the store's ed25519 signing key to `keys/orchestrator.ed25519` (mode 0600)
 unless `--key` says otherwise. It is the only thing that can publish as this store, so keep it out

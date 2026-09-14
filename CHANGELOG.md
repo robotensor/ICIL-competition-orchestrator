@@ -166,4 +166,12 @@
   refused before the Hub is asked; the Hub refusing a revision is 422 with its reason and a Hub
   that cannot be asked 503. A submission already waiting answers with its place and queues nothing
   (`Queue.offer`), and every accepted one is logged with its key, repo, sha and source.
+- (fix): the submission intake after review. A health check no longer drops an entry being
+  queued: `Queue` holds a thread lock beside its file lock. A request has 10 s to arrive whole, its
+  headers at most 16 KB; a refusal waits at most 1 s for a body; at most 64 connections are served
+  at once, with a listen backlog of 64. A log line escapes control characters and is scrubbed of
+  the token before it is cut. The token must be 32 or more printable ASCII characters, and a
+  request naming `Authorization` twice is 401. A revision under `refs/` is refused, a resubmission
+  at another duel size is 409, and an entry whose resolution took more than 5 s in all is not
+  queued (503). The README's example keeps the token out of shell history.
 - (chore): scaffold the orchestrator: package, pure test suite, CI and the repository's rules.

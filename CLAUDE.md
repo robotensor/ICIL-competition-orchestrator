@@ -63,8 +63,10 @@ runnable policy code and weights, run in a sandboxed container.
   standard library HTTP only). Its contract is the dashboard's `lib/dev.ts` and
   `app/api/dev/submit/route.ts`: the request they send and the fields they read back (`error` from a
   refusal; `key`, `revision`, `entry`, `position`, `accepted_at`, `message` from an acceptance), so a
-  change on either side is a change on both. The token comes only from the environment and never
-  reaches a log. Its tests stand `FakeHub` in; the one marked `network` asks the real Hub and skips
+  change on either side is a change on both. The dashboard's receipt shows the duel size it sent, so
+  a resubmission at another size is refused (409), never answered 200. The token comes only from
+  the environment, is 32 or more characters and never reaches a log. Handler threads share the
+  track queues, so `Queue` holds a thread lock beside its file lock. Its tests stand `FakeHub` in; the one marked `network` asks the real Hub and skips
   when it cannot be reached.
 
 ## Rules
