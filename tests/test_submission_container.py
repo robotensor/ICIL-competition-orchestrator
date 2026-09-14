@@ -30,7 +30,13 @@ from icil_orchestrator.submissions.container import (
 )
 from icil_orchestrator.submissions.docker import CONTAINER_LABEL, Docker, DockerError
 from icil_orchestrator.submissions.fetch import LocalFetcher, RepoCache
-from icil_orchestrator.submissions.image import build_base_image, build_submission_image
+from icil_orchestrator.submissions.image import (
+    INDEX_PROBE_IMAGE,
+    build_base_image,
+    build_submission_image,
+    probe_index,
+)
+from submission_helpers import pip_unreachable_log
 
 pytestmark = pytest.mark.container
 
@@ -376,6 +382,47 @@ def test_requirements_that_do_not_install_are_rejected_at_build_and_nothing_runs
     assert [s.status for s in report.steps] == ["ok", "ok", "ok", "rejected", "skipped", "skipped"]
     assert not any(n.startswith(f"icil-policy-{report.key}") for n in containers(docker))
     assert docker.image_id(f"icil-submission:{report.key}-{report.sha}") is None
+    assert docker.image_refs(INDEX_PROBE_IMAGE) == [], "the probe leaves no image"
+
+
+def test_the_index_probe_reaches_the_index_from_the_base_and_leaves_no_image(docker, base):
+    """What decides whose a failed build is: pip in the base, with nothing of a submission, never
+    cached. On a host with a network it gets through, twice, and leaves nothing tagged."""
+    for _ in range(2):
+        probe = probe_index(docker, base.base)
+        assert probe.reachable, probe.detail
+    assert docker.image_refs(INDEX_PROBE_IMAGE) == []
+
+
+def test_a_build_that_prints_pips_network_failure_is_still_rejected_at_build(
+    spec, docker, base, cache, tmp_path
+):
+    """The build's log is the submission's to write. A setup.py that prints pip's words for an
+    unreachable index and exits 1, on a host whose network works, is rejected: the
+    orchestrator's own probe reached the index, so it is not a harness error to retry."""
+    spoof = shutil.copytree(EXAMPLE, tmp_path / "spoof")
+    (spoof / "requirements.txt").write_text("./spoof\n")
+    (spoof / "spoof").mkdir()
+    (spoof / "spoof" / "setup.py").write_text(
+        f"import sys\nsys.stderr.write({pip_unreachable_log('numpy')!r} + '\\n')\nsys.exit(1)\n"
+    )
+    report = check_submission(
+        spec,
+        "local/spoof",
+        "main",
+        fetcher=LocalFetcher(cache, spoof),
+        docker=docker,
+        work_dir=tmp_path / "work",
+        base_digest=base.base.digest,
+        gpus=0,
+    )
+    assert report.verdict == "rejected" and report.failed_step.name == "build", report.as_dict()
+    assert report.failed_step.detail.startswith("installing requirements.txt failed:")
+    assert "Temporary failure in name resolution" in report.failed_step.detail, "the spoof's text"
+    assert [s.status for s in report.steps] == ["ok", "ok", "ok", "rejected", "skipped", "skipped"]
+    assert docker.image_id(f"icil-submission:{report.key}-{report.sha}") is None
+    assert not any(n.startswith(f"icil-policy-{report.key}") for n in containers(docker))
+    assert docker.image_refs(INDEX_PROBE_IMAGE) == []
 
 
 def test_requirements_that_never_finish_installing_are_rejected_at_build_in_time(
