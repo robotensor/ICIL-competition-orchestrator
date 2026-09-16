@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "icil-orchestrator"
 version = "0.1.0.dev0"
-description = "Orchestration layer of the RoboTensor one-demonstration ICIL competition."
+description = "Orchestration layer of the Robotensor one-demonstration ICIL competition."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"

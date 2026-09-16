@@ -1,6 +1,6 @@
 # ICIL competition orchestrator
 
-The orchestration layer of the RoboTensor one-demonstration in-context imitation learning (ICIL)
+The orchestration layer of the Robotensor one-demonstration in-context imitation learning (ICIL)
 competition. It queues submissions, runs duels between a challenger and the reigning king, scores
 them, publishes a signed result store and streams live progress to the dashboard.
 

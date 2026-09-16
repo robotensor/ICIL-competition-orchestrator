@@ -1,6 +1,6 @@
 {
  "spec_version": 7,
- "_comment": "Normative constants for the RoboTensor one-demonstration in-context imitation learning competition, as run by icil-orchestrator. Versions 1 to 6 were the ICIL-LiberoGen-bench validator's contracts (4 was published and rolled back); those numbers are retired and never reused. Version 7 is the first contract of the orchestrator: one track on a benchmark in its own distribution, and submissions that are runnable policy code rather than weights for a fixed architecture. Bumping spec_version changes every derived duel id.",
+ "_comment": "Normative constants for the Robotensor one-demonstration in-context imitation learning competition, as run by icil-orchestrator. Versions 1 to 6 were the ICIL-LiberoGen-bench validator's contracts (4 was published and rolled back); those numbers are retired and never reused. Version 7 is the first contract of the orchestrator: one track on a benchmark in its own distribution, and submissions that are runnable policy code rather than weights for a fixed architecture. Bumping spec_version changes every derived duel id.",
  "tracks": {
   "franka_1arm": {
    "id": "franka_1arm",

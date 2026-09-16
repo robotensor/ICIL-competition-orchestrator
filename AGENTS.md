@@ -1,6 +1,6 @@
 # icil-orchestrator — the ICIL competition's orchestration layer
 
-Python 3.10, package `icil_orchestrator` under `src/`. This repository runs the RoboTensor
+Python 3.10, package `icil_orchestrator` under `src/`. This repository runs the Robotensor
 one-demonstration in-context imitation learning competition: the challenger queue, duels, scoring,
 the signed result store and live progress for the dashboard. It contains **no benchmark**.
 Benchmarks are separate distributions plugged in through the `icil.benchmarks` entry point group;
