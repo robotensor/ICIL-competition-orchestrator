@@ -1,0 +1,5 @@
+# torch's CPU wheel for Python 3.10; its dependencies come from PyPI.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.8.0+cpu
+# torch.utils.cpp_extension builds with ninja, which torch does not depend on.
+ninja==1.13.2

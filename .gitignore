@@ -9,6 +9,12 @@ build/
 /runs/
 /store/
 /work/
+# `store init` keeps the signing key here and `queue` its files: local state, never committed -
+# anyone holding the key can forge the store's records.
+/keys/
+/queue/
+# `submission check` keeps checkouts here, one directory per commit sha.
+/cache/
 *.mp4
 *.npz
 .env

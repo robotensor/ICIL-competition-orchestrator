@@ -1,0 +1,24 @@
+{
+  "block": 2,
+  "entries": [
+    {
+      "accepted_at": "2026-09-13T11:45:00Z",
+      "commit_block": 2,
+      "duel_size": "smoke",
+      "key": "60f8d1e4f04c6a67",
+      "position": 1,
+      "repo": "robotensor/icil-example-policy",
+      "revision": "0000000000000000000000000000000000000003",
+      "skip_model_config_check": false
+    }
+  ],
+  "in_progress": null,
+  "king": {
+    "key": "c1a90bff152ab2ae",
+    "repo": "robotensor/icil-replay-policy",
+    "revision": "0000000000000000000000000000000000000002"
+  },
+  "schema": 4,
+  "track": "franka_1arm",
+  "written_at": "2026-09-13T12:00:00Z"
+}

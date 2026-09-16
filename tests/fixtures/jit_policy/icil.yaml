@@ -1,0 +1,3 @@
+# A competitor that compiles C at run time. tests/test_submission_jit.py serves it in the sandbox.
+api: 1
+policy: cjit.policy:CJitPolicy
