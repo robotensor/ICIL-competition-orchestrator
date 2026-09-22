@@ -184,9 +184,11 @@ class Completed:
 
 #: How often a running subprocess's CPU time is sampled for the stall watchdog.
 STALL_POLL_S = 2.0
-#: Below this many cores over the whole stall window, a process group is hung, not slow: a rollout
-#: or an expert uses a large fraction of a core; a hung camera read sleeps or polls at ~1%.
-MIN_CPU_RATE = 0.02
+#: Below this many cores over the whole stall window, a process group is hung, not slow. Measured
+#: (RoboTwin-ICIL docs/install.md, "Rendering"): hung camera reads used 0.004-0.07 cores, healthy
+#: simulator work never under 0.25 over 5 s; a unit waiting on its remote policy (~65 ms an act
+#: against a ~0.15 s step) stays far above this.
+MIN_CPU_RATE = 0.1
 
 
 def group_cpu_seconds(pgid: int) -> float:
@@ -342,6 +344,7 @@ def run_unit(
     extra: Mapping[str, Any] | None = None,
     ledger: Any = None,
     stall_s: float | None = None,
+    min_cpu_rate: float = MIN_CPU_RATE,
 ) -> Outcome:
     """One unit against a served policy, start to finish. Every failure is a void outcome, never an
     exception: one bad unit must not lose the rest of the duel. `ledger` and `stall_s` are
@@ -397,6 +400,7 @@ def run_unit(
         log_path=out / LOG_FILE,
         ledger=ledger,
         stall_s=stall_s,
+        min_cpu_rate=min_cpu_rate,
     )
     if done.start_error is not None:
         return void(f"could not start the benchmark: {done.start_error}")

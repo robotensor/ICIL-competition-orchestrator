@@ -5,7 +5,7 @@
 - (feat): `--workers N` (`Orchestrator(workers=)`): a duel materializes and plays N units at once,
   each a subprocess and a policy server of its own; records are written as units finish.
 - (feat): a stall watchdog for hung simulators (`budgets.stall_seconds`, `stall_retries`): a
-  benchmark process group using under 0.02 cores for that long is killed and the unit started
+  benchmark process group using under 0.1 cores for that long is killed and the unit started
   again with a fresh policy server; a unit still stalled after its retries is void on the harness.
 - (fix): the weights runtime's manifest path is absolute, so a relative `--run-dir` serves.
 - (feat): `specs/bpp_l1.json` pins the `bpp_robotwin_l1_v1` template digests and the genesis

@@ -114,8 +114,8 @@
   "policy_budget_seconds": 1200,
   "side_wall_seconds": 43200,
   "duel_wall_seconds": 86400,
-  "_comment": "Measured on one RTX PRO 6000: a level-1 materialize (demonstration plus evaluation-scene check) took 30-47 s and a 500-step rollout 38 s with a replay policy. A served BPP answers one act per executed step and predicts every 12. Generous for launch; tighten once duels are measured. stall_seconds: a benchmark process group using under 0.02 cores for that long is a hung SAPIEN render (a camera read that never returns), killed and started again up to stall_retries times with a fresh policy server; measured, a healthy rollout uses far more (a render every step is ~25 ms of a 0.14 s step).",
-  "stall_seconds": 120,
+  "_comment": "Measured on one RTX PRO 6000: a level-1 materialize (demonstration plus evaluation-scene check) took 30-47 s and a 500-step rollout 38 s with a replay policy. A served BPP answers one act per executed step and predicts every 12. Generous for launch; tighten once duels are measured. stall_seconds: a benchmark process group using under 0.1 cores for that long is a hung SAPIEN render (a camera read that never returns), killed and started again up to stall_retries times with a fresh policy server; measured, a healthy rollout uses far more (a render every step is ~25 ms of a 0.14 s step).",
+  "stall_seconds": 90,
   "stall_retries": 2
  },
  "submission": {
