@@ -46,6 +46,15 @@ DEMO_VIEWS = ("sensorimotor",)
 #: per duel by the benchmark and published with the event. Pools were the weights-era alternative.
 PROMPT_SOURCES = ("materialized",)
 
+#: What a submission is: `code`, a repository with `icil.yaml`, its policy code and weights, run
+#: in the Docker sandbox; or `weights`, a repository holding only the weights of an architecture
+#: the validator owns the code of (`submission.model`), served by that code with no sandbox,
+#: since nothing of the submission's ever runs.
+SUBMISSION_KINDS = ("code", "weights")
+#: What a crown rule may hold paired outcomes to (`duel.crown.paired_test`).
+PAIRED_TESTS = ("sign",)
+MODULE_CLASS_RE = re.compile(r"^[A-Za-z_][\w.]*:[A-Za-z_]\w*$")
+
 #: Budgets the orchestrator enforces, each a positive number of seconds.
 BUDGETS = (
     "policy_start_seconds",
@@ -184,6 +193,92 @@ def _text(value: Any) -> bool:
     return isinstance(value, str) and bool(value)
 
 
+def _code_submission_errors(submission: dict[str, Any], need) -> None:
+    """A code submission's manifest, base image and sandbox (`SUBMISSION_KINDS`)."""
+    need("submission.manifest", _text(submission.get("manifest")))
+    need("submission.manifest_api:int", _positive_int(submission.get("manifest_api")))
+    image = submission.get("base_image") or {}
+    need("submission.base_image.name", _text(image.get("name")))
+    digest = image.get("digest")
+    need(
+        "submission.base_image.digest sha256:<hex>|null",
+        digest is None or (isinstance(digest, str) and bool(IMAGE_DIGEST_RE.match(digest))),
+    )
+    sandbox = submission.get("sandbox") or {}
+    # The sandbox is the whole of what an untrusted submission is held to; a contract that loosens
+    # it is refused here rather than trusted to be read correctly by the container runner.
+    need("submission.sandbox.network == none", sandbox.get("network") == "none")
+    need("submission.sandbox.read_only_root", sandbox.get("read_only_root") is True)
+    tmpfs = sandbox.get("tmpfs")
+    paths = (
+        tmpfs if isinstance(tmpfs, list) and tmpfs and all(_tmpfs_path(p) for p in tmpfs) else None
+    )
+    need("submission.sandbox.tmpfs non-empty list of absolute paths", paths is not None)
+    if paths is not None:
+        need("submission.sandbox.tmpfs paths distinct", len(set(paths)) == len(paths))
+        need(
+            "submission.sandbox.tmpfs not / and not at or under "
+            + ", ".join(SANDBOX_RESERVED_PATHS),
+            not any(_tmpfs_reserved(p) for p in paths),
+        )
+    need("submission.sandbox.tmpfs_exec bool", isinstance(sandbox.get("tmpfs_exec"), bool))
+    # A tmpfs's pages are charged to the container's memory cgroup, and each path is a tmpfs of
+    # tmpfs_bytes, so caps adding up past memory_bytes cap nothing; the size is what keeps the
+    # executable scratch space a bounded one.
+    memory = sandbox.get("memory_bytes")
+    need(
+        "submission.sandbox.tmpfs_bytes x len(tmpfs) in 1..memory_bytes",
+        _positive_int(sandbox.get("tmpfs_bytes"))
+        and _positive_number(memory)
+        and sandbox["tmpfs_bytes"] * (len(paths) if paths else 1) <= memory,
+    )
+    need("submission.sandbox.user non-root", _non_root(sandbox.get("user")))
+    for key in ("gpus", "memory_bytes", "cpus", "pids"):
+        need(f"submission.sandbox.{key}>0", _positive_number(sandbox.get(key)))
+
+
+def _weights_errors(model: Any, need) -> None:
+    """A weights submission's `model`: the architecture whose code the validator owns, the one
+    weights file a submission is, the files its repository may hold at all, the policy class that
+    serves it, and the template digests it is held to (null until the template is generated)."""
+    model = model if isinstance(model, dict) else {}
+    need("submission.model mapping", bool(model))
+    need("submission.model.architecture", _text(model.get("architecture")))
+    weights = model.get("weights_file")
+    need("submission.model.weights_file", _text(weights) and "/" not in str(weights))
+    allowed = model.get("allowed_files")
+    need(
+        "submission.model.allowed_files list of names holding weights_file",
+        isinstance(allowed, list)
+        and all(_text(f) and "/" not in f for f in allowed)
+        and weights in allowed,
+    )
+    need(
+        "submission.model.policy module:Class",
+        isinstance(model.get("policy"), str) and bool(MODULE_CLASS_RE.match(model["policy"])),
+    )
+    template = model.get("template")
+    need("submission.model.template mapping", isinstance(template, dict))
+    for key in ("cfg_sha256", "tensors_sha256"):
+        value = (template or {}).get(key) if isinstance(template, dict) else None
+        need(
+            f"submission.model.template.{key} hex64|null",
+            value is None or (isinstance(value, str) and bool(HEX64_RE.match(value))),
+        )
+
+
+def _crown_errors(where: str, crown: Any, need) -> None:
+    """An optional crown rule: a paired test and its alpha in (0, 1)."""
+    if crown is None:
+        return
+    need(f"{where} mapping", isinstance(crown, dict))
+    if not isinstance(crown, dict):
+        return
+    need(f"{where}.paired_test in {list(PAIRED_TESTS)}", crown.get("paired_test") in PAIRED_TESTS)
+    alpha = crown.get("alpha")
+    need(f"{where}.alpha in (0,1)", _number(alpha) and 0 < alpha < 1)
+
+
 def validate_spec(doc: dict[str, Any]) -> list[str]:
     """Every problem with a contract, as short paths. Empty when the orchestrator can honour it.
 
@@ -200,7 +295,10 @@ def validate_spec(doc: dict[str, Any]) -> list[str]:
     need("spec_version:int", _positive_int(doc.get("spec_version")))
     need("track removed (v3); use tracks", "track" not in doc)
     for gone in ("model", "pools"):
-        need(f"{gone} removed (v7); submissions are code, see submission", gone not in doc)
+        need(
+            f"{gone} removed (v7); a weights submission's model is submission.model",
+            gone not in doc,
+        )
 
     benchmarks = doc.get("benchmarks") or {}
     need("benchmarks non-empty", isinstance(benchmarks, dict) and bool(benchmarks))
@@ -261,6 +359,7 @@ def validate_spec(doc: dict[str, Any]) -> list[str]:
     need("duel.score_margin in [0,100]", isinstance(margin, (int, float)) and 0 <= margin <= 100)
     void = duel.get("max_void_fraction")
     need("duel.max_void_fraction in [0,1]", isinstance(void, (int, float)) and 0 <= void <= 1)
+    _crown_errors("duel.crown", duel.get("crown"), need)
 
     tracks = doc.get("tracks") or {}
     need("tracks non-empty", isinstance(tracks, dict) and bool(tracks))
@@ -331,6 +430,7 @@ def validate_spec(doc: dict[str, Any]) -> list[str]:
             f"tracks.{tid}.default_size in sizes",
             t.get("default_size") in (own_sizes if own_sizes is not None else sizes),
         )
+        _crown_errors(f"tracks.{tid}.crown", t.get("crown"), need)
         for key, lo, hi in (("score_margin", 0, 100), ("max_void_fraction", 0, 1)):
             if key in t:
                 value = t[key]
@@ -352,6 +452,13 @@ def validate_spec(doc: dict[str, Any]) -> list[str]:
             f"baselines.{tid} null or {{repo, revision}}",
             entry is None or (isinstance(entry, dict) and _text(entry.get("repo"))),
         )
+        if isinstance(entry, dict) and entry.get("size") is not None:
+            track = tracks.get(tid) if isinstance(tracks, dict) else None
+            own = track.get("sizes") if isinstance(track, dict) else None
+            need(
+                f"baselines.{tid}.size in sizes",
+                entry["size"] in (own if isinstance(own, dict) else sizes),
+            )
 
     budgets = doc.get("budgets") or {}
     for key in BUDGETS:
@@ -365,48 +472,14 @@ def validate_spec(doc: dict[str, Any]) -> list[str]:
     )
 
     submission = doc.get("submission") or {}
-    need("submission.manifest", _text(submission.get("manifest")))
-    need("submission.manifest_api:int", _positive_int(submission.get("manifest_api")))
+    kind = submission.get("kind", "code")
+    need(f"submission.kind in {list(SUBMISSION_KINDS)}", kind in SUBMISSION_KINDS)
     need("submission.policy_protocol:int", _positive_int(submission.get("policy_protocol")))
     need("submission.max_repo_bytes", _positive_int(submission.get("max_repo_bytes")))
-    image = submission.get("base_image") or {}
-    need("submission.base_image.name", _text(image.get("name")))
-    digest = image.get("digest")
-    need(
-        "submission.base_image.digest sha256:<hex>|null",
-        digest is None or (isinstance(digest, str) and bool(IMAGE_DIGEST_RE.match(digest))),
-    )
-    sandbox = submission.get("sandbox") or {}
-    # The sandbox is the whole of what an untrusted submission is held to; a contract that loosens
-    # it is refused here rather than trusted to be read correctly by the container runner.
-    need("submission.sandbox.network == none", sandbox.get("network") == "none")
-    need("submission.sandbox.read_only_root", sandbox.get("read_only_root") is True)
-    tmpfs = sandbox.get("tmpfs")
-    paths = (
-        tmpfs if isinstance(tmpfs, list) and tmpfs and all(_tmpfs_path(p) for p in tmpfs) else None
-    )
-    need("submission.sandbox.tmpfs non-empty list of absolute paths", paths is not None)
-    if paths is not None:
-        need("submission.sandbox.tmpfs paths distinct", len(set(paths)) == len(paths))
-        need(
-            "submission.sandbox.tmpfs not / and not at or under "
-            + ", ".join(SANDBOX_RESERVED_PATHS),
-            not any(_tmpfs_reserved(p) for p in paths),
-        )
-    need("submission.sandbox.tmpfs_exec bool", isinstance(sandbox.get("tmpfs_exec"), bool))
-    # A tmpfs's pages are charged to the container's memory cgroup, and each path is a tmpfs of
-    # tmpfs_bytes, so caps adding up past memory_bytes cap nothing; the size is what keeps the
-    # executable scratch space a bounded one.
-    memory = sandbox.get("memory_bytes")
-    need(
-        "submission.sandbox.tmpfs_bytes x len(tmpfs) in 1..memory_bytes",
-        _positive_int(sandbox.get("tmpfs_bytes"))
-        and _positive_number(memory)
-        and sandbox["tmpfs_bytes"] * (len(paths) if paths else 1) <= memory,
-    )
-    need("submission.sandbox.user non-root", _non_root(sandbox.get("user")))
-    for key in ("gpus", "memory_bytes", "cpus", "pids"):
-        need(f"submission.sandbox.{key}>0", _positive_number(sandbox.get(key)))
+    if kind == "weights":
+        _weights_errors(submission.get("model"), need)
+    else:
+        _code_submission_errors(submission, need)
 
     media = doc.get("media") or {}
     need("media.video.format", _text((media.get("video") or {}).get("format")))
@@ -575,6 +648,14 @@ class Spec:
     def max_void_fraction(self, track: str) -> float:
         return float(self._duel_of(track, "max_void_fraction"))
 
+    def paired_alpha(self, track: str) -> float | None:
+        """The sign test's alpha a duel of `track` must pass to move the crown (`duel.crown`, or
+        the track's own `crown`); None where the spec sets none, and the margin alone decides."""
+        crown = self.track(track).get("crown") or self.raw["duel"].get("crown")
+        if not isinstance(crown, dict) or crown.get("alpha") is None:
+            return None
+        return float(crown["alpha"])
+
     # -- the rest
     @property
     def budgets(self) -> dict[str, Any]:
@@ -583,6 +664,18 @@ class Spec:
     @property
     def submission(self) -> dict[str, Any]:
         return self.raw["submission"]
+
+    @property
+    def submission_kind(self) -> str:
+        """`code` or `weights` (`SUBMISSION_KINDS`)."""
+        return str(self.raw["submission"].get("kind", "code"))
+
+    @property
+    def model(self) -> dict[str, Any]:
+        """A weights submission's `submission.model`; KeyError for a code submission's spec."""
+        if self.submission_kind != "weights":
+            raise KeyError("a code submission's spec has no submission.model")
+        return dict(self.raw["submission"]["model"])
 
     @property
     def media(self) -> dict[str, Any]:

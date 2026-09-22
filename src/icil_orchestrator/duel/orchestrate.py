@@ -130,10 +130,32 @@ class DuelRequest:
     size: str | None
     #: The queue's block this duel is fought in; part of its event id.
     block: int
+    #: The chain block whose hash seeds the duel's units, and that hash as the chain gave it
+    #: (`0x` + 64 hex). Both or neither: without them a duel's units are a function of public
+    #: values alone, computable before anyone submits.
+    seed_block: int | None = None
+    seed_block_hash: str | None = None
+
+    def __post_init__(self) -> None:
+        if (self.seed_block is None) != (self.seed_block_hash is None):
+            raise ValueError("a duel request names a seed block and its hash, or neither")
+        if self.seed_block is not None and (
+            isinstance(self.seed_block, bool) or int(self.seed_block) < 0
+        ):
+            raise ValueError(f"seed_block {self.seed_block!r} is not a block number")
+        if self.seed_block_hash is not None and not _is_block_hash(self.seed_block_hash):
+            raise ValueError(f"seed_block_hash {self.seed_block_hash!r} is not 0x + 64 hex")
 
     @property
     def kind(self) -> str:
         return "duel" if self.king is not None else "genesis"
+
+    @property
+    def entropy(self) -> str | None:
+        """What the units are seeded with besides the duel id: `<block>:<hash>`, or None."""
+        if self.seed_block is None:
+            return None
+        return f"{int(self.seed_block)}:{str(self.seed_block_hash).lower()}"
 
     def duel_id(self, spec: Spec) -> str:
         return duel_id(spec.version, self.track, self.challenger, self.king)
@@ -151,6 +173,12 @@ class DuelRequest:
             "block": self.block,
             "duel_id": self.duel_id(spec),
             "event_id": self.event_id(spec),
+            # Only when set, so a request written before seeds existed still matches itself.
+            **(
+                {"seed_block": int(self.seed_block), "seed_block_hash": self.seed_block_hash}
+                if self.seed_block is not None
+                else {}
+            ),
         }
 
     @classmethod
@@ -164,7 +192,19 @@ class DuelRequest:
             king=SubmissionRef.from_dict(doc.get("king")),
             size=doc.get("size"),
             block=int(doc["block"]),
+            seed_block=None if doc.get("seed_block") is None else int(doc["seed_block"]),
+            seed_block_hash=doc.get("seed_block_hash"),
         )
+
+
+def _is_block_hash(value: Any) -> bool:
+    text = str(value)
+    return (
+        isinstance(value, str)
+        and text.startswith("0x")
+        and len(text) == 66
+        and all(c in "0123456789abcdefABCDEF" for c in text[2:])
+    )
 
 
 @dataclass
@@ -474,7 +514,12 @@ class Orchestrator:
             for name in self.spec.benchmarks_of(req.track):
                 duel.benchmarks[name] = self.resolve(name)
             duel.unit_defs = plugin_units(
-                self.spec, req.track, duel.duel_id, duel.size, resolve=duel.benchmarks.__getitem__
+                self.spec,
+                req.track,
+                duel.duel_id,
+                duel.size,
+                resolve=duel.benchmarks.__getitem__,
+                entropy=req.entropy,
             )
         except BenchmarkRefused as exc:
             raise HarnessUnavailable(str(exc)) from exc
@@ -656,7 +701,7 @@ class Orchestrator:
             scoring = {"reason": reason, "score_margin": margin, "delta_points": None}
         else:
             units = duel.units
-            verdict = score.verdict(units, margin, skills)
+            verdict = score.verdict(units, margin, skills, spec.paired_alpha(track))
             reason = verdict.reason
             king_scores, challenger_scores = verdict.king_scores, verdict.challenger_scores
             dethroned = verdict.dethroned
@@ -698,6 +743,17 @@ class Orchestrator:
             + ([f"king forfeit: {duel.forfeit}"] if duel.forfeit else []),
         )
         event["runtime"] = self.runtime.name
+        # The chain entropy the units were drawn under: anyone can read the block's hash back from
+        # the chain and derive the units again (`benchmarks.units.seed_key`).
+        event["seed"] = (
+            {
+                "block": int(req.seed_block),
+                "block_hash": req.seed_block_hash,
+                "entropy": req.entropy,
+            }
+            if req.seed_block is not None
+            else None
+        )
         event["scoring"] = {
             **scoring,
             "void_fraction": score.void_fraction(units),
@@ -893,9 +949,15 @@ def _note(kind: str, scoring: Mapping[str, Any]) -> str:
         return "The first entrant took the empty throne, scored on its own units."
     delta = scoring.get("delta_points")
     points = "unscored" if delta is None else f"{delta:+.2f} points"
+    paired = ""
+    if scoring.get("paired_p_value") is not None:
+        paired = (
+            f"; sign test p={scoring['paired_p_value']:.4g} against alpha "
+            f"{scoring['paired_alpha']:g}"
+        )
     return (
         f"Crown rule: {scoring['reason']} ({points} against a margin of "
-        f"{scoring['score_margin']:g})."
+        f"{scoring['score_margin']:g}{paired})."
     )
 
 

@@ -1,0 +1,168 @@
+{
+ "spec_version": 8,
+ "_comment": "The BPP subnet lane's contract (Robotensor Competition 1): weights-only submissions of one architecture the validator owns the code of, scored in rolling king-of-the-hill duels on RoboTwin's level benchmark, cross-scene. Its own file beside spec.json, the code-submission contract, so neither changes the other; the subnet validator loads it with --spec. Bumping spec_version changes every derived duel id.",
+ "tracks": {
+  "bpp_l1": {
+   "id": "bpp_l1",
+   "code": "bp",
+   "slug": "bpp-level1",
+   "short": "BPP level 1",
+   "title": "BPP, one demonstration from another scene, level 1",
+   "blurb": "The policy is shown one demonstration of a task - the frames of three cameras, the action trajectory and the proprioception - recorded by RoboTwin's expert in one scene, and must do the task in another scene of the same level. Level 1 varies the objects' positions and yaw between the two. Submissions are weights of the BPP architecture only.",
+   "k_demos": 1,
+   "language": "none",
+   "demonstration": {
+    "view": "sensorimotor",
+    "modalities": [
+     "video",
+     "actions",
+     "proprio"
+    ],
+    "withheld": []
+   },
+   "protocol": "different_initial_state",
+   "prompt_instance_disjoint": true,
+   "prompts": "materialized",
+   "skills": [
+    "bpp_level1"
+   ],
+   "default_size": "launch",
+   "_comment": "Cross-scene: every unit's demonstration and evaluation scene are drawn from disjoint candidate lists, from seeds no public split of the level benchmark used, and the units are seeded from a chain block hash the challenger could not know when it committed. The difficulty rounds of the subnet spec are levels 1-4; this is level 1."
+  }
+ },
+ "benchmarks": {
+  "robotwin": {
+   "distribution": "robotwin-icil-competition",
+   "repo": "robotensor/RoboTwin-BPP",
+   "api_version": 1,
+   "version": "0.2.0",
+   "wheel_sha256": null,
+   "_comment": "The RoboTwin fork with the level gate and the harness under icil/, branch bpp-subnet. Installed editable from the fork, so pinned by version; a wheel pin follows the first release."
+  }
+ },
+ "_benchmarks_comment": "Every benchmark is a separate distribution found through the `icil.benchmarks` entry point group. The orchestrator ships none: what it can score is exactly what is plugged into it.",
+ "skills": {
+  "bpp_level1": {
+   "code": "bl",
+   "title": "Sixteen tabletop tasks (two Franka arms, level 1)",
+   "blurb": "RoboTwin's 16 pick-and-place and tool tasks of the level benchmark, dealt evenly over a duel's units. RoboTwin's expert produces the demonstration at evaluation time in one scene and its own check decides the outcome in another.",
+   "benchmark": "robotwin",
+   "suite": "bpp_level1",
+   "category": null,
+   "max_steps": 800,
+   "environment": {
+    "embodiment": [
+     "franka-panda",
+     "franka-panda",
+     0.8
+    ],
+    "cameras": [
+     "head_camera",
+     "left_camera",
+     "right_camera"
+    ],
+    "action_types": [
+     "ee"
+    ],
+    "action_dims": {
+     "ee": 16
+    },
+    "_comment": "Each task carries its own step limit from RoboTwin (400-800). An ee action is [left x y z qw qx qy qz, left gripper, right x y z qw qx qy qz, right gripper]."
+   }
+  }
+ },
+ "_skills_comment": "One skill, whose units the plugin deals evenly over the suite's 16 tasks; the published units carry each task, so per-task rates can be read off a record.",
+ "duel": {
+  "default_size": "launch",
+  "sizes": {
+   "smoke": {
+    "units_per_skill": 16
+   },
+   "light": {
+    "units_per_skill": 48
+   },
+   "launch": {
+    "units_per_skill": 160
+   },
+   "full": {
+    "units_per_skill": 800
+   }
+  },
+  "score_margin": 3.0,
+  "max_void_fraction": 0.2,
+  "crown": {
+   "paired_test": "sign",
+   "alpha": 0.05
+  },
+  "_crown_comment": "Both sides run the identical unit list on identical prompt bytes. The challenger takes the crown iff challenger.average >= king.average + score_margin / 100 AND the one-sided exact sign test over the units exactly one side solved gives p <= alpha. Void units are excluded from both sides, and the duel is void when the void fraction exceeds max_void_fraction.",
+  "_sizes_comment": "launch is 10 units per task and full is the subnet spec's 50. A unit is a demonstration expert run, an evaluation-scene expert check and two rollouts.",
+  "derivation": {
+   "submission_key": "sha256(repo@revision)[:16]",
+   "duel_id": "sha256(spec_version|track|challenger.key|challenger.revision|king.key|king.revision)",
+   "event_id": "sha256(event|kind|track|block|subject)",
+   "entropy": "<seed_block>:<seed_block_hash>, the chain block the validator started the duel at (after the challenger's commitment) and its hash as the chain reports it",
+   "seed_material": "duel_id|entropy|skill",
+   "unit_id": "<skills.<skill>.code>-<index over the track's units, three digits>",
+   "unit_seed": "int(sha256(duel_id|entropy|skill|index)[:8], 16)"
+  }
+ },
+ "budgets": {
+  "policy_start_seconds": 600,
+  "act_timeout_s": 60.0,
+  "materialize_wall_seconds": 2400,
+  "unit_wall_seconds": 1800,
+  "policy_budget_seconds": 1200,
+  "side_wall_seconds": 43200,
+  "duel_wall_seconds": 86400,
+  "_comment": "Measured on one RTX PRO 6000: a level-1 materialize (demonstration plus evaluation-scene check) took 30-47 s and a 500-step rollout 38 s with a replay policy. A served BPP answers one act per executed step and predicts every 12. Generous for launch; tighten once duels are measured."
+ },
+ "submission": {
+  "kind": "weights",
+  "policy_protocol": 1,
+  "max_repo_bytes": 8589934592,
+  "model": {
+   "architecture": "bpp_robotwin_l1_v1",
+   "weights_file": "model.safetensors",
+   "allowed_files": [
+    "model.safetensors",
+    "README.md",
+    ".gitattributes"
+   ],
+   "policy": "bpp_runtime.policy:BPPPolicy",
+   "template": {
+    "cfg_sha256": null,
+    "tensors_sha256": null
+   }
+  },
+  "_comment": "A submission is a Hugging Face model repository at a resolved commit holding model.safetensors of the pinned BPP architecture and nothing else but a README. Its header is checked against the template before a tensor is read, and the validator's own code builds, loads and serves it: nothing of the submission ever runs, so no sandbox is needed."
+ },
+ "media": {
+  "video": {
+   "format": "mp4",
+   "scope": "all"
+  },
+  "demo_video": true,
+  "_comment": "Clips are written by the benchmark's commands (demonstration.mp4 and evaluation.mp4) and stored content-addressed by sha256; the orchestrator does not encode video."
+ },
+ "store": {
+  "schema": 4,
+  "index_lines_per_part": 1000,
+  "media_bucket_hex": 2,
+  "_layout_comment": "manifest.json; tracks/{track}/{head.json,queue.json,index-NNNN.jsonl}; events/{track}/{event_id}.json; media/{sha[:2]}/{sha}.mp4. Index lines are '<canonical_json>\\t<ed25519_signature_hex>', append-only."
+ },
+ "live": {
+  "schema": 4,
+  "path": "/api/live",
+  "media_flush_units": 4,
+  "max_frame_bytes": 524288,
+  "min_interval_s": 1.0
+ },
+ "baselines": {
+  "bpp_l1": {
+   "repo": "robotensor/bpp-base",
+   "revision": null,
+   "size": "smoke"
+  },
+  "_comment": "The genesis king: BRL1's epoch0000 checkpoint, converted to model.safetensors. Its revision is filled in when it is published."
+ }
+}

@@ -93,6 +93,8 @@ class SubprocessPolicyRuntime:
     """Serve local directories' policies as subprocesses. Development only: no sandbox."""
 
     name = "local"
+    #: Variables a served policy inherits beyond the subprocess allow-list (`benchmark_environment`).
+    env_keep: tuple[str, ...] = ()
 
     def __init__(
         self,
@@ -196,7 +198,10 @@ class SubprocessPolicyRuntime:
         address = sockets / SOCKET_FILE
         log_file = sockets / LOG_FILE
         key = secrets.token_bytes(AUTHKEY_BYTES)
-        env = {**benchmark_environment(os.environ, AUTHKEY_ENV), AUTHKEY_ENV: key.hex()}
+        env = {
+            **benchmark_environment(os.environ, AUTHKEY_ENV, self.env_keep),
+            AUTHKEY_ENV: key.hex(),
+        }
         argv = [
             self.python,
             "-m",

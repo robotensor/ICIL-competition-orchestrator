@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import signal
 import sys
@@ -312,6 +313,17 @@ def _orchestrator(args: argparse.Namespace, spec):
         if not local:
             raise ValueError("--runtime local serves only what --local REPO=DIR maps")
         runtime = SubprocessPolicyRuntime(spec, local)
+    elif args.runtime == "weights":
+        from .duel.weights_runtime import WeightsPolicyRuntime
+
+        if spec.submission_kind != "weights":
+            raise ValueError("--runtime weights serves a spec whose submission.kind is weights")
+        runtime = WeightsPolicyRuntime(
+            spec,
+            python=args.policy_python,
+            cache_root=args.cache,
+            kwargs=_policy_kwargs(args.policy_kwarg),
+        )
     else:
         from .duel.docker_runtime import DockerPolicyRuntime
 
@@ -334,6 +346,17 @@ def _orchestrator(args: argparse.Namespace, spec):
         live=LiveReporter(spec, args.live_url, token),
         mirror=mirror,
     )
+
+
+def _policy_kwargs(pairs: list[str] | None) -> dict[str, str]:
+    """`KEY=VALUE` pairs for the validator's policy class (a weights track's `--policy-kwarg`)."""
+    out: dict[str, str] = {}
+    for pair in pairs or []:
+        key, sep, value = pair.partition("=")
+        if not sep or not key or key == "weights":
+            raise ValueError(f"--policy-kwarg {pair!r} is not KEY=VALUE (and never weights=)")
+        out[key] = value
+    return out
 
 
 def _logging() -> None:
@@ -436,26 +459,35 @@ def _duel(args: argparse.Namespace) -> int:
             if king is not None and king.key == challenger.key:
                 print(f"error: {challenger.entry} already holds the crown", file=sys.stderr)
                 return 2
-            if king is None and spec.baseline(track) is not None:
-                # The daemon crowns the declared baseline by genesis before any entry; an entrant
-                # crowned here instead would be shown as the organizer's baseline.
-                print(
-                    f"error: track {track} declares a baseline, which takes its empty throne; "
-                    "run the daemon to crown it first",
-                    file=sys.stderr,
-                )
-                return 2
+            baseline = spec.baseline(track)
+            size = args.size
+            if king is None and baseline is not None:
+                # The declared baseline takes the empty throne by genesis before any entry; an
+                # entrant crowned here instead would be shown as the organizer's baseline.
+                if challenger.repo != baseline.get("repo"):
+                    print(
+                        f"error: track {track} declares a baseline, which takes its empty throne; "
+                        f"run the daemon, or this duel with --challenger {baseline.get('repo')}@..., "
+                        "to crown it first",
+                        file=sys.stderr,
+                    )
+                    return 2
+                size = args.size or baseline.get("size")
             queue = Queues(args.queue, spec.tracks)[track]
             head_block = int(head.get("block") or 0)
             # Numbered from the queue's counter, as the daemon numbers its duels, so the two never
             # share a run directory. The last block handed out is reused only for this very duel
             # left unfinished there: running a failed duel again resumes it.
+            seed = {
+                "seed_block": args.seed_block,
+                "seed_block_hash": args.seed_block_hash,
+            }
             req = DuelRequest(
-                track, challenger, king, args.size, block=max(queue.block, head_block)
+                track, challenger, king, size, block=max(queue.block, head_block), **seed
             )
             if req.block <= head_block or not orchestrator.holds_request(req):
                 req = DuelRequest(
-                    track, challenger, king, args.size, block=queue.claim_block(head_block)
+                    track, challenger, king, size, block=queue.claim_block(head_block), **seed
                 )
             result = orchestrator.run(req)
     except (DuelFailed, RuntimeError, ValueError) as exc:
@@ -563,11 +595,25 @@ def _add_duel_args(p: argparse.ArgumentParser) -> None:
     )
     p.add_argument(
         "--runtime",
-        choices=("docker", "local"),
+        choices=("docker", "local", "weights"),
         default="docker",
-        help="where policies run: docker, the sandbox (default); or local, which runs submission "
+        help="where policies run: docker, the sandbox (default); local, which runs submission "
         "code on this host WITHOUT A SANDBOX, as a subprocess with every permission the "
-        "orchestrator has - for development with code you trust, never for a competitor's",
+        "orchestrator has - for development with code you trust, never for a competitor's; or "
+        "weights, for a spec whose submissions are weights only: the validator's own policy "
+        "class serves each submission's checked weights file, and no submission code exists",
+    )
+    p.add_argument(
+        "--policy-python",
+        default=os.environ.get("ICIL_POLICY_PYTHON") or sys.executable,
+        help="the policy environment's interpreter (weights runtime; default "
+        "$ICIL_POLICY_PYTHON, else this one)",
+    )
+    p.add_argument(
+        "--policy-kwarg",
+        action="append",
+        metavar="KEY=VALUE",
+        help="a keyword for the validator's policy class, e.g. device=cuda:0 (weights runtime)",
     )
     p.add_argument(
         "--local",
@@ -742,6 +788,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--challenger", required=True, help="owner/name@revision (a branch or tag is resolved)"
     )
     du.add_argument("--size", default=None, help="the duel size (default: the track's)")
+    du.add_argument(
+        "--seed-block",
+        type=int,
+        default=None,
+        help="the chain block whose hash seeds the units (with --seed-block-hash)",
+    )
+    du.add_argument(
+        "--seed-block-hash",
+        default=None,
+        metavar="0xHASH",
+        help="that block's hash as the chain reports it",
+    )
     _add_duel_args(du)
     du.set_defaults(func=cmd_duel)
 

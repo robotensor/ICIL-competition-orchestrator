@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- (feat): a weights-only track for the BPP subnet lane, in its own contract `specs/bpp_l1.json`
+  (spec_version 8) beside `spec.json`: `submission.kind: weights` with a `submission.model` (the
+  architecture, its one weights file, the files a repository may hold, the validator's policy
+  class and the template digests), no sandbox. `--runtime weights`
+  (`duel.weights_runtime.WeightsPolicyRuntime`) refuses a repository holding anything else,
+  downloads the weights file alone, checks it against the template and serves it with the
+  validator's own class.
+- (feat): a duel can be seeded from a chain block: `DuelRequest.seed_block` and
+  `seed_block_hash` (`duel --seed-block N --seed-block-hash 0x...`) feed the units' seed material
+  and the published event's `seed`, and are kept in `request.json` so a resumed duel derives the
+  same units.
+- (feat): `duel.crown` (or a track's `crown`): a one-sided paired sign test at `alpha` that a met
+  margin must also pass to move the crown (`not-significant` otherwise); the verdict publishes the
+  p-value.
+- (feat): `duel` crowns a track's declared baseline itself when named as the challenger on an empty
+  throne, at the baseline's `size`.
+
 - (docs): the track's three skills are the benchmark's surveyed `franka_1arm` suite, no longer
   provisional; stack_bowls_two, an arm-switching task, stands in for stacking.
 - (feat): `spec.json` (spec_version 7) and `store-schema.json` (schema 4) for one track,

@@ -33,8 +33,12 @@ runnable policy code and weights, run in a sandboxed container.
   user and resource limits. The orchestrator never imports, unpickles or executes anything from a
   submission, and a policy container never mounts the store, prompt metadata or the other side's
   files.
-- No architecture or model-type check. A submission satisfies `icil.yaml` and the policy protocol:
-  it answers `hello`, accepts one demonstration and returns actions of the benchmark's shape in time.
+- No architecture or model-type check for a code submission: it satisfies `icil.yaml` and the
+  policy protocol - it answers `hello`, accepts one demonstration and returns actions of the
+  benchmark's shape in time. A weights-only track (`submission.kind: weights`, `specs/bpp_l1.json`)
+  is the one exception: its submissions are the weights of one architecture, checked against a
+  pinned template before a tensor is read and served by the validator's own policy class
+  (`packages/bpp-runtime`), with no sandbox because nothing of theirs runs.
 - The wire carries named arrays and JSON fields only. Never pickle; object dtypes are refused at
   both ends.
 - Both sides of a duel get identical demonstration bytes: prompts are materialized once per duel,

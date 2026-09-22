@@ -31,8 +31,15 @@ class DerivationError(RuntimeError):
     """A benchmark did not return the units its track asked for."""
 
 
-def seed_material(duel_id: str, skill: str) -> str:
-    return f"{duel_id}|{skill}"
+def seed_key(duel_id: str, entropy: str | None = None) -> str:
+    """What a duel's draws hang off: its id, and the chain entropy it was fought under when it has
+    one (`DuelRequest.entropy`: a block number and that block's hash). Without entropy anyone can
+    compute a duel's units from public values before submitting; with it, not before the block."""
+    return duel_id if entropy is None else f"{duel_id}|{entropy}"
+
+
+def seed_material(duel_id: str, skill: str, entropy: str | None = None) -> str:
+    return f"{seed_key(duel_id, entropy)}|{skill}"
 
 
 def plugin_units(
@@ -42,11 +49,13 @@ def plugin_units(
     size: str | None = None,
     *,
     resolve: Callable[[str], Any] | None = None,
+    entropy: str | None = None,
 ) -> list[dict[str, Any]]:
     """Every unit of one duel: skills in spec order, units in the order each benchmark returned
-    them, so the list is a pure function of `(spec, track, duel_id, size)`.
+    them, so the list is a pure function of `(spec, track, duel_id, size, entropy)`.
 
     `resolve` maps a benchmark name to its plugin object; by default the pinned, installed plugin.
+    `entropy` is the chain entropy the duel was fought under (`seed_key`), None for none.
     """
     if resolve is None:
         from .plugins import load
@@ -64,7 +73,7 @@ def plugin_units(
         benchmark = loaded[name]
         try:
             derived = benchmark.derive_units(
-                seed_material=seed_material(duel_id, skill),
+                seed_material=seed_material(duel_id, skill, entropy),
                 count=count,
                 suite=spec.suite(skill),
                 category=spec.category(skill),
@@ -90,7 +99,7 @@ def plugin_units(
                     "skill": skill,
                     "benchmark": name,
                     "index": index,
-                    "seed": unit_seed(duel_id, skill, index),
+                    "seed": unit_seed(seed_key(duel_id, entropy), skill, index),
                     "task": str(passed["task"]),
                     "task_label": str(passed["task_label"]),
                     # A Same Scene track scores the state it demonstrated, so a unit has exactly
