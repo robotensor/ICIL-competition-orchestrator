@@ -51,9 +51,10 @@ from .runtime import (
 
 #: The manifest the runtime writes for the validator's policy class; never a submission's file.
 MANIFEST_FILE = "icil.yaml"
-#: Environment variables a served BPP policy needs beyond the subprocess allow-list: where the
-#: Hugging Face and torch caches are (the CLIP backbone's weights are read from there once the
-#: host has them), and whether the Hub may be asked at all.
+#: Environment variables a served policy may use beyond the subprocess allow-list. BPP needs none
+#: of them to serve (its CLIP backbone is built from the template and filled by the submission's
+#: weights, with no download), but a cache location or an offline switch set for the host is kept,
+#: and `BPP_RUNTIME_TEMPLATE` points the runtime at another template directory.
 POLICY_ENV_KEEP = (
     "HF_HOME",
     "HF_HUB_CACHE",
@@ -91,7 +92,7 @@ def default_checker(weights: Path) -> WeightsCheck:
             for key, value in {
                 "architecture": getattr(report, "architecture", None),
                 "param_count": getattr(report, "param_count", None),
-                "bytes": getattr(report, "bytes", None),
+                "file_bytes": getattr(report, "file_bytes", None),
             }.items()
             if value is not None
         },
@@ -210,7 +211,8 @@ class WeightsPolicyRuntime(SubprocessPolicyRuntime):
     def _write_manifest(self, workdir: Path, weights: Path) -> Path:
         """The validator's own `icil.yaml`, beside nothing of the submission's: its policy class
         and the weights file's absolute path (the server changes directory before building)."""
-        directory = workdir / "manifest"
+        # Absolute: the server starts in a directory of its own, where a relative path means nothing.
+        directory = (workdir / "manifest").resolve()
         directory.mkdir(parents=True, exist_ok=True)
         kwargs = {**self.kwargs, "weights": str(weights)}
         # YAML is a superset of JSON: a JSON object is a valid manifest, and needs no YAML writer.

@@ -249,3 +249,47 @@ def test_weights_that_fail_the_template_check_are_refused(tmp_path, bpp_spec):
     with pytest.raises(SubmissionRefused) as refused:
         rt.prepare(fetched, workdir=tmp_path / "w" / "check")
     assert refused.value.step == "check" and "wrong shape" in refused.value.reason
+
+
+def test_the_manifest_path_is_absolute_even_for_a_relative_run_directory(
+    tmp_path, bpp_spec, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    rt = runtime(Path("."), bpp_spec, {"model.safetensors": 7})
+    fetched = rt.fetch(SubmissionRef.make("m/r", SHA), workdir=Path("w"))
+    prepared = rt.prepare(fetched, workdir=Path("runs/check"))
+    assert Path(prepared.handle).is_absolute() and Path(prepared.handle).is_file()
+
+
+# -- the stall watchdog ----------------------------------------------------------------------
+
+
+def test_a_process_that_sleeps_is_killed_as_stalled_and_a_busy_one_is_not(tmp_path, monkeypatch):
+    import sys
+    import time
+
+    from icil_orchestrator.benchmarks import subprocess_runner as runner
+
+    monkeypatch.setattr(runner, "STALL_POLL_S", 0.2)
+    started = time.monotonic()
+    hung = runner.run_argv(
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        env={"PATH": "/usr/bin:/bin"},
+        timeout_s=60,
+        log_path=tmp_path / "hung.log",
+        stall_s=2.0,
+    )
+    assert hung.stalled and not hung.timed_out and time.monotonic() - started < 20
+    busy = runner.run_argv(
+        [sys.executable, "-c", "import time\nend = time.time() + 4\nwhile time.time() < end: pass"],
+        env={"PATH": "/usr/bin:/bin"},
+        timeout_s=60,
+        log_path=tmp_path / "busy.log",
+        stall_s=2.0,
+    )
+    assert not busy.stalled and busy.returncode == 0
+
+
+def test_the_bpp_contract_watches_for_hung_simulators(bpp_spec):
+    seconds, retries = bpp_spec.stall
+    assert seconds and seconds >= 60 and retries >= 1

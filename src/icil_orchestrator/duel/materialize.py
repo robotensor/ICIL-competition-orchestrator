@@ -173,17 +173,39 @@ def materialize_units(
     deadline: float | None = None,
     stop: Callable[[], bool] | None = None,
     on_prompt: Callable[[Mapping[str, Any], Prompt], None] | None = None,
+    workers: int = 1,
+    stall_s: float | None = None,
+    stall_retries: int = 0,
 ) -> Materialized:
     """Every unit's prompt under `root`, re-using what an earlier run of this duel produced.
 
     `deadline` is the duel's, as a `time.monotonic()`: no unit's materialization runs past it, and
     a unit not started by then has no prompt. `stop`, asked before each unit, ends the loop early
-    when it says so (the duel is already certain to be void); the units after it have no entry."""
+    when it says so (the duel is already certain to be void); the units after it have no entry.
+    With `workers` above 1, that many units are materialized at once (each is a subprocess of its
+    own); a unit's prompt is recorded as it finishes, so the manifest's order is the finishing
+    order, and `stop` and the deadline are asked as each unit starts."""
     root.mkdir(parents=True, exist_ok=True)
     budget = float(spec.budgets["materialize_wall_seconds"]) if timeout_s is None else timeout_s
     environ = dict(benchmark_environment(os.environ, "") if env is None else env)
     done = read_manifest(root)
     prompts: dict[str, Prompt] = {}
+    if workers > 1:
+        return _materialize_pooled(
+            units,
+            root,
+            done=done,
+            prompts=prompts,
+            benchmark_of=benchmark_of,
+            env=environ,
+            budget=budget,
+            deadline=deadline,
+            stop=stop,
+            on_prompt=on_prompt,
+            workers=workers,
+            stall_s=stall_s,
+            stall_retries=stall_retries,
+        )
     for unit in units:
         if stop is not None and stop():
             break
@@ -204,7 +226,13 @@ def materialize_units(
         else:
             left = budget if deadline is None else min(budget, deadline - time.monotonic())
             prompt = materialize_unit(
-                benchmark_of(unit), unit, root / unit_id, env=environ, timeout_s=left
+                benchmark_of(unit),
+                unit,
+                root / unit_id,
+                env=environ,
+                timeout_s=left,
+                stall_s=stall_s,
+                stall_retries=stall_retries,
             )
             _append(root, prompt)
         if prompt.void:
@@ -215,6 +243,76 @@ def materialize_units(
     return Materialized(root=root, prompts=prompts)
 
 
+def _materialize_pooled(
+    units: Iterable[Mapping[str, Any]],
+    root: Path,
+    *,
+    done: Mapping[str, Prompt],
+    prompts: dict[str, Prompt],
+    benchmark_of: Callable[[Mapping[str, Any]], Any],
+    env: Mapping[str, str],
+    budget: float,
+    deadline: float | None,
+    stop: Callable[[], bool] | None,
+    on_prompt: Callable[[Mapping[str, Any], Prompt], None] | None,
+    workers: int,
+    stall_s: float | None = None,
+    stall_retries: int = 0,
+) -> Materialized:
+    """`materialize_units` with `workers` units at a time. Only this thread writes the manifest
+    and calls `on_prompt`; a worker runs one unit's subprocess."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    def finish(unit: Mapping[str, Any], prompt: Prompt) -> None:
+        if prompt.void:
+            log.warning("unit %s has no prompt: %s", prompt.unit_id, prompt.error)
+        prompts[prompt.unit_id] = prompt
+        if on_prompt is not None:
+            on_prompt(unit, prompt)
+
+    def job(unit: Mapping[str, Any]) -> Prompt | None:
+        unit_id = str(unit["unit_id"])
+        if stop is not None and stop():
+            return None
+        if deadline is not None and time.monotonic() >= deadline:
+            return Prompt(
+                unit_id=unit_id,
+                void=True,
+                error="materialize: the duel ran out of its wall-clock budget",
+            )
+        left = budget if deadline is None else min(budget, deadline - time.monotonic())
+        return materialize_unit(
+            benchmark_of(unit),
+            unit,
+            root / unit_id,
+            env=env,
+            timeout_s=left,
+            stall_s=stall_s,
+            stall_retries=stall_retries,
+        )
+
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="materialize") as pool:
+        futures = {}
+        for unit in units:
+            unit_id = str(unit["unit_id"])
+            prompt = done.get(unit_id)
+            if prompt is not None:
+                reason = prompt.changed()
+                if reason is not None:
+                    prompt = Prompt(unit_id=unit_id, void=True, error=f"materialize: {reason}")
+                    _append(root, prompt)
+                finish(unit, prompt)
+                continue
+            futures[pool.submit(job, unit)] = unit
+        for future in as_completed(futures):
+            prompt = future.result()
+            if prompt is None:
+                continue
+            _append(root, prompt)
+            finish(futures[future], prompt)
+    return Materialized(root=root, prompts=prompts)
+
+
 def materialize_unit(
     benchmark: Any,
     unit: Mapping[str, Any],
@@ -222,8 +320,12 @@ def materialize_unit(
     *,
     env: Mapping[str, str],
     timeout_s: float,
+    stall_s: float | None = None,
+    stall_retries: int = 0,
 ) -> Prompt:
-    """One unit's prompt, produced and verified. Every failure is a void prompt, never a raise."""
+    """One unit's prompt, produced and verified. Every failure is a void prompt, never a raise.
+    A run that stalls (`run_argv`'s watchdog) is started again, `stall_retries` times, within the
+    same `timeout_s`."""
     unit_id = str(unit["unit_id"])
     name = str(getattr(benchmark, "id", "benchmark"))
     started = time.monotonic()
@@ -250,9 +352,30 @@ def materialize_unit(
         except OSError as exc:
             return void(f"could not clear a stale {stale}: {exc}")
 
-    done = run_argv(
-        argv, env=env, timeout_s=timeout_s, log_path=out_dir / LOG_FILE, ledger=Ledger(out_dir)
-    )
+    attempt = 0
+    while True:
+        left = timeout_s - (time.monotonic() - started)
+        done = run_argv(
+            argv,
+            env=env,
+            timeout_s=max(left, 0.0),
+            log_path=out_dir / LOG_FILE,
+            ledger=Ledger(out_dir),
+            stall_s=stall_s,
+        )
+        if not done.stalled or attempt >= stall_retries:
+            break
+        attempt += 1
+        log.warning(
+            "materializing %s stalled; starting it again (%d of %d)",
+            unit_id,
+            attempt,
+            stall_retries,
+        )
+        for stale in (PROMPT_FILE, DEMONSTRATION_CLIP, RESULT_FILE):
+            (out_dir / stale).unlink(missing_ok=True)
+    if done.stalled:
+        return void(f"stalled {attempt + 1} time(s): the simulator hung")
     if done.start_error is not None:
         return void(f"could not start: {done.start_error}")
     if done.timed_out:

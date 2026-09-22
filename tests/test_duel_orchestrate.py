@@ -641,3 +641,23 @@ def test_a_duels_identity_is_its_spec_track_and_refs():
     assert a.duel_id(spec) != DuelRequest(TRACK, ZERO_REF, REPLAY_REF, "smoke", 2).duel_id(spec)
     assert DuelRequest.from_dict(a.as_dict(spec)) == a
     assert DuelRequest(TRACK, REPLAY_REF, None, None, 1).kind == "genesis"
+
+
+@pytest.mark.parametrize("workers", [2, 4])
+def test_units_played_in_parallel_publish_what_one_at_a_time_publishes(
+    duel_spec, store, tmp_path, workers
+):
+    crowned(store, duel_spec, ZERO_REF)
+    duel = orchestrator(duel_spec, store, tmp_path, workers=workers)
+    req = DuelRequest(TRACK, REPLAY_REF, ZERO_REF, "smoke", block=2)
+    result = duel.run(req)
+    assert result.published and result.record["dethroned"] is True, result.reason
+    assert (result.record["wins"], result.record["losses"], result.record["void"]) == (3, 0, 0)
+    run_dir = duel.run_dir(req)
+    for side, success in (("challenger", True), ("king", False)):
+        records = read_results(run_dir / side)
+        assert sorted(records) == sorted(u["unit_id"] for u in result.units)
+        assert all(r["success"] is success and not r["void"] for r in records.values())
+    event = event_of(store, result.record)
+    assert [u["unit_id"] for u in event["units"]] == sorted(u["unit_id"] for u in event["units"])
+    verified(store, duel_spec)

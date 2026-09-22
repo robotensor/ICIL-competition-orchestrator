@@ -345,6 +345,7 @@ def _orchestrator(args: argparse.Namespace, spec):
         args.run_dir,
         live=LiveReporter(spec, args.live_url, token),
         mirror=mirror,
+        workers=args.workers,
     )
 
 
@@ -608,6 +609,13 @@ def _add_duel_args(p: argparse.ArgumentParser) -> None:
         default=os.environ.get("ICIL_POLICY_PYTHON") or sys.executable,
         help="the policy environment's interpreter (weights runtime; default "
         "$ICIL_POLICY_PYTHON, else this one)",
+    )
+    p.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="units materialized and played at once, each a subprocess and a policy server of "
+        "its own (default 1)",
     )
     p.add_argument(
         "--policy-kwarg",

@@ -470,6 +470,15 @@ def validate_spec(doc: dict[str, Any]) -> list[str]:
         "budgets.policy_budget_seconds<unit_wall_seconds",
         not (_positive_number(policy) and _positive_number(unit)) or policy < unit,
     )
+    # Optional: a hung simulator's watchdog, and how often a stalled unit is tried again.
+    if budgets.get("stall_seconds") is not None:
+        need("budgets.stall_seconds>0", _positive_number(budgets.get("stall_seconds")))
+    retries = budgets.get("stall_retries")
+    need(
+        "budgets.stall_retries int>=0",
+        retries is None
+        or (isinstance(retries, int) and not isinstance(retries, bool) and retries >= 0),
+    )
 
     submission = doc.get("submission") or {}
     kind = submission.get("kind", "code")
@@ -660,6 +669,16 @@ class Spec:
     @property
     def budgets(self) -> dict[str, Any]:
         return self.raw["budgets"]
+
+    @property
+    def stall(self) -> tuple[float | None, int]:
+        """`(stall_seconds, stall_retries)`: the hung-simulator watchdog's window (None for no
+        watchdog) and how many times a stalled unit or materialization is started again."""
+        seconds = self.raw["budgets"].get("stall_seconds")
+        return (
+            None if seconds is None else float(seconds),
+            int(self.raw["budgets"].get("stall_retries") or 0),
+        )
 
     @property
     def submission(self) -> dict[str, Any]:

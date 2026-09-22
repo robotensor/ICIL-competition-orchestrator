@@ -293,6 +293,7 @@ class Orchestrator:
         live: LiveReporter | None = None,
         mirror: Any | None = None,
         resolve: Callable[[str], Any] | None = None,
+        workers: int = 1,
     ) -> None:
         if store.signer is None:
             raise ValueError("the store has no signer; a duel cannot publish without one")
@@ -300,6 +301,9 @@ class Orchestrator:
         self.store = store
         self.runtime = runtime
         self.run_root = Path(run_root)
+        #: Units materialized and played at once, each a subprocess (and a policy server) of its
+        #: own. One unless the host has the GPU memory for more.
+        self.workers = max(1, int(workers))
         self.live = live or LiveReporter(spec, None, None)
         self.mirror = mirror
         if resolve is None:
@@ -487,6 +491,9 @@ class Orchestrator:
             deadline=duel.deadline,
             stop=lambda: self._certainly_void(duel),
             on_prompt=lambda unit, prompt: self._on_prompt(duel, unit, prompt),
+            workers=self.workers,
+            stall_s=spec.stall[0],
+            stall_retries=spec.stall[1],
         )
         self.push_touched()
         if score.too_void(duel.units, spec.max_void_fraction(req.track)):
@@ -592,6 +599,9 @@ class Orchestrator:
             stop=lambda: self._certainly_void(duel),
             on_start=lambda unit: self._on_start(duel, side, unit),
             on_unit=lambda unit, record: self._on_unit(duel, side, record),
+            workers=self.workers,
+            stall_s=self.spec.stall[0],
+            stall_retries=self.spec.stall[1],
         )
         self._flush_media(duel, force=True)
         results = read_results(side_dir)

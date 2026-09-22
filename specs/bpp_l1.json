@@ -114,7 +114,9 @@
   "policy_budget_seconds": 1200,
   "side_wall_seconds": 43200,
   "duel_wall_seconds": 86400,
-  "_comment": "Measured on one RTX PRO 6000: a level-1 materialize (demonstration plus evaluation-scene check) took 30-47 s and a 500-step rollout 38 s with a replay policy. A served BPP answers one act per executed step and predicts every 12. Generous for launch; tighten once duels are measured."
+  "_comment": "Measured on one RTX PRO 6000: a level-1 materialize (demonstration plus evaluation-scene check) took 30-47 s and a 500-step rollout 38 s with a replay policy. A served BPP answers one act per executed step and predicts every 12. Generous for launch; tighten once duels are measured. stall_seconds: a benchmark process group using under 0.02 cores for that long is a hung SAPIEN render (a camera read that never returns), killed and started again up to stall_retries times with a fresh policy server; measured, a healthy rollout uses far more (a render every step is ~25 ms of a 0.14 s step).",
+  "stall_seconds": 120,
+  "stall_retries": 2
  },
  "submission": {
   "kind": "weights",
@@ -130,8 +132,8 @@
    ],
    "policy": "bpp_runtime.policy:BPPPolicy",
    "template": {
-    "cfg_sha256": null,
-    "tensors_sha256": null
+    "cfg_sha256": "c2dcb559ab794e9c85c7da9069090fbf8aebc47f64ae0494534cfa24cc39cd8a",
+    "tensors_sha256": "15ec2516d150b02f6b5ee1d8283a226635af93dcdd1335d6a4bd3a2b7aa659b0"
    }
   },
   "_comment": "A submission is a Hugging Face model repository at a resolved commit holding model.safetensors of the pinned BPP architecture and nothing else but a README. Its header is checked against the template before a tensor is read, and the validator's own code builds, loads and serves it: nothing of the submission ever runs, so no sandbox is needed."
@@ -160,9 +162,9 @@
  "baselines": {
   "bpp_l1": {
    "repo": "robotensor/bpp-base",
-   "revision": null,
+   "revision": "99292ee2b920be74048eec7a249ad52c50e8adf4",
    "size": "smoke"
   },
-  "_comment": "The genesis king: BRL1's epoch0000 checkpoint, converted to model.safetensors. Its revision is filled in when it is published."
+  "_comment": "The genesis king: BRL1's epoch0000 checkpoint (10.0% on its 200 held-out level-1 scenarios), converted to model.safetensors and published as robotensor/bpp-base; weights_sha256 e0d6264795601d06b3f8ca48dde9e167b76ce84ae790d9e9148de030c60ae4d1."
  }
 }

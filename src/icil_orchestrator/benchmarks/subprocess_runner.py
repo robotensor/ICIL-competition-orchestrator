@@ -177,6 +177,44 @@ class Completed:
     start_error: str | None
     wall_s: float
     log_tail: str
+    #: The process group used under `min_cpu_rate` cores over `stall_s` seconds and was killed:
+    #: a hung simulator (SAPIEN's camera read can block for good, polling at a trickle of CPU).
+    stalled: bool = False
+
+
+#: How often a running subprocess's CPU time is sampled for the stall watchdog.
+STALL_POLL_S = 2.0
+#: Below this many cores over the whole stall window, a process group is hung, not slow: a rollout
+#: or an expert uses a large fraction of a core; a hung camera read sleeps or polls at ~1%.
+MIN_CPU_RATE = 0.02
+
+
+def group_cpu_seconds(pgid: int) -> float:
+    """User and system CPU seconds of every live process in group `pgid` (and of the children they
+    reaped), read from /proc; 0.0 where /proc cannot say."""
+    tick = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
+    total = 0
+    try:
+        entries = os.listdir("/proc")
+    except OSError:
+        return 0.0
+    for entry in entries:
+        if not entry.isdigit():
+            continue
+        try:
+            with open(f"/proc/{entry}/stat", "rb") as fh:
+                stat = fh.read().decode(errors="replace")
+        except OSError:
+            continue
+        # The command name is in parentheses and may hold spaces: split after its closing one.
+        fields = stat[stat.rfind(")") + 2 :].split()
+        try:
+            if int(fields[2]) != pgid:
+                continue
+            total += sum(int(v) for v in fields[11:15])
+        except (IndexError, ValueError):
+            continue
+    return total / float(tick)
 
 
 def run_argv(
@@ -186,8 +224,14 @@ def run_argv(
     timeout_s: float,
     log_path: Path,
     ledger: Any = None,
+    stall_s: float | None = None,
+    min_cpu_rate: float = MIN_CPU_RATE,
 ) -> Completed:
     """Run `argv` to completion or to `timeout_s`, its output going to `log_path`.
+
+    With `stall_s`, the process group's CPU time is sampled every `STALL_POLL_S`, and a group that
+    used under `min_cpu_rate` cores over the last `stall_s` seconds is killed as `stalled`: a hung
+    simulator would otherwise sleep out the whole of `timeout_s`.
 
     It runs in its own session, and whatever ends the unit - a clean exit, a crash, the timeout, or
     the orchestrator itself being interrupted - the whole process group is killed on the way out: a
@@ -211,11 +255,23 @@ def run_argv(
         except OSError as exc:
             return Completed(None, False, str(exc), time.monotonic() - started, "")
         returncode: int | None = None
-        timed_out = False
+        timed_out = stalled = False
         try:
             if ledger is not None:
                 ledger.started(proc.pid)
-            returncode = proc.wait(timeout=timeout_s)
+            if stall_s is None:
+                returncode = proc.wait(timeout=timeout_s)
+            else:
+                returncode, timed_out, stalled = _watch(
+                    proc, started, timeout_s, float(stall_s), min_cpu_rate
+                )
+                if stalled:
+                    log.warning(
+                        "%s used under %g cores for %gs: killed as stalled",
+                        " ".join(argv[:4]),
+                        min_cpu_rate,
+                        stall_s,
+                    )
         except subprocess.TimeoutExpired:
             timed_out = True
         finally:
@@ -224,7 +280,31 @@ def run_argv(
             _kill_group(proc)
             if ledger is not None:
                 ledger.ended(proc.pid)
-    return Completed(returncode, timed_out, None, time.monotonic() - started, _tail(log_path))
+    return Completed(
+        returncode, timed_out, None, time.monotonic() - started, _tail(log_path), stalled=stalled
+    )
+
+
+def _watch(
+    proc: subprocess.Popen, started: float, timeout_s: float, stall_s: float, min_rate: float
+) -> tuple[int | None, bool, bool]:
+    """Wait for `proc`, sampling its group's CPU time: `(returncode, timed_out, stalled)`."""
+    samples: list[tuple[float, float]] = []
+    while True:
+        try:
+            return proc.wait(timeout=STALL_POLL_S), False, False
+        except subprocess.TimeoutExpired:
+            pass
+        now = time.monotonic()
+        if now - started >= timeout_s:
+            return None, True, False
+        samples.append((now, group_cpu_seconds(proc.pid)))
+        # The oldest sample at least stall_s old is the window's start.
+        while len(samples) > 1 and now - samples[1][0] >= stall_s:
+            samples.pop(0)
+        first_t, first_cpu = samples[0]
+        if now - first_t >= stall_s and (samples[-1][1] - first_cpu) / (now - first_t) < min_rate:
+            return None, False, True
 
 
 def _kill_group(proc: subprocess.Popen) -> None:
@@ -261,9 +341,11 @@ def run_unit(
     env: Mapping[str, str] | None = None,
     extra: Mapping[str, Any] | None = None,
     ledger: Any = None,
+    stall_s: float | None = None,
 ) -> Outcome:
     """One unit against a served policy, start to finish. Every failure is a void outcome, never an
-    exception: one bad unit must not lose the rest of the duel. `ledger` is `run_argv`'s.
+    exception: one bad unit must not lose the rest of the duel. `ledger` and `stall_s` are
+    `run_argv`'s; a stalled unit is void with `extra["stalled"]`, so the caller may play it again.
 
     `env` is the subprocess's whole environment; without it the benchmark gets
     `benchmark_environment(os.environ, authkey_env)`, not everything the orchestrator holds.
@@ -308,9 +390,23 @@ def run_unit(
         except OSError as exc:
             return void(f"could not clear a stale {stale}: {exc}")
 
-    done = run_argv(argv, env=environ, timeout_s=timeout_s, log_path=out / LOG_FILE, ledger=ledger)
+    done = run_argv(
+        argv,
+        env=environ,
+        timeout_s=timeout_s,
+        log_path=out / LOG_FILE,
+        ledger=ledger,
+        stall_s=stall_s,
+    )
     if done.start_error is not None:
         return void(f"could not start the benchmark: {done.start_error}")
+    if done.stalled:
+        outcome = void(f"stalled: no progress for {stall_s:g}s (a hung simulator); killed")
+        # A hang is nobody's doing: void on the harness whatever the policy's server did when its
+        # client was killed under it.
+        outcome.extra["stalled"] = True
+        outcome.extra["void_cause"] = "harness"
+        return outcome
     if done.timed_out:
         return void(f"unit exceeded its {timeout_s:g}s budget")
     if done.returncode != 0:
