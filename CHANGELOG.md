@@ -9,7 +9,7 @@
   again with a fresh policy server; a unit still stalled after its retries is void on the harness.
 - (fix): the weights runtime's manifest path is absolute, so a relative `--run-dir` serves.
 - (feat): `specs/bpp_l1.json` pins the `bpp_robotwin_l1_v1` template digests and the genesis
-  baseline `robotensor/bpp-base@99292ee`.
+  baseline `robotensor/bpp-base@741365e`.
 - (feat): `packages/bpp-runtime`, the validator's weights-only BPP runtime (check, convert,
   template, parity, `BPPPolicy`), with the vendored `behavior_prompting` source it needs.
 - (feat): a weights-only track for the BPP subnet lane, in its own contract `specs/bpp_l1.json`

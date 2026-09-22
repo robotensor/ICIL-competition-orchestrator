@@ -162,7 +162,7 @@
  "baselines": {
   "bpp_l1": {
    "repo": "robotensor/bpp-base",
-   "revision": "99292ee2b920be74048eec7a249ad52c50e8adf4",
+   "revision": "741365e9d895f84cbc67f4982189d77ec8b3d822",
    "size": "smoke"
   },
   "_comment": "The genesis king: BRL1's epoch0000 checkpoint (10.0% on its 200 held-out level-1 scenarios), converted to model.safetensors and published as robotensor/bpp-base; weights_sha256 e0d6264795601d06b3f8ca48dde9e167b76ce84ae790d9e9148de030c60ae4d1."
