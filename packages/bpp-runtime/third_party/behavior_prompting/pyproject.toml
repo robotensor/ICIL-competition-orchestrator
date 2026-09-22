@@ -1,0 +1,18 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+# The part of behavior_prompting (MIT, Austin Patel) that BPP's RoboTwin checkpoints need to be
+# built, loaded, prompted and run, vendored byte for byte; see README.md. Its intermediate
+# directories are namespace packages, as upstream has them.
+[project]
+name = "behavior-prompting"
+version = "1.0.0+brl1.90de4af"
+description = "behavior_prompting model code for BPP inference, vendored from louis392/BRL1."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.hatch.build.targets.wheel]
+packages = ["behavior_prompting"]
