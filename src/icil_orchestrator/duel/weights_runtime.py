@@ -118,8 +118,17 @@ class WeightsPolicyRuntime(SubprocessPolicyRuntime):
         kwargs: dict[str, Any] | None = None,
         start_timeout_s: float | None = None,
         hello: bool = True,
+        threads: int | None = 4,
     ) -> None:
         super().__init__(spec, {}, python=python, start_timeout_s=start_timeout_s)
+        # Torch builds and runs the model on this many CPU threads. Uncapped, every server takes
+        # one per core, and several servers starting beside several simulators build their models
+        # an order of magnitude slower than one alone (12 s alone; over 90 s four at once).
+        if threads:
+            self.env_set = {
+                name: str(int(threads))
+                for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS")
+            }
         if spec.submission_kind != "weights":
             raise ValueError("the weights runtime serves a spec whose submission.kind is weights")
         self.model = spec.model

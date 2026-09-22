@@ -95,6 +95,8 @@ class SubprocessPolicyRuntime:
     name = "local"
     #: Variables a served policy inherits beyond the subprocess allow-list (`benchmark_environment`).
     env_keep: tuple[str, ...] = ()
+    #: Variables set for a served policy whatever the host has (a thread cap, say).
+    env_set: dict[str, str] = {}
 
     def __init__(
         self,
@@ -200,6 +202,7 @@ class SubprocessPolicyRuntime:
         key = secrets.token_bytes(AUTHKEY_BYTES)
         env = {
             **benchmark_environment(os.environ, AUTHKEY_ENV, self.env_keep),
+            **self.env_set,
             AUTHKEY_ENV: key.hex(),
         }
         argv = [
@@ -239,6 +242,7 @@ class SubprocessPolicyRuntime:
                 log_file=workdir / LOG_FILE,
                 died=lambda: self._died(process, log_file),
                 live_log=log_file,
+                pgid=process.pid,
             )
             self._started(process, served)
             yield served, key, log_file

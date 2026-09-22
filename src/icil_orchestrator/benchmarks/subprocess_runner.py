@@ -191,9 +191,10 @@ STALL_POLL_S = 2.0
 MIN_CPU_RATE = 0.1
 
 
-def group_cpu_seconds(pgid: int) -> float:
-    """User and system CPU seconds of every live process in group `pgid` (and of the children they
-    reaped), read from /proc; 0.0 where /proc cannot say."""
+def group_cpu_seconds(pgid: int | Iterable[int]) -> float:
+    """User and system CPU seconds of every live process in group `pgid` - or in any of several
+    groups - and of the children they reaped, read from /proc; 0.0 where /proc cannot say."""
+    groups = {pgid} if isinstance(pgid, int) else set(pgid)
     tick = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
     total = 0
     try:
@@ -211,7 +212,7 @@ def group_cpu_seconds(pgid: int) -> float:
         # The command name is in parentheses and may hold spaces: split after its closing one.
         fields = stat[stat.rfind(")") + 2 :].split()
         try:
-            if int(fields[2]) != pgid:
+            if int(fields[2]) not in groups:
                 continue
             total += sum(int(v) for v in fields[11:15])
         except (IndexError, ValueError):
@@ -228,12 +229,14 @@ def run_argv(
     ledger: Any = None,
     stall_s: float | None = None,
     min_cpu_rate: float = MIN_CPU_RATE,
+    watch_pgids: Iterable[int] = (),
 ) -> Completed:
     """Run `argv` to completion or to `timeout_s`, its output going to `log_path`.
 
     With `stall_s`, the process group's CPU time is sampled every `STALL_POLL_S`, and a group that
     used under `min_cpu_rate` cores over the last `stall_s` seconds is killed as `stalled`: a hung
-    simulator would otherwise sleep out the whole of `timeout_s`.
+    simulator would otherwise sleep out the whole of `timeout_s`. `watch_pgids` are other process
+    groups whose CPU counts as progress too: the policy server a benchmark waits on.
 
     It runs in its own session, and whatever ends the unit - a clean exit, a crash, the timeout, or
     the orchestrator itself being interrupted - the whole process group is killed on the way out: a
@@ -265,7 +268,7 @@ def run_argv(
                 returncode = proc.wait(timeout=timeout_s)
             else:
                 returncode, timed_out, stalled = _watch(
-                    proc, started, timeout_s, float(stall_s), min_cpu_rate
+                    proc, started, timeout_s, float(stall_s), min_cpu_rate, tuple(watch_pgids)
                 )
                 if stalled:
                     log.warning(
@@ -288,7 +291,12 @@ def run_argv(
 
 
 def _watch(
-    proc: subprocess.Popen, started: float, timeout_s: float, stall_s: float, min_rate: float
+    proc: subprocess.Popen,
+    started: float,
+    timeout_s: float,
+    stall_s: float,
+    min_rate: float,
+    watch_pgids: tuple[int, ...] = (),
 ) -> tuple[int | None, bool, bool]:
     """Wait for `proc`, sampling its group's CPU time: `(returncode, timed_out, stalled)`."""
     samples: list[tuple[float, float]] = []
@@ -300,7 +308,7 @@ def _watch(
         now = time.monotonic()
         if now - started >= timeout_s:
             return None, True, False
-        samples.append((now, group_cpu_seconds(proc.pid)))
+        samples.append((now, group_cpu_seconds((proc.pid, *watch_pgids))))
         # The oldest sample at least stall_s old is the window's start.
         while len(samples) > 1 and now - samples[1][0] >= stall_s:
             samples.pop(0)
@@ -345,6 +353,7 @@ def run_unit(
     ledger: Any = None,
     stall_s: float | None = None,
     min_cpu_rate: float = MIN_CPU_RATE,
+    watch_pgids: Iterable[int] = (),
 ) -> Outcome:
     """One unit against a served policy, start to finish. Every failure is a void outcome, never an
     exception: one bad unit must not lose the rest of the duel. `ledger` and `stall_s` are
@@ -401,6 +410,7 @@ def run_unit(
         ledger=ledger,
         stall_s=stall_s,
         min_cpu_rate=min_cpu_rate,
+        watch_pgids=watch_pgids,
     )
     if done.start_error is not None:
         return void(f"could not start the benchmark: {done.start_error}")

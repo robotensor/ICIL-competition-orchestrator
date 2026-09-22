@@ -230,6 +230,10 @@ class ServedPolicy:
     died: Callable[[], PolicyEnd | None] = _alive
     #: The log the policy writes while it serves; None where the runtime has none.
     live_log: Path | None = None
+    #: The policy server's process group on this host, whose CPU counts as the unit's progress for
+    #: the stall watchdog (a benchmark waiting on a policy that is building its model is not
+    #: hung); None where the runtime cannot say (a container).
+    pgid: int | None = None
 
 
 @runtime_checkable

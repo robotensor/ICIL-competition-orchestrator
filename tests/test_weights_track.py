@@ -293,3 +293,29 @@ def test_a_process_that_sleeps_is_killed_as_stalled_and_a_busy_one_is_not(tmp_pa
 def test_the_bpp_contract_watches_for_hung_simulators(bpp_spec):
     seconds, retries = bpp_spec.stall
     assert seconds and seconds >= 60 and retries >= 1
+
+
+def test_a_benchmark_waiting_on_a_busy_policy_is_not_stalled(tmp_path, monkeypatch):
+    import subprocess
+    import sys
+
+    from icil_orchestrator.benchmarks import subprocess_runner as runner
+
+    monkeypatch.setattr(runner, "STALL_POLL_S", 0.2)
+    busy = subprocess.Popen(
+        [sys.executable, "-c", "import time\nend = time.time() + 6\nwhile time.time() < end: pass"],
+        start_new_session=True,
+    )
+    try:
+        waiting = runner.run_argv(
+            [sys.executable, "-c", "import time; time.sleep(5)"],
+            env={"PATH": "/usr/bin:/bin"},
+            timeout_s=60,
+            log_path=tmp_path / "wait.log",
+            stall_s=2.0,
+            watch_pgids=(busy.pid,),
+        )
+    finally:
+        busy.kill()
+        busy.wait()
+    assert not waiting.stalled and waiting.returncode == 0

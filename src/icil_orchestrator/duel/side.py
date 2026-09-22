@@ -569,6 +569,8 @@ def _play_once(
                         extra=limits,
                         ledger=Ledger(unit_dir),
                         stall_s=stall_s,
+                        # The policy building its model is progress, not a hang.
+                        watch_pgids=() if served.pgid is None else (served.pgid,),
                     )
                 end = served.died()
     except PolicyDied as exc:
