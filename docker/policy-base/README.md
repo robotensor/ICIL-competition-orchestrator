@@ -2,8 +2,8 @@
 
 What every submission's image is built `FROM`: CUDA 12.8.1's `devel` image on Ubuntu 22.04 (pinned
 by digest in the Dockerfile), a C toolchain, Python 3.10 with its headers, the sandbox user from
-`spec.json` and `icil-policy` installed from this checkout. No entrypoint and no command: the
-orchestrator runs `python -m icil_policy.serve` in it, and a submission's image adds only its
+`spec.json` and `vector-policy` installed from this checkout. No entrypoint and no command: the
+orchestrator runs `python -m vector_policy.serve` in it, and a submission's image adds only its
 checkout at `/submission` and a `pip install -r` of its requirements.
 
 ## What is installed, and why
@@ -14,7 +14,7 @@ checkout at `/submission` and a `pip install -r` of its requirements.
 | `python3`, `python3-pip`, `python3-venv` | Ubuntu 22.04's Python is 3.10, the version the protocol is tested on |
 | `build-essential` (gcc, g++, make) | the compilers torch.compile's CPU backend, Triton's launcher, cffi and C++ extensions call |
 | `python3.10-dev` | `Python.h`, which they compile against |
-| `icil-policy` | the protocol's server |
+| `vector-policy` | the protocol's server |
 
 Nothing else is added. Whatever a policy needs beyond that - torch, its weights' libraries - its
 requirements install into its own image. That includes `ninja`, which
@@ -25,7 +25,7 @@ time lists the `ninja` wheel in its requirements.
 ## Building and pinning
 
 ```bash
-icil-orchestrator submission build-base            # context: the repository root
+vector-orchestrator submission build-base            # context: the repository root
 ```
 
 prints the image's digest (`sha256:<64 hex>`, the id Docker computes over its configuration and
@@ -40,15 +40,15 @@ the same Dockerfile and the same checkout. The image id hashes the image's confi
 records when each layer was made. The layers carry file times and whatever `apt-get` fetched that
 day. On the development host three builds of the `runtime` base this one replaced gave three
 digests: `5917dd63...` and `b3016d3c...` differ from the `apt-get` layer on, and `c73a73c2...`
-from the copy of `packages/icil-policy`, whose `.pytest_cache` a test run had rewritten a minute
+from the copy of `packages/vector-policy`, whose `.pytest_cache` a test run had rewritten a minute
 before. So:
 
 - No digest written here, the one below included, is the base. It is one build's, an example.
 - The digest that counts is that of the image you built, read on the host that has it:
 
   ```bash
-  icil-orchestrator submission build-base                  # prints it on stdout
-  icil-orchestrator submission build-base --json           # "image_id"
+  vector-orchestrator submission build-base                  # prints it on stdout
+  vector-orchestrator submission build-base --json           # "image_id"
   docker image inspect --format '{{.Id}}' icil-policy-base:latest   # an image built before
   ```
 
@@ -61,7 +61,7 @@ before. So:
 BuildKit resolves `FROM name@sha256:...` against a registry's manifest digest, which a locally
 built image does not have, and refuses a bare image id; so the base is reached through the tag
 named by its digest, and the id behind that tag is checked against the digest immediately before
-every submission build (`icil_orchestrator.submissions.image.ensure_base`).
+every submission build (`vector_orchestrator.submissions.image.ensure_base`).
 
 ## What a policy finds at run time
 
@@ -77,10 +77,10 @@ every submission build (`icil_orchestrator.submissions.image.ensure_base`).
   time - `torch.compile`, Triton, cffi, `torch.utils.cpp_extension` (with `ninja` in its
   requirements), its own `gcc -shared` - and load what it built. It is the only place it can: a
   compile into the root filesystem (`/`, `/submission`, `/usr`, `/opt`) meets the read-only root,
-  and `/dev/shm` (the other tmpfs Docker gives a container) and `/run/icil` take the file but are
+  and `/dev/shm` (the other tmpfs Docker gives a container) and `/run/vector` take the file but are
   `noexec`, so it will not load (`tests/test_submission_jit.py` walks every mount to check). Its
   contents count against `memory_bytes` and go with the container.
-- `/run/icil`: the socket and the server's log, shared with the host. When the orchestrator runs as
+- `/run/vector`: the socket and the server's log, shared with the host. When the orchestrator runs as
   root it is a tmpfs of 64 MiB and 64 entries (`container.SHARED_DIR_BYTES`,
   `SHARED_DIR_INODES`) mounted `nosuid,nodev,noexec` (`SHARED_DIR_HARDENING`), which the bind
   mount into the container keeps. As another user it is a plain directory with no cap, mounted
@@ -102,7 +102,7 @@ context, never cached, in which pip downloads `pip`. If the probe gets through, 
 the submission's rejection at build, whatever its log says, since a `setup.py` can print pip's
 network errors. If the probe cannot reach the index either, the failure is the harness's error,
 to try again. Checked images stay
-until `icil-orchestrator submission prune`, which removes every `icil-submission` image no
+until `vector-orchestrator submission prune`, which removes every `vector-submission` image no
 container was made from. BuildKit's own cache is shared with every other build on the host and
 is left to `docker builder prune`.
 

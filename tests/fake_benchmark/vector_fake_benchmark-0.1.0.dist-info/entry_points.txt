@@ -1,0 +1,2 @@
+[robotensor.benchmarks]
+fake = vector_fake_benchmark

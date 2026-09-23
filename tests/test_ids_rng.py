@@ -1,4 +1,4 @@
-from icil_orchestrator.ids import (
+from vector_orchestrator.ids import (
     SubmissionRef,
     duel_id,
     event_id,
@@ -8,7 +8,7 @@ from icil_orchestrator.ids import (
     unit_id,
     unit_seed,
 )
-from icil_orchestrator.rng import HashRng
+from vector_orchestrator.rng import HashRng
 
 
 def test_ids_are_stable():

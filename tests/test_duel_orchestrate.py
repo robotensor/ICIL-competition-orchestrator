@@ -16,9 +16,11 @@ from duel_helpers import (
     RecordingReporter,
     harness_voiding,
 )
-from icil_orchestrator.benchmarks.units import plugin_units
-from icil_orchestrator.canon import Signer
-from icil_orchestrator.duel.orchestrate import (
+from store_helpers import make_record, publish
+from submission_helpers import write_policy_repo
+from vector_orchestrator.benchmarks.units import plugin_units
+from vector_orchestrator.canon import Signer
+from vector_orchestrator.duel.orchestrate import (
     OUTCOME_FILE,
     CrownMoved,
     DuelRequest,
@@ -26,15 +28,13 @@ from icil_orchestrator.duel.orchestrate import (
     Orchestrator,
     side_share,
 )
-from icil_orchestrator.duel.runtime import RuntimeUnavailable
-from icil_orchestrator.duel.side import read_results
-from icil_orchestrator.ids import SubmissionRef
-from icil_orchestrator.live import PHASES
-from icil_orchestrator.spec import load_schema
-from icil_orchestrator.store.verify import Report, SchemaCheck, verify_store
-from icil_orchestrator.store.writer import Store
-from store_helpers import make_record, publish
-from submission_helpers import write_policy_repo
+from vector_orchestrator.duel.runtime import RuntimeUnavailable
+from vector_orchestrator.duel.side import read_results
+from vector_orchestrator.ids import SubmissionRef
+from vector_orchestrator.live import PHASES
+from vector_orchestrator.spec import load_schema
+from vector_orchestrator.store.verify import Report, SchemaCheck, verify_store
+from vector_orchestrator.store.writer import Store
 
 TRACK = "franka_1arm"
 #: The replay example under another name: a king that wins every unit it gets to play.
@@ -132,7 +132,7 @@ def test_the_replay_challenger_dethrones_the_zero_king_on_identical_prompts(
     assert event["duel_id"] == req.duel_id(duel_spec) and event["units_per_skill"] == 1
     assert event["wall_seconds"] > 0 and event["runtime"] == "local"
     assert event["benchmarks"]["fake"]["info"]["id"] == "fake"
-    assert event["benchmarks"]["fake"]["pin"]["distribution"] == "icil-fake-benchmark"
+    assert event["benchmarks"]["fake"]["pin"]["distribution"] == "vector-fake-benchmark"
     for side, ref in (("challenger", REPLAY_REF), ("king", ZERO_REF)):
         assert event["sides"][side]["commit"] == ref.revision
         assert "base_image_digest" in event["sides"][side]
@@ -222,9 +222,9 @@ def test_genesis_crowns_the_first_challenger_of_an_empty_track_with_its_own_scor
 def test_a_published_unit_names_the_scene_seed_its_prompt_was_built_on(duel_spec, store, tmp_path):
     """A unit derived with candidate seeds and no scene yet, as RoboTwin derives them: the event
     names the candidate the expert kept, which is the scene both sides played."""
-    import icil_fake_benchmark
+    import vector_fake_benchmark
 
-    class Candidates(icil_fake_benchmark.FakeBenchmark):
+    class Candidates(vector_fake_benchmark.FakeBenchmark):
         def derive_units(self, **kwargs):
             units = super().derive_units(**kwargs)
             for unit in units:
@@ -455,7 +455,7 @@ def test_a_duel_is_not_published_against_a_king_crowned_away_while_it_ran(
     live = RecordingReporter(duel_spec)
     req = DuelRequest(TRACK, REPLAY_REF, ZERO_REF, "smoke", block=2)
     duel = orchestrator(duel_spec, store, tmp_path, Usurped(duel_spec), live=live)
-    with pytest.raises(CrownMoved, match="the crown moved from robotensor/icil-zero-policy@"):
+    with pytest.raises(CrownMoved, match="the crown moved from robotensor/vector-zero-policy@"):
         duel.run(req)
     records = store.iter_index(TRACK)
     assert [(r["kind"], r["block"]) for r in records] == [("genesis", 1), ("duel", 3)]
@@ -536,11 +536,11 @@ def test_a_resumed_duel_keeps_the_kings_forfeit(duel_spec, store, tmp_path):
 
 
 def test_too_many_void_prompts_void_the_duel_before_either_side_runs(duel_spec, store, tmp_path):
-    import icil_fake_benchmark
+    import vector_fake_benchmark
 
     experts = []
 
-    class Broken(icil_fake_benchmark.FakeBenchmark):
+    class Broken(vector_fake_benchmark.FakeBenchmark):
         def materialize_command(self, *, unit, out_dir):
             experts.append(unit["unit_id"])
             if unit["unit_id"].endswith("-001"):
@@ -607,7 +607,7 @@ def test_the_king_is_given_the_challengers_share_of_the_duel(
     spec_doc, write_spec, store, tmp_path, monkeypatch
 ):
     from conftest import fake_spec_doc
-    from icil_orchestrator.duel import orchestrate
+    from vector_orchestrator.duel import orchestrate
 
     doc = fake_spec_doc(spec_doc)
     doc["budgets"]["act_timeout_s"] = 2.0
@@ -632,7 +632,7 @@ def test_the_king_is_given_the_challengers_share_of_the_duel(
 
 
 def test_a_duels_identity_is_its_spec_track_and_refs():
-    from icil_orchestrator.spec import load_spec
+    from vector_orchestrator.spec import load_spec
 
     spec = load_spec()
     a = DuelRequest(TRACK, REPLAY_REF, ZERO_REF, "smoke", block=2)

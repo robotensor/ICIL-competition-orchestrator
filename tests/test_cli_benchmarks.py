@@ -1,4 +1,4 @@
-"""`icil-orchestrator benchmarks list|check`, against the fake benchmark installed for real."""
+"""`vector-orchestrator benchmarks list|check`, against the fake benchmark installed for real."""
 
 from __future__ import annotations
 
@@ -12,12 +12,12 @@ from pathlib import Path
 import pytest
 
 from conftest import FAKE_PIN, FAKE_SITE, fake_spec_doc
-from icil_orchestrator.benchmarks.check import check_benchmark
-from icil_orchestrator.cli import main
+from vector_orchestrator.benchmarks.check import check_benchmark
+from vector_orchestrator.cli import main
 
 
 def script() -> str:
-    path = Path(sysconfig.get_path("scripts")) / "icil-orchestrator"
+    path = Path(sysconfig.get_path("scripts")) / "vector-orchestrator"
     assert path.exists(), "install the package (pip install -e .) for the console script"
     return str(path)
 
@@ -46,22 +46,22 @@ def test_list_names_every_benchmark_without_importing_one(fake_installed, fake_s
     assert main(["--spec", str(fake_spec.path), "benchmarks", "list", "--json"]) == 0
     rows = json.loads(capsys.readouterr().out)
     assert [(r["name"], r["distribution"], r["loaded"]) for r in rows] == [
-        ("fake", "icil-fake-benchmark", False)
+        ("fake", "vector-fake-benchmark", False)
     ]
-    assert "icil_fake_benchmark" not in sys.modules
+    assert "vector_fake_benchmark" not in sys.modules
 
 
 def test_check_refuses_another_api_version_with_the_reason(
     install_distribution, spec_doc, write_spec, capsys
 ):
     install_distribution(
-        "icil-variant-benchmark",
-        entry_points={"fake": "icil_variant_v2"},
+        "vector-variant-benchmark",
+        entry_points={"fake": "vector_variant_v2"},
         modules={
-            "icil_variant_v2": (
+            "vector_variant_v2": (
                 "import importlib.util\n"
                 "s = importlib.util.spec_from_file_location("
-                f"'icil_variant_base', {str(FAKE_SITE / 'icil_fake_benchmark' / '__init__.py')!r})\n"
+                f"'vector_variant_base', {str(FAKE_SITE / 'vector_fake_benchmark' / '__init__.py')!r})\n"
                 "m = importlib.util.module_from_spec(s); s.loader.exec_module(m)\n"
                 "class V2(m.FakeBenchmark):\n    api_version = 2\n"
                 "BENCHMARK = V2()\n"
@@ -69,7 +69,7 @@ def test_check_refuses_another_api_version_with_the_reason(
         },
     )
     spec = write_spec(
-        fake_spec_doc(spec_doc, {**FAKE_PIN, "distribution": "icil-variant-benchmark"})
+        fake_spec_doc(spec_doc, {**FAKE_PIN, "distribution": "vector-variant-benchmark"})
     )
     assert main(["--spec", str(spec.path), "benchmarks", "check", "fake"]) == 1
     out = capsys.readouterr().out
@@ -121,13 +121,13 @@ def test_check_catches_a_benchmark_that_would_fail_a_duel(
     install_distribution, spec_doc, write_spec, mutation, problem
 ):
     install_distribution(
-        "icil-variant-benchmark",
-        entry_points={"fake": "icil_variant_mutant"},
+        "vector-variant-benchmark",
+        entry_points={"fake": "vector_variant_mutant"},
         modules={
-            "icil_variant_mutant": (
+            "vector_variant_mutant": (
                 "import importlib.util\n"
                 "s = importlib.util.spec_from_file_location("
-                f"'icil_variant_base', {str(FAKE_SITE / 'icil_fake_benchmark' / '__init__.py')!r})\n"
+                f"'vector_variant_base', {str(FAKE_SITE / 'vector_fake_benchmark' / '__init__.py')!r})\n"
                 "m = importlib.util.module_from_spec(s); s.loader.exec_module(m)\n"
                 "class Mutant(m.FakeBenchmark):\n" + mutation + "BENCHMARK = Mutant()\n"
             ),
@@ -135,7 +135,7 @@ def test_check_catches_a_benchmark_that_would_fail_a_duel(
         },
     )
     spec = write_spec(
-        fake_spec_doc(spec_doc, {**FAKE_PIN, "distribution": "icil-variant-benchmark"})
+        fake_spec_doc(spec_doc, {**FAKE_PIN, "distribution": "vector-variant-benchmark"})
     )
     try:
         report = check_benchmark(spec, "fake")
@@ -147,16 +147,16 @@ def test_check_catches_a_benchmark_that_would_fail_a_duel(
 def test_check_hands_run_command_an_address_in_the_wire_form(
     install_distribution, spec_doc, write_spec
 ):
-    """The policy wire listens on a Unix socket path or host:port (icil_policy.wire), so a plugin
+    """The policy wire listens on a Unix socket path or host:port (vector_policy.wire), so a plugin
     that follows the contract and checks the address must pass `check`, not be failed by a URL."""
     install_distribution(
-        "icil-variant-benchmark",
-        entry_points={"fake": "icil_variant_strict"},
+        "vector-variant-benchmark",
+        entry_points={"fake": "vector_variant_strict"},
         modules={
-            "icil_variant_strict": (
+            "vector_variant_strict": (
                 "import importlib.util, os\n"
                 "s = importlib.util.spec_from_file_location("
-                f"'icil_variant_base', {str(FAKE_SITE / 'icil_fake_benchmark' / '__init__.py')!r})\n"
+                f"'vector_variant_base', {str(FAKE_SITE / 'vector_fake_benchmark' / '__init__.py')!r})\n"
                 "m = importlib.util.module_from_spec(s); s.loader.exec_module(m)\n"
                 "class Strict(m.FakeBenchmark):\n"
                 "    def run_command(self, *, policy_address, **kw):\n"
@@ -169,7 +169,7 @@ def test_check_hands_run_command_an_address_in_the_wire_form(
         },
     )
     spec = write_spec(
-        fake_spec_doc(spec_doc, {**FAKE_PIN, "distribution": "icil-variant-benchmark"})
+        fake_spec_doc(spec_doc, {**FAKE_PIN, "distribution": "vector-variant-benchmark"})
     )
     assert check_benchmark(spec, "fake").problems == []
 
@@ -185,7 +185,7 @@ def test_python_dash_m_runs_the_same_cli(fake_spec):
         [
             sys.executable,
             "-m",
-            "icil_orchestrator",
+            "vector_orchestrator",
             "--spec",
             str(fake_spec.path),
             "benchmarks",

@@ -1,6 +1,6 @@
 """Driving a benchmark this process cannot import.
 
-The fake benchmark's `run_command` is a real subprocess (`icil_fake_benchmark/command.py`) writing a
+The fake benchmark's `run_command` is a real subprocess (`vector_fake_benchmark/command.py`) writing a
 real result file, so the path under test is the one a duel takes - not a mock of it.
 """
 
@@ -14,17 +14,17 @@ import time
 
 import pytest
 
-from icil_orchestrator.benchmarks import subprocess_runner as runner
+from vector_orchestrator.benchmarks import subprocess_runner as runner
 
-AUTHKEY_ENV = "ICIL_TEST_POLICY_AUTHKEY"
+AUTHKEY_ENV = "VECTOR_TEST_POLICY_AUTHKEY"
 AUTHKEY = "00112233445566778899aabbccddeeff"
 
 
 @pytest.fixture
 def fake(fake_installed):
-    import icil_fake_benchmark
+    import vector_fake_benchmark
 
-    return icil_fake_benchmark.BENCHMARK
+    return vector_fake_benchmark.BENCHMARK
 
 
 def unit(n: int, behaviour: str = "succeed", prompt: str = "/prompts/p.npz") -> dict:
@@ -44,7 +44,7 @@ def run(fake, units, tmp_path, timeout_s=30.0, env=None):
         fake,
         units,
         work_root=tmp_path / "units",
-        policy_address="/tmp/icil-test-policy.sock",
+        policy_address="/tmp/vector-test-policy.sock",
         authkey_env=AUTHKEY_ENV,
         timeout_s=timeout_s,
         env={"PATH": "/usr/bin:/bin", AUTHKEY_ENV: AUTHKEY} if env is None else env,
@@ -100,7 +100,7 @@ def test_the_side_wall_clock_voids_the_units_left_when_it_runs_out(fake, tmp_pat
         fake,
         [unit(0, "hang"), unit(1), unit(2)],
         work_root=tmp_path / "units",
-        policy_address="/tmp/icil-test-policy.sock",
+        policy_address="/tmp/vector-test-policy.sock",
         authkey_env=AUTHKEY_ENV,
         timeout_s=1.0,
         env={"PATH": "/usr/bin:/bin", AUTHKEY_ENV: AUTHKEY},
@@ -272,7 +272,7 @@ def test_by_default_the_benchmark_sees_an_allow_listed_environment(fake, tmp_pat
     """The benchmark parses a hostile policy's replies; it has no use for the credentials that
     publish results, and must not hold them."""
     monkeypatch.setenv("HF_TOKEN", "hf_publish_secret")
-    monkeypatch.setenv("ICIL_LIVE_TOKEN", "live_secret")
+    monkeypatch.setenv("VECTOR_LIVE_TOKEN", "live_secret")
     monkeypatch.setenv("LC_ALL", "C.UTF-8")
     monkeypatch.setenv(AUTHKEY_ENV, AUTHKEY)
 
@@ -290,13 +290,13 @@ def test_by_default_the_benchmark_sees_an_allow_listed_environment(fake, tmp_pat
         unit(0),
         prompt="/prompts/p.npz",
         out_dir=tmp_path / "u",
-        policy_address="/tmp/icil-test-policy.sock",
+        policy_address="/tmp/vector-test-policy.sock",
         authkey_env=AUTHKEY_ENV,
         timeout_s=30,
     )
     assert not outcome.void, outcome.error
     seen = json.loads((tmp_path / "u" / "env.json").read_text())
-    assert "HF_TOKEN" not in seen and "ICIL_LIVE_TOKEN" not in seen
+    assert "HF_TOKEN" not in seen and "VECTOR_LIVE_TOKEN" not in seen
     assert seen[AUTHKEY_ENV] == AUTHKEY and seen["PATH"] and seen["LC_ALL"] == "C.UTF-8"
     kept = runner.benchmark_environment({"PATH": "/bin", "MUJOCO_GL": "egl", "X": "1"}, "K", ("X",))
     assert kept == {"PATH": "/bin", "MUJOCO_GL": "egl", "X": "1"}
@@ -307,8 +307,8 @@ def test_the_benchmark_is_given_robotwins_interpreter_and_denoiser_but_no_secret
 ):
     """RoboTwin's commands read the simulator environment's interpreter and the denoiser a host
     must render with from these two variables, in the subprocess as where its argv is built."""
-    monkeypatch.setenv("ROBOTWIN_ICIL_PYTHON", "/opt/robotwin/bin/python")
-    monkeypatch.setenv("ROBOTWIN_ICIL_DENOISER", "none")
+    monkeypatch.setenv("ROBOTWIN_BENCH_PYTHON", "/opt/robotwin/bin/python")
+    monkeypatch.setenv("ROBOTWIN_BENCH_DENOISER", "none")
     monkeypatch.setenv("HF_TOKEN", "hf_publish_secret")
     monkeypatch.setenv(AUTHKEY_ENV, AUTHKEY)
     outcome = runner.run_unit(
@@ -316,18 +316,18 @@ def test_the_benchmark_is_given_robotwins_interpreter_and_denoiser_but_no_secret
         unit(0),
         prompt="/prompts/p.npz",
         out_dir=tmp_path / "u",
-        policy_address="/tmp/icil-test-policy.sock",
+        policy_address="/tmp/vector-test-policy.sock",
         authkey_env=AUTHKEY_ENV,
         timeout_s=30,
     )
     assert not outcome.void, outcome.error
     given = (tmp_path / "u" / "given.json").read_text()
     seen = json.loads(given)["environ"]
-    assert seen["ROBOTWIN_ICIL_PYTHON"] == "/opt/robotwin/bin/python"
-    assert seen["ROBOTWIN_ICIL_DENOISER"] == "none"
+    assert seen["ROBOTWIN_BENCH_PYTHON"] == "/opt/robotwin/bin/python"
+    assert seen["ROBOTWIN_BENCH_DENOISER"] == "none"
     assert "HF_TOKEN" not in seen and "hf_publish_secret" not in given
-    monkeypatch.delenv("ROBOTWIN_ICIL_DENOISER")
-    assert "ROBOTWIN_ICIL_DENOISER" not in runner.benchmark_environment(os.environ, AUTHKEY_ENV)
+    monkeypatch.delenv("ROBOTWIN_BENCH_DENOISER")
+    assert "ROBOTWIN_BENCH_DENOISER" not in runner.benchmark_environment(os.environ, AUTHKEY_ENV)
 
 
 def test_a_unit_with_no_materialized_prompt_is_void_rather_than_run(fake, tmp_path):
@@ -405,7 +405,7 @@ def test_the_log_tail_reads_only_the_end_of_a_huge_log(tmp_path):
         "import resource, sys\n"
         "resource.setrlimit(resource.RLIMIT_AS, (1 << 30, 1 << 30))\n"
         "from pathlib import Path\n"
-        "from icil_orchestrator.benchmarks.subprocess_runner import _tail\n"
+        "from vector_orchestrator.benchmarks.subprocess_runner import _tail\n"
         f"print(_tail(Path({str(log)!r})))\n"
     )
     done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60)

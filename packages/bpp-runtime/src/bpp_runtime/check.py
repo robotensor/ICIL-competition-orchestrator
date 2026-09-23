@@ -129,7 +129,7 @@ def check(
     return report
 
 
-#: The name `icil_orchestrator.duel.weights_runtime` calls it by.
+#: The name `vector_orchestrator.duel.weights_runtime` calls it by.
 check_weights = check
 
 

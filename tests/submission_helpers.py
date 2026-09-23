@@ -13,13 +13,13 @@ from typing import Any
 import httpx
 from huggingface_hub.errors import RepositoryNotFoundError, RevisionNotFoundError
 
-from icil_orchestrator.submissions.docker import (
+from vector_orchestrator.submissions.docker import (
     BuildFailed,
     BuildTimedOut,
     ContainerInfo,
     ContainerState,
 )
-from icil_orchestrator.submissions.image import INDEX_PROBE_IMAGE
+from vector_orchestrator.submissions.image import INDEX_PROBE_IMAGE
 
 SHA_A = "a" * 40
 SHA_B = "b" * 40
@@ -226,8 +226,8 @@ class ProbeBuild:
 @dataclass
 class FakeDocker:
     """`Docker` without Docker: builds are recorded and given an id, and `run` starts
-    `python -m icil_policy.serve` on the host, with the image's checkout in place of /submission
-    and the mounted directory in place of /run/icil, so the start-and-hello path runs for real.
+    `python -m vector_policy.serve` on the host, with the image's checkout in place of /submission
+    and the mounted directory in place of /run/vector, so the start-and-hello path runs for real.
     An index probe (a build tagged `INDEX_PROBE_IMAGE`) is kept apart in `probes`, and reaches
     the index while `index_reachable` says so."""
 
@@ -319,7 +319,7 @@ class FakeDocker:
         # the server runs directly.
         command = command[command.index("python") :]
         argv = [
-            a.replace("/submission", str(checkout)).replace("/run/icil", shared) for a in command
+            a.replace("/submission", str(checkout)).replace("/run/vector", shared) for a in command
         ]
         argv[0] = sys.executable
         environ = {"PATH": os.environ.get("PATH", ""), **(env or {})}
@@ -344,7 +344,7 @@ class FakeDocker:
         return [
             ContainerInfo(name, self.state(name).running, dict(labels))
             for name, labels in self.labels.items()
-            if labels.get("icil.orchestrator") == "policy"
+            if labels.get("vector.orchestrator") == "policy"
         ]
 
     def logs(self, name, *, tail_lines=40):

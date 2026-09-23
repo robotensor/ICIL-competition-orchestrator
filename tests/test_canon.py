@@ -1,4 +1,4 @@
-from icil_orchestrator.canon import (
+from vector_orchestrator.canon import (
     Signer,
     canonical_json,
     canonical_sha256,

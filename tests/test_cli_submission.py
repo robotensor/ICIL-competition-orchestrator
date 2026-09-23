@@ -1,4 +1,4 @@
-"""`icil-orchestrator submission check|build-base`, with Docker stood in for.
+"""`vector-orchestrator submission check|build-base`, with Docker stood in for.
 
 The fake starts the real policy server on the host in the container's place, so `check` on the
 replay example goes through every step - resolve, fetch, manifest, build, start, hello - and the
@@ -13,20 +13,20 @@ from pathlib import Path
 
 import pytest
 
-from icil_orchestrator.cli import main
-from icil_orchestrator.ids import is_commit_sha
-from icil_orchestrator.submissions.check import BUILD_TIMEOUT_S, STEPS, check_submission
-from icil_orchestrator.submissions.fetch import LocalFetcher, RepoCache
 from submission_helpers import FAKE_BASE_DIGEST, FakeDocker, pip_unreachable_log
+from vector_orchestrator.cli import main
+from vector_orchestrator.ids import is_commit_sha
+from vector_orchestrator.submissions.check import BUILD_TIMEOUT_S, STEPS, check_submission
+from vector_orchestrator.submissions.fetch import LocalFetcher, RepoCache
 
-EXAMPLE = Path(__file__).resolve().parents[1] / "packages/icil-policy/examples/replay_policy"
+EXAMPLE = Path(__file__).resolve().parents[1] / "packages/vector-policy/examples/replay_policy"
 
 
 @pytest.fixture
 def fake_docker(monkeypatch):
     fake = FakeDocker()
     fake.images["icil-policy-base:latest"] = FAKE_BASE_DIGEST
-    monkeypatch.setattr("icil_orchestrator.submissions.docker.Docker", lambda *a, **k: fake)
+    monkeypatch.setattr("vector_orchestrator.submissions.docker.Docker", lambda *a, **k: fake)
     yield fake
     fake.kill_all()
 
@@ -121,8 +121,8 @@ def test_check_rejects_requirements_that_do_not_install_and_runs_nothing(
     sandbox_spec, fake_docker, tmp_path, capsys
 ):
     broken = shutil.copytree(EXAMPLE, tmp_path / "broken")
-    (broken / "requirements.txt").write_text("icil-no-such-package==99.0\n")
-    fake_docker.build_failure = "ERROR: No matching distribution found for icil-no-such-package"
+    (broken / "requirements.txt").write_text("vector-no-such-package==99.0\n")
+    fake_docker.build_failure = "ERROR: No matching distribution found for vector-no-such-package"
     code = check(
         sandbox_spec,
         tmp_path,
@@ -262,20 +262,20 @@ def test_prune_removes_the_submission_images_no_container_uses(
     assert check(sandbox_spec, tmp_path, "local/replay_policy@main", "--local", str(EXAMPLE),
                  "--base-image", FAKE_BASE_DIGEST) == 0  # fmt: skip
     capsys.readouterr()
-    (checked,) = [ref for ref in fake_docker.images if ref.startswith("icil-submission:")]
-    fake_docker.images["icil-submission:in-use"] = "sha256:" + "c" * 64
-    fake_docker.container_images["icil-policy-running"] = "icil-submission:in-use"
+    (checked,) = [ref for ref in fake_docker.images if ref.startswith("vector-submission:")]
+    fake_docker.images["vector-submission:in-use"] = "sha256:" + "c" * 64
+    fake_docker.container_images["vector-policy-running"] = "vector-submission:in-use"
 
     assert main(["submission", "prune"]) == 0
     out = capsys.readouterr().out.splitlines()
     assert out[0] == f"removed {checked}"
-    assert out[1].startswith("kept    icil-submission:in-use: conflict")
-    assert checked not in fake_docker.images and "icil-submission:in-use" in fake_docker.images
+    assert out[1].startswith("kept    vector-submission:in-use: conflict")
+    assert checked not in fake_docker.images and "vector-submission:in-use" in fake_docker.images
     assert fake_docker.images["icil-policy-base:latest"] == FAKE_BASE_DIGEST
 
-    del fake_docker.container_images["icil-policy-running"]
+    del fake_docker.container_images["vector-policy-running"]
     assert main(["submission", "prune", "--json"]) == 0
     assert json.loads(capsys.readouterr().out) == {
-        "removed": ["icil-submission:in-use"],
+        "removed": ["vector-submission:in-use"],
         "kept": {},
     }

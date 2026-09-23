@@ -11,26 +11,26 @@ import pytest
 
 from conftest import fake_spec_doc
 from duel_helpers import REPLAY_REF, ZERO_REF, Crash, FakePolicyRuntime
-from icil_orchestrator.benchmarks.subprocess_runner import Outcome, voided
-from icil_orchestrator.benchmarks.units import plugin_units
-from icil_orchestrator.duel.materialize import materialize_units
-from icil_orchestrator.duel.runtime import (
+from vector_orchestrator.benchmarks.subprocess_runner import Outcome, voided
+from vector_orchestrator.benchmarks.units import plugin_units
+from vector_orchestrator.duel.materialize import materialize_units
+from vector_orchestrator.duel.runtime import (
     HARNESS,
     POLICY,
     PolicyDied,
     PolicyEnd,
     RuntimeUnavailable,
 )
-from icil_orchestrator.duel.side import RESULTS_FILE, attribute, read_results, run_side
+from vector_orchestrator.duel.side import RESULTS_FILE, attribute, read_results, run_side
 
 TRACK = "franka_1arm"
 
 
 @pytest.fixture
 def fake(fake_installed):
-    import icil_fake_benchmark
+    import vector_fake_benchmark
 
-    return icil_fake_benchmark.BENCHMARK
+    return vector_fake_benchmark.BENCHMARK
 
 
 @pytest.fixture
@@ -240,7 +240,7 @@ def test_an_interrupted_unit_is_reaped_and_moved_aside_before_it_runs_again(
 ):
     import subprocess
 
-    from icil_orchestrator.duel.orphans import Ledger
+    from vector_orchestrator.duel.orphans import Ledger
 
     first = units[0]["unit_id"]
     unit_dir = tmp_path / "challenger" / first
@@ -312,7 +312,7 @@ def test_a_unit_the_benchmark_says_ran_from_another_prompt_is_void(
 def test_starting_the_policy_is_taken_from_its_units_budget_and_counted_in_its_wall_time(
     duel_spec, fake, units, prompts, tmp_path, monkeypatch
 ):
-    from icil_orchestrator.duel import side as side_module
+    from vector_orchestrator.duel import side as side_module
 
     timeouts = []
     run_unit = side_module.run_unit
@@ -416,7 +416,7 @@ def test_a_slow_policy_that_uses_up_its_budget_fails_its_unit_rather_than_voidin
     """Every act is well within `act_timeout_s`, but together they run past the policy's budget:
     the benchmark ends the unit on the policy, and the side fails it. Were the budget the unit's
     whole time, the benchmark's deadline would come first, and the unit be void for both sides."""
-    from icil_orchestrator.ids import SubmissionRef
+    from vector_orchestrator.ids import SubmissionRef
 
     slow = SubmissionRef.make("org/slow-policy", "6" * 40)
     doc = fake_spec_doc(spec_doc)

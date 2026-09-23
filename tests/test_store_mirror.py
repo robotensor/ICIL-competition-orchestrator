@@ -7,9 +7,9 @@ from types import SimpleNamespace
 import huggingface_hub
 import pytest
 
-from icil_orchestrator.canon import Signer
-from icil_orchestrator.store import mirror
-from icil_orchestrator.store.writer import Store, store_lock
+from vector_orchestrator.canon import Signer
+from vector_orchestrator.store import mirror
+from vector_orchestrator.store.writer import Store, store_lock
 
 
 class FakeApi:
@@ -114,7 +114,7 @@ def test_an_empty_directory_never_empties_the_repository(tmp_path, api):
 
 
 def test_the_cli_mirrors_a_store(store, api, capsys):
-    from icil_orchestrator.cli import main
+    from vector_orchestrator.cli import main
 
     assert main(["store", "mirror", str(store.root), "--repo", "org/store", "--prune"]) == 0
     assert capsys.readouterr().out.strip() == "mirrored 2 files to org/store"

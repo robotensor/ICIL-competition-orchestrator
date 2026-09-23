@@ -1,4 +1,4 @@
-"""`icil-orchestrator admin serve`: what stops it starting, and the console script answering."""
+"""`vector-orchestrator admin serve`: what stops it starting, and the console script answering."""
 
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from icil_orchestrator import admin
-from icil_orchestrator.cli import build_parser, main
+from vector_orchestrator import admin
+from vector_orchestrator.cli import build_parser, main
 
 TOKEN = "tok-cli-51d2e0a4c9e7-never-in-a-log"
 
@@ -34,19 +34,19 @@ def test_admin_serve_does_not_start_without_a_token_or_a_store(tmp_path, capsys,
     capsys.readouterr()
     base = ["admin", "serve", "--store", str(store), "--queue", str(tmp_path / "queue")]
 
-    monkeypatch.delenv("ICIL_ADMIN_TOKEN", raising=False)
+    monkeypatch.delenv("VECTOR_ADMIN_TOKEN", raising=False)
     assert main([*base, "--port", "0"]) == 2
-    assert "ICIL_ADMIN_TOKEN is not set" in capsys.readouterr().err
-    monkeypatch.setenv("ICIL_OTHER_TOKEN", "  ")
-    assert main([*base, "--port", "0", "--token-env", "ICIL_OTHER_TOKEN"]) == 2
-    assert "ICIL_OTHER_TOKEN is not set" in capsys.readouterr().err
+    assert "VECTOR_ADMIN_TOKEN is not set" in capsys.readouterr().err
+    monkeypatch.setenv("VECTOR_OTHER_TOKEN", "  ")
+    assert main([*base, "--port", "0", "--token-env", "VECTOR_OTHER_TOKEN"]) == 2
+    assert "VECTOR_OTHER_TOKEN is not set" in capsys.readouterr().err
     # A token that can be guessed is no token.
-    monkeypatch.setenv("ICIL_ADMIN_TOKEN", "dev-token")
+    monkeypatch.setenv("VECTOR_ADMIN_TOKEN", "dev-token")
     assert main([*base, "--port", "0"]) == 2
     err = capsys.readouterr().err
-    assert "ICIL_ADMIN_TOKEN" in err and "32" in err and "dev-token" not in err
+    assert "VECTOR_ADMIN_TOKEN" in err and "32" in err and "dev-token" not in err
 
-    monkeypatch.setenv("ICIL_ADMIN_TOKEN", TOKEN)
+    monkeypatch.setenv("VECTOR_ADMIN_TOKEN", TOKEN)
     not_a_store = ["admin", "serve", "--store", str(tmp_path / "nothing"), "--port", "0"]
     assert main(not_a_store) == 2
     err = capsys.readouterr().err
@@ -56,14 +56,14 @@ def test_admin_serve_does_not_start_without_a_token_or_a_store(tmp_path, capsys,
 def test_the_console_script_serves_health_on_loopback(tmp_path):
     store = tmp_path / "store"
     assert main(["store", "init", str(store), "--key", str(tmp_path / "key")]) == 0
-    script = Path(sysconfig.get_path("scripts")) / "icil-orchestrator"
+    script = Path(sysconfig.get_path("scripts")) / "vector-orchestrator"
     command = [str(script), "admin", "serve", "--store", str(store), "--port", "0"]
     proc = subprocess.Popen(
-        [*command, "--queue", str(tmp_path / "queue"), "--token-env", "ICIL_TEST_ADMIN_TOKEN"],
+        [*command, "--queue", str(tmp_path / "queue"), "--token-env", "VECTOR_TEST_ADMIN_TOKEN"],
         stderr=subprocess.PIPE,
         text=True,
         cwd=tmp_path,
-        env={**os.environ, "ICIL_TEST_ADMIN_TOKEN": TOKEN},
+        env={**os.environ, "VECTOR_TEST_ADMIN_TOKEN": TOKEN},
     )
     lines: list[str] = []
     listening = threading.Event()

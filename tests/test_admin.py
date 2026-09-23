@@ -1,4 +1,4 @@
-"""The submission intake (`icil_orchestrator.admin`) over real HTTP, with the Hub stood in for."""
+"""The submission intake (`vector_orchestrator.admin`) over real HTTP, with the Hub stood in for."""
 
 from __future__ import annotations
 
@@ -14,14 +14,14 @@ from typing import Any
 import httpx
 import pytest
 
-from icil_orchestrator import admin
-from icil_orchestrator.admin import MAX_BODY_BYTES, AdminServer
-from icil_orchestrator.cli import main
-from icil_orchestrator.ids import SubmissionRef, is_commit_sha
-from icil_orchestrator.queue import Queue, Queues
-from icil_orchestrator.store.writer import Store
 from store_helpers import TRACK
 from submission_helpers import SHA_A, SHA_B, FakeHub
+from vector_orchestrator import admin
+from vector_orchestrator.admin import MAX_BODY_BYTES, AdminServer
+from vector_orchestrator.cli import main
+from vector_orchestrator.ids import SubmissionRef, is_commit_sha
+from vector_orchestrator.queue import Queue, Queues
+from vector_orchestrator.store.writer import Store
 
 TOKEN = "tok-3f9a1c7e5b2d8f60-never-in-a-log"
 HEALTH = "/admin/health"
@@ -577,7 +577,7 @@ def test_a_log_line_moves_no_cursor_and_keeps_no_part_of_the_token(server, caplo
             until_closed(sock, 3)
     # A token in the path, across where a log line's path used to be cut.
     call(server, "GET", "/admin/" + "a" * 181 + TOKEN)
-    lines = [r.getMessage() for r in caplog.records if r.name == "icil_orchestrator.admin"]
+    lines = [r.getMessage() for r in caplog.records if r.name == "vector_orchestrator.admin"]
     assert any("\\x1b[2J" in line for line in lines), lines
     controls = [line for line in lines if any(ch < " " or "\x7f" <= ch < "\xa0" for ch in line)]
     assert controls == []

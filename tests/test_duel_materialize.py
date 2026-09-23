@@ -9,9 +9,9 @@ from pathlib import Path
 
 import pytest
 
-from icil_orchestrator.benchmarks.units import plugin_units
-from icil_orchestrator.canon import sha256_file
-from icil_orchestrator.duel.materialize import (
+from vector_orchestrator.benchmarks.units import plugin_units
+from vector_orchestrator.canon import sha256_file
+from vector_orchestrator.duel.materialize import (
     MANIFEST_FILE,
     materialize_units,
     read_manifest,
@@ -22,9 +22,9 @@ TRACK = "franka_1arm"
 
 @pytest.fixture
 def fake(fake_installed):
-    import icil_fake_benchmark
+    import vector_fake_benchmark
 
-    return icil_fake_benchmark.BENCHMARK
+    return vector_fake_benchmark.BENCHMARK
 
 
 @pytest.fixture

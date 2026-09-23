@@ -1,6 +1,6 @@
 """The duel's runtime seam over the submission sandbox, with `FakeDocker` in Docker's place.
 
-`FakeDocker.run` starts the real `python -m icil_policy.serve` on the host where the container
+`FakeDocker.run` starts the real `python -m vector_policy.serve` on the host where the container
 would be, so a whole duel runs through the adapter: fetch, manifest, image, health check and one
 container per unit. `pytest -m container` runs the same duel with Docker itself.
 """
@@ -23,22 +23,22 @@ from duel_helpers import (
     InspectingFakeDocker,
     RecordingReporter,
 )
-from icil_orchestrator.canon import Signer
-from icil_orchestrator.duel.docker_runtime import DockerPolicyRuntime
-from icil_orchestrator.duel.orchestrate import DuelRequest, Orchestrator
-from icil_orchestrator.duel.runtime import (
+from store_helpers import make_record, publish
+from submission_helpers import FAKE_BASE_DIGEST
+from vector_orchestrator.canon import Signer
+from vector_orchestrator.duel.docker_runtime import DockerPolicyRuntime
+from vector_orchestrator.duel.orchestrate import DuelRequest, Orchestrator
+from vector_orchestrator.duel.runtime import (
     PolicyDied,
     PolicyRuntime,
     RuntimeUnavailable,
     SubmissionRefused,
 )
-from icil_orchestrator.store.verify import verify_store
-from icil_orchestrator.store.writer import Store
-from icil_orchestrator.submissions.container import AUTHKEY_ENV, Owner, run_argv
-from icil_orchestrator.submissions.docker import ContainerState
-from icil_orchestrator.submissions.fetch import tree_hash
-from store_helpers import make_record, publish
-from submission_helpers import FAKE_BASE_DIGEST
+from vector_orchestrator.store.verify import verify_store
+from vector_orchestrator.store.writer import Store
+from vector_orchestrator.submissions.container import AUTHKEY_ENV, Owner, run_argv
+from vector_orchestrator.submissions.docker import ContainerState
+from vector_orchestrator.submissions.fetch import tree_hash
 
 TRACK = "franka_1arm"
 
@@ -123,7 +123,7 @@ def test_a_duel_runs_through_the_sandbox_one_container_per_unit(
     # Two health checks, then one container for each unit of each side, every one removed.
     names = [args[args.index("--name") + 1] for args in docker.runs]
     assert len(names) == 2 + 2 * len(result.units)
-    assert all(name.startswith("icil-duel-") for name in names)
+    assert all(name.startswith("vector-duel-") for name in names)
     assert sorted(docker.removed) == sorted(names) and docker.processes == {}
     shared_dirs = set()
     for args in docker.runs:
@@ -241,7 +241,7 @@ def test_only_a_socket_itself_counts_as_a_units_policy_listening(spec, docker, t
     runtime = runtime_for(spec, docker, tmp_path)
     runtime.docker = SimpleNamespace(state=lambda name: ContainerState(True, None))
     runtime.start_timeout_s = 0.3
-    container = SimpleNamespace(name="icil-duel-link", socket_path=tmp_path / "policy.sock")
+    container = SimpleNamespace(name="vector-duel-link", socket_path=tmp_path / "policy.sock")
     elsewhere, served = socket.socket(socket.AF_UNIX), socket.socket(socket.AF_UNIX)
     try:
         elsewhere.bind(str(tmp_path / "elsewhere.sock"))

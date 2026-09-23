@@ -6,16 +6,16 @@ import copy
 import json
 from pathlib import Path
 
-from icil_orchestrator.ids import SubmissionRef, event_id
-from icil_orchestrator.spec import load_spec_file
-from icil_orchestrator.store.records import (
+from vector_orchestrator.ids import SubmissionRef, event_id
+from vector_orchestrator.spec import load_spec_file
+from vector_orchestrator.store.records import (
     duel_event,
     empty_skill_scores,
     index_record,
     media_shas,
     unit_tally,
 )
-from icil_orchestrator.store.writer import Store
+from vector_orchestrator.store.writer import Store
 
 TRACK = "franka_1arm"
 FINISHED = "2026-09-13T12:00:00Z"

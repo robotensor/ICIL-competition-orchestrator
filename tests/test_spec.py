@@ -1,8 +1,8 @@
 import pytest
 
-from icil_orchestrator.spec import SpecError, load_schema, validate_spec
+from vector_orchestrator.spec import SpecError, load_schema, validate_spec
 
-#: The categories in robotensor/ICIL-robotwin-benchmark `src/robotwin_icil/tasks.yml`. A skill's
+#: The categories in robotensor/RoboTwin-Vector `bench/src/robotwin_bench/tasks.yml`. A skill's
 #: category is passed to the benchmark's `derive_units`, so a typo would derive nothing.
 ROBOTWIN_CATEGORIES = {
     "pick_and_place",
@@ -45,7 +45,7 @@ def test_the_weights_era_blocks_are_gone(spec):
 
 
 def test_the_dashboard_accepts_the_contract(spec):
-    """The checks `validateSpec` in robofluent/ICIL-competition-dashboard `lib/spec.ts` (branch
+    """The checks `validateSpec` in robotensor/robotensor-competition-dashboard `lib/spec.ts` (branch
     milestone-two-contests) and `scripts/sync-spec.mjs` make at build time. A contract failing
     them would not build the site."""
     raw = spec.raw
@@ -152,9 +152,9 @@ def test_the_scratch_tmpfs_is_capped_and_says_whether_it_runs_code(spec, spec_do
     needs, and each gets `tmpfs_bytes`, so all of them together fit in `memory_bytes`."""
     import copy
 
-    from icil_orchestrator.spec import SANDBOX_RESERVED_PATHS
-    from icil_orchestrator.submissions.container import SOCKET_DIR
-    from icil_orchestrator.submissions.image import SUBMISSION_DIR
+    from vector_orchestrator.spec import SANDBOX_RESERVED_PATHS
+    from vector_orchestrator.submissions.container import SOCKET_DIR
+    from vector_orchestrator.submissions.image import SUBMISSION_DIR
 
     sandbox = spec.submission["sandbox"]
     memory = sandbox["memory_bytes"]
@@ -188,7 +188,7 @@ def test_the_scratch_tmpfs_is_capped_and_says_whether_it_runs_code(spec, spec_do
         ({"tmpfs": ["/dev/shm"]}, reserved),
         ({"tmpfs": ["/submission"]}, reserved),
         ({"tmpfs": ["/submission/cache"]}, reserved),
-        ({"tmpfs": ["/run/icil"]}, reserved),
+        ({"tmpfs": ["/run/vector"]}, reserved),
         ({"tmpfs_exec": "yes"}, "submission.sandbox.tmpfs_exec bool"),
         ({"tmpfs_exec": None}, "submission.sandbox.tmpfs_exec bool"),
         ({"tmpfs_bytes": 0}, size),

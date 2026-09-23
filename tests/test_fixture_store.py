@@ -1,5 +1,5 @@
 """The committed fixture store is what the orchestrator writes today, verifies, and reads the way
-the dashboard's `lib/store.ts` (robofluent/ICIL-competition-dashboard, milestone-two-contests)
+the dashboard's `lib/store.ts` (robotensor/robotensor-competition-dashboard, milestone-two-contests)
 reads a store."""
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from icil_orchestrator.store.verify import verify_store
+from vector_orchestrator.store.verify import verify_store
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 STORE = FIXTURES / "store"
@@ -61,7 +61,7 @@ def test_the_dashboard_can_read_the_fixture_store(spec):
     assert [r["kind"] for r in records] == ["genesis", "duel"]
 
     duel = records[-1]
-    assert duel["dethroned"] and duel["new_king"]["repo"] == "robotensor/icil-replay-policy"
+    assert duel["dethroned"] and duel["new_king"]["repo"] == "robotensor/vector-replay-policy"
     assert head["king"] == duel["new_king"]
     for record in records:
         assert EVENT_ID.match(record["event_id"])
@@ -75,5 +75,5 @@ def test_the_dashboard_can_read_the_fixture_store(spec):
 
     queue = json.loads((STORE / "tracks" / track / "queue.json").read_text())
     assert [(e["repo"], e["position"]) for e in queue["entries"]] == [
-        ("robotensor/icil-example-policy", 1)
+        ("robotensor/vector-example-policy", 1)
     ]

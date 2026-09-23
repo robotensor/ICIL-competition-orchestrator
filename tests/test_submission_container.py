@@ -18,30 +18,30 @@ from pathlib import Path
 
 import pytest
 
-from icil_orchestrator.cli import main
-from icil_orchestrator.ids import is_commit_sha
-from icil_orchestrator.submissions.check import check_submission
-from icil_orchestrator.submissions.checks import check_repository
-from icil_orchestrator.submissions.container import (
+from submission_helpers import pip_unreachable_log
+from vector_orchestrator.cli import main
+from vector_orchestrator.ids import is_commit_sha
+from vector_orchestrator.submissions.check import check_submission
+from vector_orchestrator.submissions.checks import check_repository
+from vector_orchestrator.submissions.container import (
     SHARED_DIR_BYTES,
     SHARED_DIR_INODES,
     PolicyContainer,
     is_shared_mount,
 )
-from icil_orchestrator.submissions.docker import CONTAINER_LABEL, Docker, DockerError
-from icil_orchestrator.submissions.fetch import LocalFetcher, RepoCache
-from icil_orchestrator.submissions.image import (
+from vector_orchestrator.submissions.docker import CONTAINER_LABEL, Docker, DockerError
+from vector_orchestrator.submissions.fetch import LocalFetcher, RepoCache
+from vector_orchestrator.submissions.image import (
     INDEX_PROBE_IMAGE,
     build_base_image,
     build_submission_image,
     probe_index,
 )
-from submission_helpers import pip_unreachable_log
 
 pytestmark = pytest.mark.container
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-EXAMPLE = REPO_ROOT / "packages/icil-policy/examples/replay_policy"
+EXAMPLE = REPO_ROOT / "packages/vector-policy/examples/replay_policy"
 
 
 @pytest.fixture(scope="module")
@@ -88,7 +88,12 @@ def running(spec, docker, replay, tmp_path):
     """A policy container serving the replay example, past `hello`, with no GPU."""
     _, _, image = replay
     container = PolicyContainer(
-        spec, docker, image.tag, name="icil-policy-test-running", socket_dir=tmp_path / "s", gpus=0
+        spec,
+        docker,
+        image.tag,
+        name="vector-policy-test-running",
+        socket_dir=tmp_path / "s",
+        gpus=0,
     )
     try:
         container.hello(spec.budgets["policy_start_seconds"])
@@ -104,7 +109,7 @@ def inside(container: PolicyContainer, code: str) -> subprocess.CompletedProcess
 # -- the whole path -----------------------------------------------------------------------------
 
 
-def test_the_base_image_is_the_specs_name_with_python_and_icil_policy(docker, spec, base):
+def test_the_base_image_is_the_specs_name_with_python_and_vector_policy(docker, spec, base):
     assert base.image_id.startswith("sha256:") and base.base.digest == base.image_id
     assert base.base.name == spec.submission["base_image"]["name"]
     assert docker.image_id(base.base.tag) == base.image_id
@@ -117,7 +122,7 @@ def test_the_base_image_is_the_specs_name_with_python_and_icil_policy(docker, sp
             base.base.tag,
             "python",
             "-c",
-            "import sys, icil_policy; print(sys.version_info[:2], icil_policy.__version__)",
+            "import sys, vector_policy; print(sys.version_info[:2], vector_policy.__version__)",
         ]
     )
     assert done.stdout.strip().startswith("(3, 10) ")
@@ -155,7 +160,7 @@ def test_submission_check_on_the_replay_example_resolves_builds_and_says_hello(
     assert report["side"]["base_image"] == base.base.digest
     assert report["side"]["image"].startswith("sha256:")
     assert report["listening_after_s"] < spec.budgets["policy_start_seconds"]
-    assert "icil-policy-" not in " ".join(containers(docker)), "the container is gone"
+    assert "vector-policy-" not in " ".join(containers(docker)), "the container is gone"
     # --work keeps the log after the shared directory's tmpfs is released.
     shared = tmp_path / "work" / "policy"
     assert not is_shared_mount(shared) and "listening on" in (shared / "policy.log").read_text()
@@ -177,10 +182,10 @@ def test_a_container_whose_owner_was_killed_before_hello_is_reaped_by_the_next_s
             "-c",
             "import sys, time\n"
             "from pathlib import Path\n"
-            "from icil_orchestrator.spec import load_spec\n"
-            "from icil_orchestrator.submissions.container import PolicyContainer\n"
-            "from icil_orchestrator.submissions.docker import Docker\n"
-            "c = PolicyContainer(load_spec(), Docker(), sys.argv[1], name='icil-policy-test-orphan',"
+            "from vector_orchestrator.spec import load_spec\n"
+            "from vector_orchestrator.submissions.container import PolicyContainer\n"
+            "from vector_orchestrator.submissions.docker import Docker\n"
+            "c = PolicyContainer(load_spec(), Docker(), sys.argv[1], name='vector-policy-test-orphan',"
             " socket_dir=Path(sys.argv[2]), gpus=0)\n"
             "c.start()\n"
             "print('started', flush=True)\n"
@@ -196,17 +201,17 @@ def test_a_container_whose_owner_was_killed_before_hello_is_reaped_by_the_next_s
     finally:
         child.kill()
         child.wait()
-    assert "icil-policy-test-orphan" in containers(docker)
-    assert docker.state("icil-policy-test-orphan").running, "the server waits for ever"
+    assert "vector-policy-test-orphan" in containers(docker)
+    assert docker.state("vector-policy-test-orphan").running, "the server waits for ever"
     if os.geteuid() == 0:
         assert is_shared_mount(shared)
     with PolicyContainer(
-        spec, docker, image.tag, name="icil-policy-test-next", socket_dir=tmp_path / "s", gpus=0
+        spec, docker, image.tag, name="vector-policy-test-next", socket_dir=tmp_path / "s", gpus=0
     ) as container:
-        assert "icil-policy-test-orphan" in container.reaped
-        assert "icil-policy-test-orphan" not in containers(docker)
+        assert "vector-policy-test-orphan" in container.reaped
+        assert "vector-policy-test-orphan" not in containers(docker)
         assert not is_shared_mount(shared), "its tmpfs went with it"
-        assert "icil-policy-test-next" in containers(docker), "not the one it started"
+        assert "vector-policy-test-next" in containers(docker), "not the one it started"
 
 
 # -- from inside --------------------------------------------------------------------------------
@@ -232,8 +237,8 @@ def test_writing_outside_tmp_fails_and_inside_it_works(running):
         assert done.returncode != 0 and any(r in done.stderr for r in refused), (path, done.stderr)
     done = inside(running, "open('/tmp/x', 'w').write('x'); print(open('/tmp/x').read())")
     assert done.returncode == 0 and done.stdout.strip() == "x", done.stderr
-    # /run/icil is the socket directory: writable on purpose, and this container's alone.
-    done = inside(running, "import os\nprint(sorted(os.listdir('/run/icil')))")
+    # /run/vector is the socket directory: writable on purpose, and this container's alone.
+    done = inside(running, "import os\nprint(sorted(os.listdir('/run/vector')))")
     assert done.stdout.strip() == "['policy.log']", done.stdout
 
 
@@ -243,17 +248,17 @@ def test_the_shared_directory_is_a_tmpfs_the_policy_can_fill_and_nothing_else(ru
     if not running.bounded:
         pytest.skip("not root: the shared directory is a plain directory here")
     mounts = inside(running, "print(open('/proc/mounts').read())").stdout
-    (ours,) = [line for line in mounts.splitlines() if " /run/icil " in line]
+    (ours,) = [line for line in mounts.splitlines() if " /run/vector " in line]
     assert ours.split()[2] == "tmpfs" and f"size={SHARED_DIR_BYTES >> 10}k" in ours, ours
     filled = inside(
         running,
-        "with open('/run/icil/big', 'wb') as f:\n"
+        "with open('/run/vector/big', 'wb') as f:\n"
         f"    for _ in range({(SHARED_DIR_BYTES >> 20) + 8}): f.write(b'x' * (1 << 20))",
     )
     assert filled.returncode != 0 and "No space left on device" in filled.stderr, filled.stderr
     many = inside(
         running,
-        f"for i in range({SHARED_DIR_INODES + 8}):\n    open(f'/run/icil/f{{i}}', 'w').close()",
+        f"for i in range({SHARED_DIR_INODES + 8}):\n    open(f'/run/vector/f{{i}}', 'w').close()",
     )
     assert many.returncode != 0 and "No space left on device" in many.stderr, many.stderr
     entries = list(running.socket_dir.iterdir())
@@ -272,24 +277,24 @@ def test_neither_the_store_nor_another_socket_directory_is_visible(
     other.mkdir()
     (other / "policy.sock").write_text("the king's socket")
     monkeypatch.setenv("HF_TOKEN", "hf_secret_that_must_stay_on_the_host")
-    monkeypatch.setenv("ICIL_LIVE_TOKEN", "live_secret_that_must_stay_on_the_host")
+    monkeypatch.setenv("VECTOR_LIVE_TOKEN", "live_secret_that_must_stay_on_the_host")
     # A client made now, with the tokens in its process's environment: the module's `docker`
     # took its environment before they were set and would show nothing.
     holding = Docker()
     _, _, image = replay
     with PolicyContainer(
-        spec, holding, image.tag, name="icil-policy-test-blind", socket_dir=tmp_path / "s", gpus=0
+        spec, holding, image.tag, name="vector-policy-test-blind", socket_dir=tmp_path / "s", gpus=0
     ) as container:
         container.hello(spec.budgets["policy_start_seconds"])
         for path in (store, other, tmp_path):
             done = inside(container, f"import os\nprint(os.listdir({str(path)!r}))")
             assert done.returncode != 0 and "FileNotFoundError" in done.stderr, (path, done.stdout)
         mounts = inside(container, "print(open('/proc/mounts').read())").stdout
-        ours = [line for line in mounts.splitlines() if "/run/icil" in line]
+        ours = [line for line in mounts.splitlines() if "/run/vector" in line]
         assert len(ours) == 1 and str(tmp_path) not in mounts.replace(str(tmp_path / "s"), "")
         assert "store" not in mounts and "other-side" not in mounts
         env = inside(container, "import os\nprint(sorted(os.environ))").stdout
-        assert "HF_TOKEN" not in env and "ICIL_LIVE_TOKEN" not in env, env
+        assert "HF_TOKEN" not in env and "VECTOR_LIVE_TOKEN" not in env, env
         # (That the server drops the authkey from its own environment before the policy is
         # built is the protocol's own test: /proc/<pid>/environ shows the exec-time block.)
 
@@ -323,7 +328,7 @@ def test_the_user_and_the_limits_are_the_specs(spec, docker, running):
 def test_the_gpu_is_there_when_the_spec_asks_for_one(spec, docker, replay, tmp_path):
     _, _, image = replay
     with PolicyContainer(
-        spec, docker, image.tag, name="icil-policy-test-gpu", socket_dir=tmp_path / "s"
+        spec, docker, image.tag, name="vector-policy-test-gpu", socket_dir=tmp_path / "s"
     ) as container:
         container.hello(spec.budgets["policy_start_seconds"])
         done = inside(
@@ -358,14 +363,14 @@ def test_a_missing_class_is_rejected_at_hello_and_no_container_is_left(
     assert report.side()["revision"] == report.sha and report.side()["base_image"] == (
         base.base.digest
     )
-    assert not any(n.startswith(f"icil-policy-{report.key}") for n in containers(docker))
+    assert not any(n.startswith(f"vector-policy-{report.key}") for n in containers(docker))
 
 
 def test_requirements_that_do_not_install_are_rejected_at_build_and_nothing_runs(
     spec, docker, base, cache, tmp_path
 ):
     broken = shutil.copytree(EXAMPLE, tmp_path / "broken")
-    (broken / "requirements.txt").write_text("icil-no-such-package==99.0\n")
+    (broken / "requirements.txt").write_text("vector-no-such-package==99.0\n")
     report = check_submission(
         spec,
         "local/broken",
@@ -378,10 +383,10 @@ def test_requirements_that_do_not_install_are_rejected_at_build_and_nothing_runs
     )
     assert report.verdict == "rejected" and report.failed_step.name == "build", report.as_dict()
     assert "installing requirements.txt failed" in report.failed_step.detail
-    assert "icil-no-such-package" in report.failed_step.detail
+    assert "vector-no-such-package" in report.failed_step.detail
     assert [s.status for s in report.steps] == ["ok", "ok", "ok", "rejected", "skipped", "skipped"]
-    assert not any(n.startswith(f"icil-policy-{report.key}") for n in containers(docker))
-    assert docker.image_id(f"icil-submission:{report.key}-{report.sha}") is None
+    assert not any(n.startswith(f"vector-policy-{report.key}") for n in containers(docker))
+    assert docker.image_id(f"vector-submission:{report.key}-{report.sha}") is None
     assert docker.image_refs(INDEX_PROBE_IMAGE) == [], "the probe leaves no image"
 
 
@@ -420,8 +425,8 @@ def test_a_build_that_prints_pips_network_failure_is_still_rejected_at_build(
     assert report.failed_step.detail.startswith("installing requirements.txt failed:")
     assert "Temporary failure in name resolution" in report.failed_step.detail, "the spoof's text"
     assert [s.status for s in report.steps] == ["ok", "ok", "ok", "rejected", "skipped", "skipped"]
-    assert docker.image_id(f"icil-submission:{report.key}-{report.sha}") is None
-    assert not any(n.startswith(f"icil-policy-{report.key}") for n in containers(docker))
+    assert docker.image_id(f"vector-submission:{report.key}-{report.sha}") is None
+    assert not any(n.startswith(f"vector-policy-{report.key}") for n in containers(docker))
     assert docker.image_refs(INDEX_PROBE_IMAGE) == []
 
 
@@ -452,5 +457,5 @@ def test_requirements_that_never_finish_installing_are_rejected_at_build_in_time
     assert report.verdict == "rejected" and report.failed_step.name == "build", report.as_dict()
     assert report.failed_step.detail == "installing requirements.txt did not finish within 20s"
     assert 20 <= took < 60, took
-    assert docker.image_id(f"icil-submission:{report.key}-{report.sha}") is None
-    assert not any(n.startswith(f"icil-policy-{report.key}") for n in containers(docker))
+    assert docker.image_id(f"vector-submission:{report.key}-{report.sha}") is None
+    assert not any(n.startswith(f"vector-policy-{report.key}") for n in containers(docker))

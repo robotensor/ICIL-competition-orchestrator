@@ -8,7 +8,7 @@ turns those bytes into a policy is the validator's:
 - `bpp_runtime.template`: the pinned architecture, `arch/<name>.cfg.json` (the resolved model and
   prompt-dataset configuration) and `arch/<name>.tensors.json` (every tensor's shape and dtype).
 - `bpp_runtime.policy.BPPPolicy`: builds the model from the template, loads the weights and
-  serves it over the `icil-policy` protocol.
+  serves it over the `vector-policy` protocol.
 - `bpp_runtime.convert`: what a miner runs to turn a training checkpoint into `model.safetensors`;
   the only code that unpickles, and only a file its caller owns.
 

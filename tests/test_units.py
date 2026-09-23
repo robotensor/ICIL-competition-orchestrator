@@ -13,9 +13,9 @@ import sys
 import pytest
 
 from conftest import FAKE_SITE
-from icil_orchestrator.benchmarks import units as plugin_units
-from icil_orchestrator.benchmarks.units import DerivationError
-from icil_orchestrator.ids import SubmissionRef, duel_id
+from vector_orchestrator.benchmarks import units as plugin_units
+from vector_orchestrator.benchmarks.units import DerivationError
+from vector_orchestrator.ids import SubmissionRef, duel_id
 
 CHALLENGER = SubmissionRef.make("org/challenger", "1" * 40)
 KING = SubmissionRef.make("org/king", "2" * 40)
@@ -45,9 +45,9 @@ class Recording:
 
 @pytest.fixture
 def fake(fake_installed):
-    import icil_fake_benchmark
+    import vector_fake_benchmark
 
-    return icil_fake_benchmark.BENCHMARK
+    return vector_fake_benchmark.BENCHMARK
 
 
 def derive(spec, plugin, did, size="light"):
@@ -129,15 +129,15 @@ def test_the_same_units_come_out_of_a_fresh_interpreter(fake_spec, fake):
     code = f"""
 import json, sys
 sys.path.insert(0, {str(FAKE_SITE)!r})
-import icil_fake_benchmark
-from icil_orchestrator.benchmarks.units import plugin_units
-from icil_orchestrator.ids import SubmissionRef, duel_id
-from icil_orchestrator.spec import load_spec_file
+import vector_fake_benchmark
+from vector_orchestrator.benchmarks.units import plugin_units
+from vector_orchestrator.ids import SubmissionRef, duel_id
+from vector_orchestrator.spec import load_spec_file
 spec = load_spec_file({str(fake_spec.path)!r})
 c = SubmissionRef.make("org/challenger", "1" * 40)
 k = SubmissionRef.make("org/king", "2" * 40)
 did = duel_id(spec.version, "franka_1arm", c, k)
-units = plugin_units(spec, "franka_1arm", did, "light", resolve=lambda n: icil_fake_benchmark.BENCHMARK)
+units = plugin_units(spec, "franka_1arm", did, "light", resolve=lambda n: vector_fake_benchmark.BENCHMARK)
 print(json.dumps(units, sort_keys=True))
 """
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)

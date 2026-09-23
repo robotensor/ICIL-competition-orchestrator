@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from icil_orchestrator.duel.score import (
+from vector_orchestrator.duel.score import (
     SCORE_EPSILON,
     crown_moves,
     paired_outcome,
@@ -12,7 +12,7 @@ from icil_orchestrator.duel.score import (
     verdict,
     void_fraction,
 )
-from icil_orchestrator.store.records import unit_tally
+from vector_orchestrator.store.records import unit_tally
 
 SKILLS = ("franka_pick_and_place", "franka_stacking")
 

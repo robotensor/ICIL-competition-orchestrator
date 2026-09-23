@@ -6,10 +6,17 @@ from pathlib import Path
 
 import pytest
 
-from icil_orchestrator.ids import SubmissionRef
-from icil_orchestrator.submissions import SubmissionError, SubmissionRejected
-from icil_orchestrator.submissions.checks import check_repository
-from icil_orchestrator.submissions.image import (
+from submission_helpers import (
+    FAKE_BASE_DIGEST,
+    SHA_A,
+    FakeDocker,
+    pip_unreachable_log,
+    write_policy_repo,
+)
+from vector_orchestrator.ids import SubmissionRef
+from vector_orchestrator.submissions import SubmissionError, SubmissionRejected
+from vector_orchestrator.submissions.checks import check_repository
+from vector_orchestrator.submissions.image import (
     BASE_DOCKERFILE,
     INDEX_PROBE_IMAGE,
     INDEX_PROBE_REQUIREMENT,
@@ -25,13 +32,6 @@ from icil_orchestrator.submissions.image import (
     sandbox_user,
     submission_dockerfile,
     submission_tag,
-)
-from submission_helpers import (
-    FAKE_BASE_DIGEST,
-    SHA_A,
-    FakeDocker,
-    pip_unreachable_log,
-    write_policy_repo,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -119,7 +119,7 @@ def test_build_submission_image_tags_by_key_and_sha_from_the_verified_base(
     root = write_policy_repo(tmp_path / "repo")
     docker.images["x:y"] = FAKE_BASE_DIGEST
     built = build_submission_image(docker, spec, root, check_repository(root, spec), ref, base)
-    assert built.tag == submission_tag(ref) == f"icil-submission:{ref.key}-{SHA_A}"
+    assert built.tag == submission_tag(ref) == f"vector-submission:{ref.key}-{SHA_A}"
     assert built.base == base and docker.image_id(built.tag) == built.image_id
     context, dockerfile, tag, _ = docker.builds[-1]
     assert (context, tag) == (root, built.tag) and dockerfile.startswith(f"# {FAKE_BASE_DIGEST}")
@@ -129,14 +129,14 @@ def test_requirements_that_do_not_install_reject_the_submission_with_the_reason(
     spec, docker, base, ref, tmp_path
 ):
     root = write_policy_repo(tmp_path / "repo", requirements="requirements.txt")
-    (root / "requirements.txt").write_text("icil-no-such-package==99.0\n")
+    (root / "requirements.txt").write_text("vector-no-such-package==99.0\n")
     docker.images["x:y"] = FAKE_BASE_DIGEST
-    docker.build_failure = "ERROR: No matching distribution found for icil-no-such-package==99.0"
+    docker.build_failure = "ERROR: No matching distribution found for vector-no-such-package==99.0"
     with pytest.raises(SubmissionRejected) as info:
         build_submission_image(docker, spec, root, check_repository(root, spec), ref, base)
     assert info.value.step == "build"
     assert info.value.reason.startswith("installing requirements.txt failed:")
-    assert "No matching distribution found for icil-no-such-package" in info.value.reason
+    assert "No matching distribution found for vector-no-such-package" in info.value.reason
     assert docker.runs == [], "nothing ran"
     assert len(docker.probes) == 1, "the orchestrator's own probe reached the index first"
 

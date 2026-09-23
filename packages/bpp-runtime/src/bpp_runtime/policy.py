@@ -1,4 +1,4 @@
-"""`BPPPolicy`: a weights-only BPP submission, served over the `icil-policy` protocol.
+"""`BPPPolicy`: a weights-only BPP submission, served over the `vector-policy` protocol.
 
     # icil.yaml of the validator's own policy repository
     api: 1

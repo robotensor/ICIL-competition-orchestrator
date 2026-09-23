@@ -2,7 +2,7 @@
 
 `pytest -m container`. The examples need no GPU, so their containers get none (`--gpus 0`); the
 fake benchmark runs on the host and reaches each unit's container through its socket directory.
-Every container the duel starts is named `icil-duel-*` and removed when its unit is over; the
+Every container the duel starts is named `vector-duel-*` and removed when its unit is over; the
 submission images built here are untagged at the end, by tag: an image id another image shares
 is left alone. Each `docker run` is recorded on its way through the real client, so the test can
 hold it to the sandbox's own `run_argv`, and to the socket directory's tmpfs as mounted then.
@@ -19,20 +19,20 @@ from pathlib import Path
 import pytest
 
 from duel_helpers import REPLAY, REPLAY_REF, ZERO, ZERO_REF
-from icil_orchestrator.cli import main
-from icil_orchestrator.duel.side import read_results
-from icil_orchestrator.ids import SubmissionRef
-from icil_orchestrator.store.writer import Store
-from icil_orchestrator.submissions.container import (
+from vector_orchestrator.cli import main
+from vector_orchestrator.duel.side import read_results
+from vector_orchestrator.ids import SubmissionRef
+from vector_orchestrator.store.writer import Store
+from vector_orchestrator.submissions.container import (
     AUTHKEY_ENV,
     SHARED_DIR_HARDENING,
     SHARED_DIR_SOURCE,
     Owner,
     run_argv,
 )
-from icil_orchestrator.submissions.docker import Docker, DockerError
-from icil_orchestrator.submissions.fetch import tree_hash
-from icil_orchestrator.submissions.image import build_base_image, submission_tag
+from vector_orchestrator.submissions.docker import Docker, DockerError
+from vector_orchestrator.submissions.fetch import tree_hash
+from vector_orchestrator.submissions.image import build_base_image, submission_tag
 
 pytestmark = pytest.mark.container
 
@@ -59,7 +59,7 @@ def base(docker, spec):
 
 def duel_containers() -> list[str]:
     done = subprocess.run(
-        ["docker", "ps", "--all", "--filter", "name=icil-duel-", "--format", "{{.Names}}"],
+        ["docker", "ps", "--all", "--filter", "name=vector-duel-", "--format", "{{.Names}}"],
         capture_output=True,
         text=True,
         check=True,
@@ -96,7 +96,7 @@ def test_a_smoke_duel_through_the_sandbox_publishes_the_replay_challenger_winnin
 ):
     before = set(duel_containers())
     RecordingDocker.runs = []
-    monkeypatch.setattr("icil_orchestrator.duel.docker_runtime.Docker", RecordingDocker)
+    monkeypatch.setattr("vector_orchestrator.duel.docker_runtime.Docker", RecordingDocker)
     root, key = tmp_path / "store", tmp_path / "keys" / "orchestrator.ed25519"
     spec = ["--spec", str(duel_spec.path)]
     assert main([*spec, "store", "init", str(root), "--key", str(key)]) == 0
@@ -167,7 +167,7 @@ def test_a_smoke_duel_through_the_sandbox_publishes_the_replay_challenger_winnin
         assert len(RecordingDocker.runs) >= 2 + 2 * len(event["units"])
         for args, shared, options in RecordingDocker.runs:
             name, image = args[args.index("--name") + 1], args[args.index(AUTHKEY_ENV) + 1]
-            assert name.startswith("icil-duel-")
+            assert name.startswith("vector-duel-")
             assert args == run_argv(
                 duel_spec,
                 image=image,

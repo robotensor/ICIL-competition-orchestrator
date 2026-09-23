@@ -1,8 +1,8 @@
 # The repository root is the build context of docker/policy-base/Dockerfile, which copies
-# packages/icil-policy and nothing else; the rest of the checkout (the venv above all) stays out
+# packages/vector-policy and nothing else; the rest of the checkout (the venv above all) stays out
 # of the context.
 *
-!packages/icil-policy
-packages/icil-policy/**/__pycache__
-packages/icil-policy/**/*.egg-info
-packages/icil-policy/**/.pytest_cache
+!packages/vector-policy
+packages/vector-policy/**/__pycache__
+packages/vector-policy/**/*.egg-info
+packages/vector-policy/**/.pytest_cache

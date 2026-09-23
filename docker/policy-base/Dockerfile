@@ -1,8 +1,8 @@
 # The base of every submission image (spec.json `submission.base_image`): the CUDA toolkit with
-# its compiler, a C toolchain, Python 3.10 with its headers and icil-policy, and nothing of the
+# its compiler, a C toolchain, Python 3.10 with its headers and vector-policy, and nothing of the
 # orchestrator. The build context is the repository root:
 #
-#     icil-orchestrator submission build-base        # builds it and prints its digest
+#     vector-orchestrator submission build-base        # builds it and prints its digest
 #
 # A submission's image is built FROM this image by digest, so the same code runs on the same
 # base wherever it is judged; the digest is pinned in spec.json and named by every event record.
@@ -41,10 +41,10 @@ RUN groupadd --gid "${POLICY_GID}" policy \
 
 # The policy protocol, as the competitor's side serves it. Installed from this checkout, not from
 # an index, so the base holds exactly the protocol the orchestrator was built with.
-COPY packages/icil-policy /opt/icil-policy
-RUN python -m pip install /opt/icil-policy && rm -rf /opt/icil-policy
+COPY packages/vector-policy /opt/vector-policy
+RUN python -m pip install /opt/vector-policy && rm -rf /opt/vector-policy
 
-# No entrypoint and no command: the orchestrator says what runs (python -m icil_policy.serve ...),
+# No entrypoint and no command: the orchestrator says what runs (python -m vector_policy.serve ...),
 # and a submission's image adds only its files and its requirements.
 ENTRYPOINT []
 CMD []

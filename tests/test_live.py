@@ -1,7 +1,7 @@
 """Live frames, checked against the rules the dashboard's ingest applies.
 
 `parse_live_frame` below is a line-by-line Python rendering of `parseLiveFrame` in
-robofluent/ICIL-competition-dashboard, branch milestone-two-contests, `lib/live/types.ts`, and of the
+robotensor/robotensor-competition-dashboard, branch milestone-two-contests, `lib/live/types.ts`, and of the
 body checks in `app/api/live/route.ts` (`MAX_BODY_BYTES`, JSON parse). The vocabularies it uses come
 from `lib/protocol.ts` (`SIDES`, `OUTCOMES`) and `lib/protocol.generated.ts` (`LIVE_SCHEMA`, the
 track ids and skill ids, generated from spec.json by `scripts/sync-spec.mjs`). If the dashboard
@@ -20,9 +20,9 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
 
-from icil_orchestrator.live import PHASES, LiveReporter, build_frame
-from icil_orchestrator.spec import load_schema
-from icil_orchestrator.store.verify import Report, SchemaCheck
+from vector_orchestrator.live import PHASES, LiveReporter, build_frame
+from vector_orchestrator.spec import load_schema
+from vector_orchestrator.store.verify import Report, SchemaCheck
 
 # ---------------------------------------------------------------- the dashboard's rules
 

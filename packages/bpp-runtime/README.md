@@ -4,7 +4,7 @@ The validator's own runtime for BPP (Behavior Prompting Policy) submissions. A m
 **weights only** - one `model.safetensors`, no code, no pickle - for the pinned architecture
 `bpp_robotwin_l1_v1`. The validator checks the file's header against the template, builds the
 network from the template with its own code, loads the weights and serves the policy to the
-RoboTwin benchmark over the `icil-policy` socket protocol.
+RoboTwin benchmark over the `vector-policy` socket protocol.
 
 ```
 src/bpp_runtime/
@@ -12,7 +12,7 @@ src/bpp_runtime/
   template.py           the pinned template: arch/bpp_robotwin_l1_v1.{cfg,tensors}.json
   model.py              build the network from the template, load and validate the weights
   demo.py               the benchmark's arrays -> the XPolicyLab form BPP was trained on
-  policy.py             BPPPolicy, the icil-policy Policy
+  policy.py             BPPPolicy, the vector-policy Policy
   convert.py            a training checkpoint -> model.safetensors (the only unpickling code)
   parity.py             converted weights act exactly as the original checkpoint
 third_party/behavior_prompting/   the model source the checkpoints need, vendored (MIT)
@@ -26,7 +26,7 @@ pip install -e packages/bpp-runtime
 
 # the policy environment (Python 3.12, CUDA): the model, its vendored source, the protocol
 pip install -e "packages/bpp-runtime[model]" \
-    -e packages/bpp-runtime/third_party/behavior_prompting -e packages/icil-policy
+    -e packages/bpp-runtime/third_party/behavior_prompting -e packages/vector-policy
 ```
 
 ## Commands
@@ -51,7 +51,7 @@ policy: bpp_runtime.policy:BPPPolicy
 kwargs: {weights: /abs/path/model.safetensors, device: "cuda:0"}
 ```
 
-`python -m icil_policy.serve --manifest icil.yaml ...` then serves it. `BPPPolicy` takes
+`python -m vector_policy.serve --manifest icil.yaml ...` then serves it. `BPPPolicy` takes
 `weights` (an absolute path to `model.safetensors`, or its directory), `device` (default
 `cuda:0`), `template` (an absolute template directory; default the packaged one) and
 `weights_sha256` (optional: refuse a file with another hash). `action_type` is `ee`: each `act`

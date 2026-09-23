@@ -1,5 +1,0 @@
-# A competitor's manifest. `python -m icil_policy.serve --manifest icil.yaml` serves this policy.
-api: 1
-policy: zero.policy:ZeroPolicy
-kwargs: {}          # passed to ZeroPolicy(); this one takes none
-requirements: requirements.txt

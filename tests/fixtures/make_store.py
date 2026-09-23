@@ -11,7 +11,7 @@ are what the orchestrator would publish.
 
 It is NOT a competition result. It is signed with a key derived from a public string (below), so
 anyone can forge records under it; its only use is rendering the dashboard against the layout this
-orchestrator writes (`ICIL_STORE=<abs path to tests/fixtures/store> npm run dev`) and catching an
+orchestrator writes (`VECTOR_STORE=<abs path to tests/fixtures/store> npm run dev`) and catching an
 unintended change to that layout. Clips are not included (units carry no video hashes).
 
 After an intended change to spec.json or the store layout, regenerate it and commit the result.
@@ -29,31 +29,31 @@ ROOT = HERE.parents[1]
 sys.path.insert(0, str(ROOT / "tests" / "fake_benchmark"))
 sys.path.insert(0, str(ROOT / "src"))
 
-import icil_fake_benchmark  # noqa: E402
+import vector_fake_benchmark  # noqa: E402
 
-from icil_orchestrator.benchmarks.units import plugin_units  # noqa: E402
-from icil_orchestrator.canon import Signer, canonical_sha256  # noqa: E402
-from icil_orchestrator.duel import score  # noqa: E402
-from icil_orchestrator.ids import SubmissionRef, duel_id, event_id  # noqa: E402
-from icil_orchestrator.queue import Queue  # noqa: E402
-from icil_orchestrator.spec import load_spec_file  # noqa: E402
-from icil_orchestrator.store.records import (  # noqa: E402
+from vector_orchestrator.benchmarks.units import plugin_units  # noqa: E402
+from vector_orchestrator.canon import Signer, canonical_sha256  # noqa: E402
+from vector_orchestrator.duel import score  # noqa: E402
+from vector_orchestrator.ids import SubmissionRef, duel_id, event_id  # noqa: E402
+from vector_orchestrator.queue import Queue  # noqa: E402
+from vector_orchestrator.spec import load_spec_file  # noqa: E402
+from vector_orchestrator.store.records import (  # noqa: E402
     duel_event,
     index_record,
     unit_tally,
     unit_verdict_from_unit,
 )
-from icil_orchestrator.store.writer import Store  # noqa: E402
+from vector_orchestrator.store.writer import Store  # noqa: E402
 
 TRACK = "franka_1arm"
 SIZE = "light"
 GENESIS_SIZE = "smoke"
 #: Public on purpose: this key signs nothing that matters.
-FIXTURE_SEED = hashlib.sha256(b"icil-orchestrator fixture store; not a secret").digest()
+FIXTURE_SEED = hashlib.sha256(b"vector-orchestrator fixture store; not a secret").digest()
 
-KING = SubmissionRef.make("robotensor/icil-zero-policy", "0" * 39 + "1")
-CHALLENGER = SubmissionRef.make("robotensor/icil-replay-policy", "0" * 39 + "2")
-WAITING = SubmissionRef.make("robotensor/icil-example-policy", "0" * 39 + "3")
+KING = SubmissionRef.make("robotensor/vector-zero-policy", "0" * 39 + "1")
+CHALLENGER = SubmissionRef.make("robotensor/vector-replay-policy", "0" * 39 + "2")
+WAITING = SubmissionRef.make("robotensor/vector-example-policy", "0" * 39 + "3")
 BASE_DIGEST = "sha256:" + "b" * 64
 
 
@@ -181,7 +181,7 @@ def build(out: Path) -> Path:
 def _units(spec, did: str, size: str) -> tuple[list[dict], list[dict]]:
     """A duel's published unit rows, with a stand-in prompt hash each, and its `prompts`."""
     derived = plugin_units(
-        spec, TRACK, did, size, resolve=lambda name: icil_fake_benchmark.BENCHMARK
+        spec, TRACK, did, size, resolve=lambda name: vector_fake_benchmark.BENCHMARK
     )
     units, prompts = [], []
     for unit in derived:

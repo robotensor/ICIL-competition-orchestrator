@@ -14,7 +14,7 @@ cv2 = pytest.importorskip("cv2")
 from bpp_runtime import demo  # noqa: E402
 
 #: RoboTwin's copy of XPolicyLab's image codec, the one its episode writer used.
-ROBOTWIN = Path(os.environ.get("ROBOTWIN_ROOT", "/root/robotensor/bpp/RoboTwin-BPP"))
+ROBOTWIN = Path(os.environ.get("ROBOTWIN_ROOT", "/root/robotensor/vector/RoboTwin-Vector"))
 
 
 def demonstration(count: int = 5, height: int = 24, width: int = 32) -> dict:

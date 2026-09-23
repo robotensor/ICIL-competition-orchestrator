@@ -9,13 +9,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from icil_orchestrator.benchmarks.units import plugin_units, seed_key, seed_material
-from icil_orchestrator.duel import score
-from icil_orchestrator.duel.orchestrate import DuelRequest
-from icil_orchestrator.duel.runtime import SubmissionRefused
-from icil_orchestrator.duel.weights_runtime import WeightsCheck, WeightsPolicyRuntime
-from icil_orchestrator.ids import SubmissionRef
-from icil_orchestrator.spec import load_spec_file, validate_spec
+from vector_orchestrator.benchmarks.units import plugin_units, seed_key, seed_material
+from vector_orchestrator.duel import score
+from vector_orchestrator.duel.orchestrate import DuelRequest
+from vector_orchestrator.duel.runtime import SubmissionRefused
+from vector_orchestrator.duel.weights_runtime import WeightsCheck, WeightsPolicyRuntime
+from vector_orchestrator.ids import SubmissionRef
+from vector_orchestrator.spec import load_spec_file, validate_spec
 
 ROOT = Path(__file__).resolve().parents[1]
 BPP_SPEC = ROOT / "specs" / "bpp_l1.json"
@@ -268,7 +268,7 @@ def test_a_process_that_sleeps_is_killed_as_stalled_and_a_busy_one_is_not(tmp_pa
     import sys
     import time
 
-    from icil_orchestrator.benchmarks import subprocess_runner as runner
+    from vector_orchestrator.benchmarks import subprocess_runner as runner
 
     monkeypatch.setattr(runner, "STALL_POLL_S", 0.2)
     started = time.monotonic()
@@ -299,7 +299,7 @@ def test_a_benchmark_waiting_on_a_busy_policy_is_not_stalled(tmp_path, monkeypat
     import subprocess
     import sys
 
-    from icil_orchestrator.benchmarks import subprocess_runner as runner
+    from vector_orchestrator.benchmarks import subprocess_runner as runner
 
     monkeypatch.setattr(runner, "STALL_POLL_S", 0.2)
     busy = subprocess.Popen(

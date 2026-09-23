@@ -8,14 +8,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from icil_orchestrator.benchmarks import (
+from vector_orchestrator.benchmarks import (
     BENCHMARK_API_VERSION,
     COMMAND_METHODS,
     PURE_METHODS,
     Benchmark,
     validate_plugin,
 )
-from icil_orchestrator.benchmarks.api import METHODS
+from vector_orchestrator.benchmarks.api import METHODS
 
 
 class Minimal:

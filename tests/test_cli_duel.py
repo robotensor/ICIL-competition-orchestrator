@@ -1,4 +1,4 @@
-"""`icil-orchestrator duel` and `daemon`, with the fake benchmark and the example policies."""
+"""`vector-orchestrator duel` and `daemon`, with the fake benchmark and the example policies."""
 
 from __future__ import annotations
 
@@ -18,11 +18,11 @@ from typing import Any
 import pytest
 
 from duel_helpers import REPLAY, REPLAY_REF, ZERO, ZERO_REF
-from icil_orchestrator.cli import main
-from icil_orchestrator.duel.side import read_results
-from icil_orchestrator.queue import Queues
-from icil_orchestrator.store.writer import Store, store_lock
 from submission_helpers import FakeHub
+from vector_orchestrator.cli import main
+from vector_orchestrator.duel.side import read_results
+from vector_orchestrator.queue import Queues
+from vector_orchestrator.store.writer import Store, store_lock
 
 TRACK = "franka_1arm"
 
@@ -203,7 +203,7 @@ def test_the_daemon_serves_the_queue_once_per_step(duel_spec, store, hub, tmp_pa
 
 
 ADMIN_TOKEN = "tok-daemon-7c2e91d04b5a-never-in-a-log"
-ADMIN = ["--admin-token-env", "ICIL_TEST_ADMIN_TOKEN"]
+ADMIN = ["--admin-token-env", "VECTOR_TEST_ADMIN_TOKEN"]
 
 
 def free_port() -> int:
@@ -240,10 +240,10 @@ def test_the_daemon_takes_what_its_intake_queues(
     """`daemon --admin`: a submission posted to the intake goes on the daemon's own queue, the loop
     takes it and crowns it on the empty track, and a signal stops the intake with the loop."""
     root, _ = store
-    caplog.set_level(logging.INFO, logger="icil_orchestrator.admin")
+    caplog.set_level(logging.INFO, logger="vector_orchestrator.admin")
     hub.add(REPLAY_REF.repo, REPLAY_REF.revision, {"icil.yaml": 80}, "main")
-    monkeypatch.setattr("icil_orchestrator.admin.HubApi", lambda: hub)
-    monkeypatch.setenv("ICIL_TEST_ADMIN_TOKEN", ADMIN_TOKEN)
+    monkeypatch.setattr("vector_orchestrator.admin.HubApi", lambda: hub)
+    monkeypatch.setenv("VECTOR_TEST_ADMIN_TOKEN", ADMIN_TOKEN)
     port = free_port()
     queue_file = tmp_path / "queue" / f"{TRACK}.json"
     seen: dict[str, Any] = {}
@@ -322,15 +322,15 @@ def test_the_daemons_intake_needs_its_token_and_stops_with_the_daemon(
     root, _ = store
     port = free_port()
     daemon_once = ["daemon", "--once", "--admin", "--admin-port", str(port), *ADMIN]
-    monkeypatch.delenv("ICIL_TEST_ADMIN_TOKEN", raising=False)
+    monkeypatch.delenv("VECTOR_TEST_ADMIN_TOKEN", raising=False)
     assert run(duel_spec, store, tmp_path, *daemon_once) == 2
-    assert "ICIL_TEST_ADMIN_TOKEN is not set" in capsys.readouterr().err
-    monkeypatch.setenv("ICIL_TEST_ADMIN_TOKEN", "dev-token")
+    assert "VECTOR_TEST_ADMIN_TOKEN is not set" in capsys.readouterr().err
+    monkeypatch.setenv("VECTOR_TEST_ADMIN_TOKEN", "dev-token")
     assert run(duel_spec, store, tmp_path, *daemon_once) == 2
     err = capsys.readouterr().err
     assert "must be 32 or more" in err and "dev-token" not in err
 
-    monkeypatch.setenv("ICIL_TEST_ADMIN_TOKEN", ADMIN_TOKEN)
+    monkeypatch.setenv("VECTOR_TEST_ADMIN_TOKEN", ADMIN_TOKEN)
     assert run(duel_spec, store, tmp_path, *daemon_once) == 0
     assert closed(port), "the intake outlived a daemon that ran its round"
     with store_lock(root):
@@ -342,8 +342,8 @@ def test_the_daemons_intake_needs_its_token_and_stops_with_the_daemon(
 
 
 def test_the_daemons_intake_defaults_are_the_intake_defaults():
-    from icil_orchestrator import admin
-    from icil_orchestrator.cli import build_parser
+    from vector_orchestrator import admin
+    from vector_orchestrator.cli import build_parser
 
     args = build_parser().parse_args(["daemon", "--store", "s", "--run-dir", "r"])
     assert args.admin is False
@@ -387,7 +387,7 @@ def test_what_the_duel_command_refuses(duel_spec, store, tmp_path, capsys):
 
 
 def test_the_help_says_the_local_runtime_has_no_sandbox():
-    script = Path(sysconfig.get_path("scripts")) / "icil-orchestrator"
+    script = Path(sysconfig.get_path("scripts")) / "vector-orchestrator"
     for command in ("duel", "daemon"):
         done = subprocess.run([str(script), command, "--help"], capture_output=True, text=True)
         assert done.returncode == 0

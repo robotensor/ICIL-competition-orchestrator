@@ -4,12 +4,12 @@ import json
 
 import pytest
 
-from icil_orchestrator.canon import Signer, canonical_json, sha256_file, verify_signature
-from icil_orchestrator.ids import SubmissionRef
-from icil_orchestrator.store.records import unit_verdict_from_unit
-from icil_orchestrator.store.verify import verify_store
-from icil_orchestrator.store.writer import Store, store_lock
 from store_helpers import TRACK, make_record, publish, small_spec
+from vector_orchestrator.canon import Signer, canonical_json, sha256_file, verify_signature
+from vector_orchestrator.ids import SubmissionRef
+from vector_orchestrator.store.records import unit_verdict_from_unit
+from vector_orchestrator.store.verify import verify_store
+from vector_orchestrator.store.writer import Store, store_lock
 
 KING = SubmissionRef.make("org/genesis", "a" * 40)
 CHALLENGER = SubmissionRef.make("org/challenger", "b" * 40)

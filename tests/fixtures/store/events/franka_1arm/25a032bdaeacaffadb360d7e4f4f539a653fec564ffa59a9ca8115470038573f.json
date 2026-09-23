@@ -1,0 +1,230 @@
+{
+  "benchmarks": {
+    "robotwin": {
+      "info": {
+        "id": "robotwin"
+      },
+      "installed_version": null,
+      "pin": {
+        "_comment": "Pinned by distribution, version and wheel sha256 once the wheel is built (robotensor/ICIL-robotwin-benchmark#86). Entry-point discovery imports code into the orchestrator, so the pin is checked from the installed distribution's metadata before anything is imported from it. null means not yet pinned, and `icil-orchestrator benchmarks check` says so.",
+        "api_version": 1,
+        "distribution": "robotwin-icil-competition",
+        "repo": "robotensor/ICIL-robotwin-benchmark",
+        "version": null,
+        "wheel_sha256": null
+      }
+    }
+  },
+  "block": 1,
+  "challenger": null,
+  "challenger_scores": null,
+  "decided": 0,
+  "demonstration": {
+    "modalities": [
+      "video",
+      "actions",
+      "proprio"
+    ],
+    "view": "sensorimotor",
+    "withheld": []
+  },
+  "dethroned": false,
+  "duel_id": "c128cdb0bd0c0e219cb20578df10597fc4e72a2dbe7ce0182c6f457075899031",
+  "duel_size": "smoke",
+  "event_id": "25a032bdaeacaffadb360d7e4f4f539a653fec564ffa59a9ca8115470038573f",
+  "finished_at": "2026-09-13T09:00:00Z",
+  "kind": "genesis",
+  "king": {
+    "key": "86d7ad9c79a6592a",
+    "repo": "robotensor/vector-zero-policy",
+    "revision": "0000000000000000000000000000000000000001"
+  },
+  "king_scores": {
+    "average": 0.0,
+    "franka_pick_and_place": 0.0,
+    "franka_press_push": 0.0,
+    "franka_stacking": 0.0
+  },
+  "losses": 0,
+  "media_count": 0,
+  "new_king": null,
+  "notes": [
+    "The first entrant took the empty throne, scored on its own units.",
+    "Fixture store written by tests/fixtures/make_store.py; not a result."
+  ],
+  "prompts": [
+    {
+      "demo_video": null,
+      "sha256": "1622e782e0df9d6f60fef0aec8da29796bf6a8837a77f23398cbe9eed2b59641",
+      "unit_id": "fp-000"
+    },
+    {
+      "demo_video": null,
+      "sha256": "c74837b6ab1dc8b0a9490f6f392974f71fbad35ef5ac67ecc12d664c8f0e6a6e",
+      "unit_id": "fs-001"
+    },
+    {
+      "demo_video": null,
+      "sha256": "3f4c4ba4a86637bfc6ace7fc76aa94d6dffb3698505c49c34259a8d99cbd2991",
+      "unit_id": "fu-002"
+    }
+  ],
+  "runtime": "docker",
+  "schema": 4,
+  "score_margin": 3.0,
+  "scoring": {
+    "delta_points": null,
+    "max_void_fraction": 0.2,
+    "reason": "genesis",
+    "score_margin": 3.0,
+    "void_fraction": 0.0
+  },
+  "sides": {
+    "king": {
+      "action_type": "qpos",
+      "base_image_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "commit": "0000000000000000000000000000000000000001",
+      "image": "sha256:cb680dfa0e9bafa2b065ddbb772785213c1fe358602c7782d1d4e12ce6fc0e85",
+      "key": "86d7ad9c79a6592a",
+      "policy": "zero.policy:ZeroPolicy",
+      "refused": null,
+      "repo": "robotensor/vector-zero-policy",
+      "revision": "0000000000000000000000000000000000000001",
+      "runtime": "docker",
+      "units": 3,
+      "void": 0,
+      "wall_seconds": 1500.0
+    }
+  },
+  "spec_fingerprint": "351de61f8572d7579940d9c0360667a94250647d0ee2d1aa841a4dc00f20905c",
+  "spec_version": 7,
+  "started_at": "2026-09-13T08:30:00Z",
+  "ties": 3,
+  "track": "franka_1arm",
+  "units": [
+    {
+      "challenger_error": null,
+      "challenger_metric": null,
+      "challenger_progress": null,
+      "challenger_steps": null,
+      "challenger_success": null,
+      "challenger_video": null,
+      "demo_video": null,
+      "index": 0,
+      "instance": 0,
+      "instance_params": {
+        "embodiment": [
+          "franka-panda",
+          "franka-panda",
+          0.6
+        ],
+        "scene_seed": 3628902753
+      },
+      "king_error": null,
+      "king_metric": null,
+      "king_progress": 0.0,
+      "king_steps": 100,
+      "king_success": false,
+      "king_video": null,
+      "outcome": "tie",
+      "prompt": {
+        "chunks": 0,
+        "demo_id": "fp-000",
+        "sha256": "1622e782e0df9d6f60fef0aec8da29796bf6a8837a77f23398cbe9eed2b59641",
+        "steps": 0,
+        "view": "sensorimotor"
+      },
+      "prompt_sha256": "1622e782e0df9d6f60fef0aec8da29796bf6a8837a77f23398cbe9eed2b59641",
+      "seed": 2839097317,
+      "skill": "franka_pick_and_place",
+      "task": "place_cup_coaster",
+      "task_label": "Place cup coaster",
+      "unit_id": "fp-000",
+      "void": false
+    },
+    {
+      "challenger_error": null,
+      "challenger_metric": null,
+      "challenger_progress": null,
+      "challenger_steps": null,
+      "challenger_success": null,
+      "challenger_video": null,
+      "demo_video": null,
+      "index": 0,
+      "instance": 0,
+      "instance_params": {
+        "embodiment": [
+          "franka-panda",
+          "franka-panda",
+          0.6
+        ],
+        "scene_seed": 2116118361
+      },
+      "king_error": null,
+      "king_metric": null,
+      "king_progress": 0.0,
+      "king_steps": 101,
+      "king_success": false,
+      "king_video": null,
+      "outcome": "tie",
+      "prompt": {
+        "chunks": 0,
+        "demo_id": "fs-001",
+        "sha256": "c74837b6ab1dc8b0a9490f6f392974f71fbad35ef5ac67ecc12d664c8f0e6a6e",
+        "steps": 0,
+        "view": "sensorimotor"
+      },
+      "prompt_sha256": "c74837b6ab1dc8b0a9490f6f392974f71fbad35ef5ac67ecc12d664c8f0e6a6e",
+      "seed": 2827175771,
+      "skill": "franka_stacking",
+      "task": "stack_two_blocks",
+      "task_label": "Stack two blocks",
+      "unit_id": "fs-001",
+      "void": false
+    },
+    {
+      "challenger_error": null,
+      "challenger_metric": null,
+      "challenger_progress": null,
+      "challenger_steps": null,
+      "challenger_success": null,
+      "challenger_video": null,
+      "demo_video": null,
+      "index": 0,
+      "instance": 0,
+      "instance_params": {
+        "embodiment": [
+          "franka-panda",
+          "franka-panda",
+          0.6
+        ],
+        "scene_seed": 1050796368
+      },
+      "king_error": null,
+      "king_metric": null,
+      "king_progress": 0.0,
+      "king_steps": 102,
+      "king_success": false,
+      "king_video": null,
+      "outcome": "tie",
+      "prompt": {
+        "chunks": 0,
+        "demo_id": "fu-002",
+        "sha256": "3f4c4ba4a86637bfc6ace7fc76aa94d6dffb3698505c49c34259a8d99cbd2991",
+        "steps": 0,
+        "view": "sensorimotor"
+      },
+      "prompt_sha256": "3f4c4ba4a86637bfc6ace7fc76aa94d6dffb3698505c49c34259a8d99cbd2991",
+      "seed": 3871302261,
+      "skill": "franka_press_push",
+      "task": "press_button",
+      "task_label": "Press button",
+      "unit_id": "fu-002",
+      "void": false
+    }
+  ],
+  "units_per_skill": 1,
+  "void": 0,
+  "wall_seconds": 1800.0,
+  "wins": 0
+}

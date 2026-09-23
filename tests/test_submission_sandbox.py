@@ -1,6 +1,6 @@
 """A submission's container, with Docker stood in for.
 
-`FakeDocker.run` starts the real `python -m icil_policy.serve` on the host in the container's
+`FakeDocker.run` starts the real `python -m vector_policy.serve` on the host in the container's
 place, so what is tested is the orchestrator's side of the sandbox: the arguments it would give
 `docker run`, the socket directory, the authkey, the wait for `hello` and the removal - not the
 kernel's isolation, which the container tests check for real.
@@ -17,10 +17,11 @@ import time
 
 import pytest
 
-from icil_orchestrator.ids import SubmissionRef
-from icil_orchestrator.submissions import SubmissionRejected
-from icil_orchestrator.submissions.checks import check_repository
-from icil_orchestrator.submissions.container import (
+from submission_helpers import FAKE_BASE_DIGEST, SHA_A, FakeDocker, write_policy_repo
+from vector_orchestrator.ids import SubmissionRef
+from vector_orchestrator.submissions import SubmissionRejected
+from vector_orchestrator.submissions.checks import check_repository
+from vector_orchestrator.submissions.container import (
     AUTHKEY_ENV,
     CACHE_ENV,
     HARDENING,
@@ -42,13 +43,12 @@ from icil_orchestrator.submissions.container import (
     serve_argv,
     tmpfs_options,
 )
-from icil_orchestrator.submissions.docker import DockerError
-from icil_orchestrator.submissions.image import (
+from vector_orchestrator.submissions.docker import DockerError
+from vector_orchestrator.submissions.image import (
     base_image,
     build_submission_image,
     sandbox_user,
 )
-from submission_helpers import FAKE_BASE_DIGEST, SHA_A, FakeDocker, write_policy_repo
 
 
 @pytest.fixture
@@ -87,22 +87,26 @@ def test_run_argv_is_exactly_the_specs_sandbox_and_one_shared_directory(spec, tm
     sandbox = spec.submission["sandbox"]
     owner = Owner(pid=4321, start="98765", pidns="pid:[4026531836]")
     args = run_argv(
-        spec, image="icil-submission:k-s", name="icil-policy-x", socket_dir=tmp_path, owner=owner
+        spec,
+        image="vector-submission:k-s",
+        name="vector-policy-x",
+        socket_dir=tmp_path,
+        owner=owner,
     )
     assert args == [
         "--detach",
         "--name",
-        "icil-policy-x",
+        "vector-policy-x",
         "--label",
-        "icil.orchestrator=policy",
+        "vector.orchestrator=policy",
         "--label",
-        "icil.owner.pid=4321",
+        "vector.owner.pid=4321",
         "--label",
-        "icil.owner.start=98765",
+        "vector.owner.start=98765",
         "--label",
-        "icil.owner.pidns=pid:[4026531836]",
+        "vector.owner.pidns=pid:[4026531836]",
         "--label",
-        f"icil.shared-dir={tmp_path}",
+        f"vector.shared-dir={tmp_path}",
         "--network",
         sandbox["network"],
         "--read-only",
@@ -125,7 +129,7 @@ def test_run_argv_is_exactly_the_specs_sandbox_and_one_shared_directory(spec, tm
         str(sandbox["pids"]),
         *HARDENING,
         "--mount",
-        f"type=bind,src={tmp_path},dst=/run/icil",
+        f"type=bind,src={tmp_path},dst=/run/vector",
         "--env",
         "HOME=/tmp/home",
         "--env",
@@ -140,7 +144,7 @@ def test_run_argv_is_exactly_the_specs_sandbox_and_one_shared_directory(spec, tm
         "TORCH_EXTENSIONS_DIR=/tmp/home/.cache/torch_extensions",
         "--env",
         AUTHKEY_ENV,
-        "icil-submission:k-s",
+        "vector-submission:k-s",
         "sh",
         "-c",
         PREPARE_HOME,
@@ -157,15 +161,15 @@ def test_run_argv_is_exactly_the_specs_sandbox_and_one_shared_directory(spec, tm
     assert serve_argv(spec) == [
         "python",
         "-m",
-        "icil_policy.serve",
+        "vector_policy.serve",
         "--manifest",
         f"/submission/{spec.submission['manifest']}",
         "--address",
-        "/run/icil/policy.sock",
+        "/run/vector/policy.sock",
         "--authkey-env",
         AUTHKEY_ENV,
         "--log-file",
-        "/run/icil/policy.log",
+        "/run/vector/policy.log",
     ]
     # A policy that needs no GPU gets none; the spec's count is the default.
     without = run_argv(spec, image="i", name="n", socket_dir=tmp_path, gpus=0)
@@ -265,7 +269,12 @@ def test_the_shared_directory_is_a_bounded_tmpfs_for_the_containers_lifetime(
     shared = tmp_path / "s"
     uid, gid = sandbox_user(sandbox_spec)
     container = PolicyContainer(
-        sandbox_spec, docker, built.tag, name="icil-policy-bounded", socket_dir=shared, bounded=True
+        sandbox_spec,
+        docker,
+        built.tag,
+        name="vector-policy-bounded",
+        socket_dir=shared,
+        bounded=True,
     )
     assert container.bounded is True and shared_mounts == []
     container.hello(sandbox_spec.budgets["policy_start_seconds"])
@@ -273,7 +282,7 @@ def test_the_shared_directory_is_a_bounded_tmpfs_for_the_containers_lifetime(
     assert SHARED_DIR_BYTES >= 8 << 20 and SHARED_DIR_INODES >= 8, "the socket and the log fit"
     container.close()
     assert shared_mounts == [("mount", shared, uid, gid), ("umount", shared)]
-    assert docker.removed == ["icil-policy-bounded"]
+    assert docker.removed == ["vector-policy-bounded"]
     assert (shared / "policy.log").is_file(), "the log outlives the tmpfs"
     assert "listening on" in (shared / "policy.log").read_text()
     # By default a container is bounded exactly when this process can mount a tmpfs: root.
@@ -291,7 +300,7 @@ def test_nothing_written_to_the_shared_tmpfs_runs(monkeypatch, tmp_path):
     only place code a policy writes runs from. `mount_shared_dir` is the real one, imported before
     the pure suite stands a recorder in; only the `mount` command is caught."""
     calls: list[list[str]] = []
-    monkeypatch.setattr("icil_orchestrator.submissions.container._mount_command", calls.append)
+    monkeypatch.setattr("vector_orchestrator.submissions.container._mount_command", calls.append)
     mount_shared_dir(tmp_path, 1000, 1001)
     ((*command, options, source, target),) = calls
     assert (command, source, target) == (
@@ -332,7 +341,7 @@ def test_hello_through_the_container_keeps_the_session_and_removal_follows(
     )
     shared = tmp_path / "s"
     with PolicyContainer(
-        sandbox_spec, docker, built.tag, name="icil-policy-test", socket_dir=shared, gpus=0
+        sandbox_spec, docker, built.tag, name="vector-policy-test", socket_dir=shared, gpus=0
     ) as container:
         reply = container.hello(sandbox_spec.budgets["policy_start_seconds"])
         assert reply == {"protocol": 1, "action_type": "qpos", "policy": "pkg.policy:Policy"}
@@ -344,7 +353,7 @@ def test_hello_through_the_container_keeps_the_session_and_removal_follows(
         assert container.session.act({"obs": [0.0]}) == {"action": [0.0]}
         # The server unlinks the socket once its one client is in; the log stays.
         assert not container.socket_path.exists() and container.log_path.exists()
-        assert docker.state("icil-policy-test").running and docker.removed == []
+        assert docker.state("vector-policy-test").running and docker.removed == []
         # The key crossed by variable name, in the docker client's environment, and nowhere on
         # the command line; it is 32 random bytes.
         (env,) = docker.run_envs
@@ -352,9 +361,11 @@ def test_hello_through_the_container_keeps_the_session_and_removal_follows(
         assert env[AUTHKEY_ENV] == container.authkey.hex()
         assert not any(env[AUTHKEY_ENV] in arg for arg in docker.runs[0])
         assert "--gpus" not in docker.runs[0]
-    assert docker.removed == ["icil-policy-test"] and not docker.state("icil-policy-test").running
+    assert (
+        docker.removed == ["vector-policy-test"] and not docker.state("vector-policy-test").running
+    )
     container.close()
-    assert docker.removed == ["icil-policy-test"], "removed once"
+    assert docker.removed == ["vector-policy-test"], "removed once"
 
 
 def test_an_owner_is_gone_when_its_process_is_and_not_while_it_runs():
@@ -376,44 +387,44 @@ def test_start_reaps_the_containers_of_processes_that_are_gone_and_nothing_else(
     one from another pid namespace and one with no owner labels are not this process's to judge."""
     ended = ended_process_owner()
     elsewhere = Owner(ended.pid, ended.start, "pid:[1]")
-    policy = {"icil.orchestrator": "policy"}
-    docker.labels["icil-policy-orphan"] = {
+    policy = {"vector.orchestrator": "policy"}
+    docker.labels["vector-policy-orphan"] = {
         **policy,
         **ended.labels(),
-        "icil.shared-dir": str(tmp_path / "gone"),
+        "vector.shared-dir": str(tmp_path / "gone"),
     }
-    docker.labels["icil-policy-alive"] = {**policy, **Owner.current().labels()}
-    docker.labels["icil-policy-elsewhere"] = {**policy, **elsewhere.labels()}
-    docker.labels["icil-policy-unlabelled"] = dict(policy)
+    docker.labels["vector-policy-alive"] = {**policy, **Owner.current().labels()}
+    docker.labels["vector-policy-elsewhere"] = {**policy, **elsewhere.labels()}
+    docker.labels["vector-policy-unlabelled"] = dict(policy)
     root = write_policy_repo(tmp_path / "repo")
     docker.images["x:y"] = FAKE_BASE_DIGEST
     built = build_submission_image(
         docker, sandbox_spec, root, check_repository(root, sandbox_spec), ref, base
     )
     with PolicyContainer(
-        sandbox_spec, docker, built.tag, name="icil-policy-new", socket_dir=tmp_path / "s", gpus=0
+        sandbox_spec, docker, built.tag, name="vector-policy-new", socket_dir=tmp_path / "s", gpus=0
     ) as container:
-        assert container.reaped == ["icil-policy-orphan"]
-        assert docker.removed == ["icil-policy-orphan"]
+        assert container.reaped == ["vector-policy-orphan"]
+        assert docker.removed == ["vector-policy-orphan"]
         # The new container names its owner - this process - and its shared directory.
-        labels = docker.labels["icil-policy-new"]
+        labels = docker.labels["vector-policy-new"]
         assert Owner.from_labels(labels) == Owner.current()
-        assert labels["icil.shared-dir"] == str((tmp_path / "s").absolute())
+        assert labels["vector.shared-dir"] == str((tmp_path / "s").absolute())
     assert sorted(docker.labels) == [
-        "icil-policy-alive",
-        "icil-policy-elsewhere",
-        "icil-policy-unlabelled",
+        "vector-policy-alive",
+        "vector-policy-elsewhere",
+        "vector-policy-unlabelled",
     ]
     # Where /proc cannot say who this process is, or docker cannot list, nothing is reaped.
-    docker.labels["icil-policy-orphan"] = {**policy, **ended.labels()}
+    docker.labels["vector-policy-orphan"] = {**policy, **ended.labels()}
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(docker, "policy_containers", lambda: raise_(DockerError("refused")))
         assert reap_orphans(docker) == []
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(Owner, "current", classmethod(lambda cls: None))
         assert reap_orphans(docker) == []
-    assert "icil-policy-orphan" in docker.labels
-    assert reap_orphans(docker) == ["icil-policy-orphan"], "and once it can, it is"
+    assert "vector-policy-orphan" in docker.labels
+    assert reap_orphans(docker) == ["vector-policy-orphan"], "and once it can, it is"
 
 
 def raise_(exc: Exception):
@@ -429,7 +440,7 @@ def test_a_manifest_naming_a_missing_class_is_rejected_at_hello_and_the_containe
         docker, sandbox_spec, root, check_repository(root, sandbox_spec), ref, base
     )
     container = PolicyContainer(
-        sandbox_spec, docker, built.tag, name="icil-policy-missing", socket_dir=tmp_path / "s"
+        sandbox_spec, docker, built.tag, name="vector-policy-missing", socket_dir=tmp_path / "s"
     )
     with pytest.raises(SubmissionRejected) as info:
         container.hello(sandbox_spec.budgets["policy_start_seconds"])
@@ -438,7 +449,7 @@ def test_a_manifest_naming_a_missing_class_is_rejected_at_hello_and_the_containe
     assert "--- policy log (tail) ---" in info.value.reason, "the server's log travels with it"
     assert container.session is None
     container.close()
-    assert docker.removed == ["icil-policy-missing"]
+    assert docker.removed == ["vector-policy-missing"]
 
 
 def test_a_container_that_exits_before_listening_is_rejected_at_start(
@@ -451,13 +462,13 @@ def test_a_container_that_exits_before_listening_is_rejected_at_start(
     )
     (root / "icil.yaml").unlink()  # the server has nothing to serve and exits 2 at once
     with PolicyContainer(
-        sandbox_spec, docker, built.tag, name="icil-policy-dead", socket_dir=tmp_path / "s"
+        sandbox_spec, docker, built.tag, name="vector-policy-dead", socket_dir=tmp_path / "s"
     ) as container:
         with pytest.raises(SubmissionRejected) as info:
             container.hello(sandbox_spec.budgets["policy_start_seconds"])
     assert info.value.step == "start"
     assert "exited (2) before listening" in info.value.reason
-    assert docker.removed == ["icil-policy-dead"]
+    assert docker.removed == ["vector-policy-dead"]
 
 
 def test_a_policy_that_takes_longer_than_the_budget_to_build_is_rejected(
@@ -479,7 +490,7 @@ def test_a_policy_that_takes_longer_than_the_budget_to_build_is_rejected(
     )
     started = time.monotonic()
     with PolicyContainer(
-        sandbox_spec, docker, built.tag, name="icil-policy-slow", socket_dir=tmp_path / "s"
+        sandbox_spec, docker, built.tag, name="vector-policy-slow", socket_dir=tmp_path / "s"
     ) as container:
         with pytest.raises(SubmissionRejected) as info:
             container.hello(3.0)

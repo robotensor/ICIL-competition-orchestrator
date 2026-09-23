@@ -9,7 +9,7 @@ the spec's tmpfs is the only place code a policy writes can run from: elsewhere 
 read-only, or the mount (/dev/shm, the shared socket directory) is noexec. The network, the user,
 the limits and what a policy cannot see are `test_submission_container.py`'s.
 
-Containers are named `icil-jit-*`, and the images built here are removed when the module ends.
+Containers are named `vector-jit-*`, and the images built here are removed when the module ends.
 """
 
 from __future__ import annotations
@@ -22,20 +22,20 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from icil_orchestrator.submissions.checks import check_repository
-from icil_orchestrator.submissions.container import (
+from vector_orchestrator.submissions.checks import check_repository
+from vector_orchestrator.submissions.container import (
     SOCKET_DIR,
     PolicyContainer,
     policy_environment,
 )
-from icil_orchestrator.submissions.docker import Docker, DockerError
-from icil_orchestrator.submissions.fetch import LocalFetcher, RepoCache
-from icil_orchestrator.submissions.image import (
+from vector_orchestrator.submissions.docker import Docker, DockerError
+from vector_orchestrator.submissions.fetch import LocalFetcher, RepoCache
+from vector_orchestrator.submissions.image import (
     build_base_image,
     build_submission_image,
     sandbox_user,
 )
-from icil_policy.errors import PolicyUnavailable
+from vector_policy.errors import PolicyUnavailable
 
 pytestmark = pytest.mark.container
 
@@ -65,7 +65,7 @@ import os
 os.environ["MAX_JOBS"] = "1"
 from torch.utils.cpp_extension import load_inline
 module = load_inline(
-    "icil_jit_twice", cpp_sources="int twice(int x) { return 2 * x; }", functions=["twice"]
+    "vector_jit_twice", cpp_sources="int twice(int x) { return 2 * x; }", functions=["twice"]
 )
 print(module.twice(21))
 """
@@ -165,7 +165,7 @@ def jit_image(build):
 def jit(spec, docker, jit_image, tmp_path):
     """The C-compiling policy in its container, past `hello`, with no GPU."""
     container = PolicyContainer(
-        spec, docker, jit_image.tag, name="icil-jit-cjit", socket_dir=tmp_path / "s", gpus=0
+        spec, docker, jit_image.tag, name="vector-jit-cjit", socket_dir=tmp_path / "s", gpus=0
     )
     try:
         container.hello(spec.budgets["policy_start_seconds"])
@@ -212,7 +212,7 @@ def test_the_same_compile_anywhere_but_tmp_is_not_written_or_not_run(
     """The policy compiling into /submission - its own checkout, owned by its user - fails at act,
     and the served session goes on. By hand: the root and the image's directories refuse the
     shared object, /tmp takes it and loads it, and /dev/shm (the other tmpfs Docker gives a
-    container) and /run/icil (the socket directory, which the policy may write) take it and refuse
+    container) and /run/vector (the socket directory, which the policy may write) take it and refuse
     to run it."""
     outside = shutil.copytree(JIT_POLICY, tmp_path / "outside")
     (outside / "icil.yaml").write_text(
@@ -220,7 +220,7 @@ def test_the_same_compile_anywhere_but_tmp_is_not_written_or_not_run(
     )
     image = build(outside, "local/jit_outside")
     with PolicyContainer(
-        spec, docker, image.tag, name="icil-jit-outside", socket_dir=tmp_path / "o", gpus=0
+        spec, docker, image.tag, name="vector-jit-outside", socket_dir=tmp_path / "o", gpus=0
     ) as container:
         container.hello(spec.budgets["policy_start_seconds"])
         with pytest.raises(PolicyUnavailable) as info:
@@ -329,7 +329,7 @@ def test_a_torch_compiled_act_runs_on_the_cpu_in_the_sandbox(spec, docker, build
     size = int(docker._run(["image", "inspect", "--format", "{{.Size}}", image.tag]).stdout)
     env = policy_environment(spec)
     with PolicyContainer(
-        spec, docker, image.tag, name="icil-jit-torch", socket_dir=tmp_path / "s", gpus=0
+        spec, docker, image.tag, name="vector-jit-torch", socket_dir=tmp_path / "s", gpus=0
     ) as container:
         started = time.monotonic()
         container.hello(spec.budgets["policy_start_seconds"])

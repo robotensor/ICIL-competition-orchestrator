@@ -1,16 +1,16 @@
-# ICIL competition orchestrator
+# Robotensor Vector orchestrator
 
-The orchestration layer of the Robotensor one-demonstration in-context imitation learning (ICIL)
-competition. It queues submissions, runs duels between a challenger and the reigning king, scores
+The orchestration layer of Robotensor Vector, the subnet's action-grounded in-context learning
+competition (Competition 1). It queues submissions, runs duels between a challenger and the reigning king, scores
 them, publishes a signed result store and streams live progress to the dashboard.
 
 It contains no benchmark. Benchmarks are separate repositories plugged in through the
-`icil.benchmarks` entry point group; the first is
-[ICIL-robotwin-benchmark](https://github.com/robotensor/ICIL-robotwin-benchmark). A submission is a
+`robotensor.benchmarks` entry point group; the first is
+[RoboTwin-Vector](https://github.com/robotensor/RoboTwin-Vector). A submission is a
 HuggingFace repository with runnable policy code and weights, run in a sandboxed container with no
 network.
 
-The policy protocol lives in [`packages/icil-policy`](packages/icil-policy), a distribution of its
+The policy protocol lives in [`packages/vector-policy`](packages/vector-policy), a distribution of its
 own: a competitor's policy is served in its own process and a benchmark drives it over named
 arrays.
 
@@ -20,34 +20,34 @@ store, the queue and its HTTP intake, live frames, the policy protocol, the poli
 are in place; the first smoke duel on RoboTwin's `franka_1arm` suite is next.
 
 ```bash
-uv venv --python 3.10 .venv && uv pip install -e ".[dev]" -e packages/icil-policy
+uv venv --python 3.10 .venv && uv pip install -e ".[dev]" -e packages/vector-policy
 
-icil-orchestrator benchmarks list              # declared and installed benchmarks, no import
-icil-orchestrator benchmarks check robotwin    # pin, ABI, catalogue, derivation, command builders
+vector-orchestrator benchmarks list              # declared and installed benchmarks, no import
+vector-orchestrator benchmarks check robotwin    # pin, ABI, catalogue, derivation, command builders
 
-icil-orchestrator store init store/            # signing key in keys/ (generated if absent)
-icil-orchestrator store verify store/ --validator-key <hex>   # signatures, events, media, schema
-icil-orchestrator store mirror store/ --repo owner/dataset
+vector-orchestrator store init store/            # signing key in keys/ (generated if absent)
+vector-orchestrator store verify store/ --validator-key <hex>   # signatures, events, media, schema
+vector-orchestrator store mirror store/ --repo owner/dataset
 
-icil-orchestrator queue --store store/ add owner/policy main --duel-size smoke   # resolved to its commit
-icil-orchestrator queue list
+vector-orchestrator queue --store store/ add owner/policy main --duel-size smoke   # resolved to its commit
+vector-orchestrator queue list
 
 python -c 'import secrets; print(secrets.token_urlsafe(32))'   # an admin token, made once
-read -rs ICIL_ADMIN_TOKEN && export ICIL_ADMIN_TOKEN           # pasted, so not in shell history
-icil-orchestrator admin serve --store store/   # the dashboard's submit form posts here:
+read -rs VECTOR_ADMIN_TOKEN && export VECTOR_ADMIN_TOKEN           # pasted, so not in shell history
+vector-orchestrator admin serve --store store/   # the dashboard's submit form posts here:
                                                # 127.0.0.1:8799, bearer token
 
-icil-orchestrator submission build-base                  # docker/policy-base, prints its digest
-icil-orchestrator submission check owner/policy@main --base-image sha256:<hex>   # resolve, fetch,
+vector-orchestrator submission build-base                  # docker/policy-base, prints its digest
+vector-orchestrator submission check owner/policy@main --base-image sha256:<hex>   # resolve, fetch,
                                                          # manifest, build, run, hello; reported
-icil-orchestrator submission check local/replay@main --local packages/icil-policy/examples/replay_policy
-icil-orchestrator submission prune                       # the icil-submission images nothing uses
+vector-orchestrator submission check local/replay@main --local packages/vector-policy/examples/replay_policy
+vector-orchestrator submission prune                       # the vector-submission images nothing uses
 
-icil-orchestrator duel --track franka_1arm --challenger owner/policy@main --size smoke \
+vector-orchestrator duel --track franka_1arm --challenger owner/policy@main --size smoke \
     --store store/ --run-dir runs/ --base-image sha256:<hex>   # one duel, or genesis, published
-icil-orchestrator daemon --store store/ --run-dir runs/ --queue queue/ \
-    --live-url https://dashboard --live-token-env ICIL_LIVE_TOKEN   # serve the queues
-icil-orchestrator daemon --store store/ --run-dir runs/ --queue queue/ --admin   # and the intake,
+vector-orchestrator daemon --store store/ --run-dir runs/ --queue queue/ \
+    --live-url https://dashboard --live-token-env VECTOR_LIVE_TOKEN   # serve the queues
+vector-orchestrator daemon --store store/ --run-dir runs/ --queue queue/ --admin   # and the intake,
                                                # as admin serve does, in the same process
 ```
 
@@ -96,8 +96,8 @@ its subprocess has before it is killed, so it can write why a unit it cannot fin
 calls together, never more than that timeout less the benchmark's own result reserve. It is also
 given `policy_log`, a copy of the end of the policy's log kept beside its result while it runs,
 never the log file the policy itself writes. It runs with an allow-listed environment: the locale,
-the interpreter's paths, what a GPU simulator reads, RoboTwin's `ROBOTWIN_ICIL_PYTHON` and
-`ROBOTWIN_ICIL_DENOISER`, and never `HF_TOKEN` or the live token. A benchmark may choose a unit's
+the interpreter's paths, what a GPU simulator reads, RoboTwin's `ROBOTWIN_BENCH_PYTHON` and
+`ROBOTWIN_BENCH_DENOISER`, and never `HF_TOKEN` or the live token. A benchmark may choose a unit's
 scene only while it materializes (RoboTwin's expert tries the unit's candidate seeds in order), so
 a published unit's `instance_params.scene_seed` is the seed its prompt was built on.
 
@@ -141,7 +141,7 @@ Deploy the dashboard before this orchestrator: its live ingest must accept the `
 phase, which every duel reports between `checking` and `evaluating`, or those frames are refused.
 
 `admin serve` is the intake the dashboard's dev-mode submit form posts to (the dashboard's
-`ICIL_ADMIN_URL` and `ICIL_ADMIN_TOKEN`): `GET /admin/health` answers
+`VECTOR_ADMIN_URL` and `VECTOR_ADMIN_TOKEN`): `GET /admin/health` answers
 `{ok, spec_version, tracks, queue_lengths}`, and `POST /admin/submissions` takes
 `{repo, revision, track, duel_size, source}`, resolves the revision as `queue add` does (null is the
 repository's default branch; a ref under `refs/`, and a commit only a pull request holds, are
@@ -151,14 +151,14 @@ waiting answers with the place it has and queues nothing, or 409 if it waits at 
 It is for organizers on a private network, not for competitors and not for the internet: plain
 HTTP, bound to `127.0.0.1` unless `--host` says otherwise, and every request carries exactly one
 `Authorization: Bearer <token>`. The token is read from the environment variable `--token-env`
-names (`ICIL_ADMIN_TOKEN` by default) and never from the command line; it must be 32 or more
+names (`VECTOR_ADMIN_TOKEN` by default) and never from the command line; it must be 32 or more
 printable ASCII characters with no space, it is compared in constant time and never logged, and
 without it the server does not start. A request has 10 s to arrive whole, with headers of at most
 16 KB and a JSON body of at most 8 KB with a `Content-Length` (chunked is refused); at most 64
 connections are served at once. An unknown field, track or duel size is refused before the Hub is
 asked. The Hub refusing a revision is a 422 with its reason, a Hub that cannot be asked a 503. The
 Hub is given 5 s for each step of its request and resolving 5 s in all: past that nothing is queued
-and the answer is 503, because the dashboard, waiting `ICIL_ADMIN_TIMEOUT_MS` (6 s by default), has
+and the answer is 503, because the dashboard, waiting `VECTOR_ADMIN_TIMEOUT_MS` (6 s by default), has
 already reported a timeout.
 
 `daemon --admin` serves the same intake beside the duel loop, in the daemon's process and on its
@@ -176,4 +176,4 @@ of the checkout and off the mirror: `/keys/` and `/queue/` are git-ignored, and 
 the store's layout and nothing beside it.
 
 `tests/fixtures/store` is a small signed history for rendering the dashboard
-(`ICIL_STORE=$PWD/tests/fixtures/store npm run dev` in the dashboard); it is not a result.
+(`VECTOR_STORE=$PWD/tests/fixtures/store npm run dev` in the dashboard); it is not a result.

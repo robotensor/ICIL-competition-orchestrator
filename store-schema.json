@@ -1,8 +1,8 @@
 {
  "$schema": "https://json-schema.org/draft/2020-12/schema",
- "$id": "https://robotensor.ai/icil-competition/store-schema.json",
- "title": "ICIL competition result store",
- "description": "Shapes of every file the orchestrator publishes. Records may carry extra fields; readers ignore what they do not know. Schema 2: scores are per skill (see spec.json `skills`), not per perturbation axis. Schema 3: a unit is a task, an initial state, a prompt demonstration and a seed; it carries instance_params instead of a perturbation group. Schema 4: records are filed per track (spec.json `tracks`); a unit's prompt carries the demonstration view it was read under. icil-orchestrator writes schema 4 unchanged: `ModelRef` names a submission, which is a Hugging Face repository of policy code at a revision.",
+ "$id": "https://robotensor.ai/vector-competition/store-schema.json",
+ "title": "Robotensor Vector result store",
+ "description": "Shapes of every file the orchestrator publishes. Records may carry extra fields; readers ignore what they do not know. Schema 2: scores are per skill (see spec.json `skills`), not per perturbation axis. Schema 3: a unit is a task, an initial state, a prompt demonstration and a seed; it carries instance_params instead of a perturbation group. Schema 4: records are filed per track (spec.json `tracks`); a unit's prompt carries the demonstration view it was read under. vector-orchestrator writes schema 4 unchanged: `ModelRef` names a submission, which is a Hugging Face repository of policy code at a revision.",
  "$defs": {
   "sha256": {
    "type": "string",

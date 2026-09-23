@@ -8,10 +8,10 @@ import subprocess
 import time
 from pathlib import Path
 
-from icil_orchestrator.benchmarks.subprocess_runner import run_argv
-from icil_orchestrator.duel import orphans
-from icil_orchestrator.duel.orphans import Ledger, boot_id, reap_ledger, reap_run_root
-from icil_orchestrator.store.writer import atomic_write_json
+from vector_orchestrator.benchmarks.subprocess_runner import run_argv
+from vector_orchestrator.duel import orphans
+from vector_orchestrator.duel.orphans import Ledger, boot_id, reap_ledger, reap_run_root
+from vector_orchestrator.store.writer import atomic_write_json
 
 TRACK = "franka_1arm"
 

@@ -8,7 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from icil_orchestrator.spec import load_spec, load_spec_file
+from vector_orchestrator.benchmarks.api import ENTRY_POINT_GROUP
+from vector_orchestrator.spec import load_spec, load_spec_file
 
 TRACK = "franka_1arm"
 
@@ -17,13 +18,13 @@ TRACK = "franka_1arm"
 #: as it finds a pip-installed one.
 FAKE_SITE = Path(__file__).resolve().parent / "fake_benchmark"
 FAKE_PIN = {
-    "distribution": "icil-fake-benchmark",
+    "distribution": "vector-fake-benchmark",
     "api_version": 1,
     "version": "0.1.0",
     "wheel_sha256": None,
 }
 #: Modules the fake distributions bring; dropped after each test so none leaks into the next.
-FAKE_MODULE_PREFIXES = ("icil_fake_benchmark", "icil_fake_simulator", "icil_variant_")
+FAKE_MODULE_PREFIXES = ("vector_fake_benchmark", "vector_fake_simulator", "vector_variant_")
 
 
 @pytest.fixture(scope="session")
@@ -62,11 +63,11 @@ def shared_mounts(request, monkeypatch):
     calls: list[tuple] = []
     if request.node.get_closest_marker("container") is None:
         monkeypatch.setattr(
-            "icil_orchestrator.submissions.container.mount_shared_dir",
+            "vector_orchestrator.submissions.container.mount_shared_dir",
             lambda directory, uid, gid: calls.append(("mount", Path(directory), uid, gid)),
         )
         monkeypatch.setattr(
-            "icil_orchestrator.submissions.container.unmount_shared_dir",
+            "vector_orchestrator.submissions.container.unmount_shared_dir",
             lambda directory: calls.append(("umount", Path(directory))),
         )
     return calls
@@ -134,12 +135,13 @@ def install_distribution(tmp_path, monkeypatch):
         modules: dict[str, str],
         version: str = "0.1.0",
         direct_url: dict | None = None,
+        group: str = ENTRY_POINT_GROUP,
     ) -> Path:
         site = tmp_path / f"site-{name}"
         info = site / f"{name.replace('-', '_')}-{version}.dist-info"
         info.mkdir(parents=True)
         (info / "METADATA").write_text(f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n")
-        lines = ["[icil.benchmarks]"] + [f"{k} = {v}" for k, v in entry_points.items()]
+        lines = [f"[{group}]"] + [f"{k} = {v}" for k, v in entry_points.items()]
         (info / "entry_points.txt").write_text("\n".join(lines) + "\n")
         if direct_url is not None:
             (info / "direct_url.json").write_text(json.dumps(direct_url))

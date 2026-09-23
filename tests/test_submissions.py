@@ -12,24 +12,24 @@ import httpx
 import pytest
 from huggingface_hub.errors import HfHubHTTPError
 
-from icil_orchestrator.ids import SubmissionRef, is_commit_sha
-from icil_orchestrator.spec import load_spec_file
-from icil_orchestrator.submissions import SubmissionError, SubmissionRejected
-from icil_orchestrator.submissions.checks import check_repository, regular_file_inside
-from icil_orchestrator.submissions.fetch import (
+from submission_helpers import SHA_A, SHA_B, FakeHub, hub_response, write_policy_repo
+from vector_orchestrator.ids import SubmissionRef, is_commit_sha
+from vector_orchestrator.spec import load_spec_file
+from vector_orchestrator.submissions import SubmissionError, SubmissionRejected
+from vector_orchestrator.submissions.checks import check_repository, regular_file_inside
+from vector_orchestrator.submissions.fetch import (
     HubFetcher,
     LocalFetcher,
     RepoCache,
     measure,
     tree_hash,
 )
-from icil_orchestrator.submissions.resolve import (
+from vector_orchestrator.submissions.resolve import (
     Resolved,
     check_reachable,
     resolve,
     resolve_for_queue,
 )
-from submission_helpers import SHA_A, SHA_B, FakeHub, hub_response, write_policy_repo
 
 # -- resolve ------------------------------------------------------------------------------------
 
@@ -342,7 +342,7 @@ def test_a_local_directory_is_addressed_by_its_tree_and_copied_links_as_links(
 
 # -- checks -------------------------------------------------------------------------------------
 
-EXAMPLES = Path(__file__).resolve().parents[1] / "packages" / "icil-policy" / "examples"
+EXAMPLES = Path(__file__).resolve().parents[1] / "packages" / "vector-policy" / "examples"
 
 
 def test_the_replay_example_passes_the_manifest_check(spec):
@@ -409,7 +409,7 @@ def test_requirements_must_be_a_plain_file_inside_the_repository(spec, tmp_path)
     with pytest.raises(SubmissionRejected, match="leaves the repository"):
         check_repository(root, spec)
 
-    # A link to a file that is inside: icil_policy resolves it happily; this check does not.
+    # A link to a file that is inside: vector_policy resolves it happily; this check does not.
     (root / "deps").mkdir()
     (root / "deps" / "requirements.txt").write_text("numpy\n")
     os.symlink("deps/requirements.txt", root / "requirements.txt")

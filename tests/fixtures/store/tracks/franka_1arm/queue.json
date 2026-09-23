@@ -5,17 +5,17 @@
       "accepted_at": "2026-09-13T11:45:00Z",
       "commit_block": 2,
       "duel_size": "smoke",
-      "key": "60f8d1e4f04c6a67",
+      "key": "5b1b089bc42994f0",
       "position": 1,
-      "repo": "robotensor/icil-example-policy",
+      "repo": "robotensor/vector-example-policy",
       "revision": "0000000000000000000000000000000000000003",
       "skip_model_config_check": false
     }
   ],
   "in_progress": null,
   "king": {
-    "key": "c1a90bff152ab2ae",
-    "repo": "robotensor/icil-replay-policy",
+    "key": "5b198df3b615b746",
+    "repo": "robotensor/vector-replay-policy",
     "revision": "0000000000000000000000000000000000000002"
   },
   "schema": 4,

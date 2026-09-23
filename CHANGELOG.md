@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- (refactor): the competition this orchestrates is Robotensor Vector, and the code says so:
+  `icil_orchestrator` is `vector_orchestrator`, `icil-policy` is `vector-policy` (package
+  `vector_policy`), the console script is `vector-orchestrator`, and the container labels, socket
+  directory and `ICIL_*` variables take the new word. `VECTOR_ORCHESTRATOR_SPEC`,
+  `VECTOR_ORCHESTRATOR_STORE_SCHEMA` and `VECTOR_POLICY_PYTHON` still read the `ICIL_*` name they
+  had; `$ICIL_ADMIN_TOKEN` does not, because `--token-env` names the variable a host uses.
+- (refactor): a benchmark advertises itself in the `robotensor.benchmarks` entry point group. The
+  group is the company's, not a competition's, because third parties register into it;
+  `icil.benchmarks` is still read, so a benchmark published under it keeps being found.
+- (refactor): the benchmark fork is `robotensor/RoboTwin-Vector`, whose harness moved from `icil/`
+  to `bench/` (`robotwin-bench`, package `robotwin_bench`, plugin package
+  `robotensor_benchmark_robotwin`) and whose interpreter variable is `ROBOTWIN_BENCH_PYTHON`.
+- The contract keeps its names in this change: `specs/bpp_l1.json`, the `bpp_l1` track,
+  `bpp_level1`, `robotwin-icil-competition`, `icil.yaml` and `icil-policy-base` are hashed into
+  the spec fingerprint, which moves exactly once, in its own change.
+
 - (feat): `--workers N` (`Orchestrator(workers=)`): a duel materializes and plays N units at once,
   each a subprocess and a policy server of its own; records are written as units finish.
 - (feat): a stall watchdog for hung simulators (`budgets.stall_seconds`, `stall_retries`): a

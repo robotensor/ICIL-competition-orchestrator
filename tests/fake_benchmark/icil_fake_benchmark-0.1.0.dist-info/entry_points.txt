@@ -1,2 +1,0 @@
-[icil.benchmarks]
-fake = icil_fake_benchmark

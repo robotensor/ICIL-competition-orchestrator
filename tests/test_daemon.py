@@ -18,16 +18,16 @@ from duel_helpers import (
     RecordingReporter,
     harness_voiding,
 )
-from icil_orchestrator.benchmarks.units import plugin_units
-from icil_orchestrator.canon import Signer
-from icil_orchestrator.daemon import Daemon
-from icil_orchestrator.duel.orchestrate import DuelRequest, Orchestrator
-from icil_orchestrator.ids import SubmissionRef
-from icil_orchestrator.queue import Queues
-from icil_orchestrator.spec import load_schema
-from icil_orchestrator.store.verify import Report, SchemaCheck, verify_store
-from icil_orchestrator.store.writer import Store, store_lock
 from store_helpers import make_record, publish
+from vector_orchestrator.benchmarks.units import plugin_units
+from vector_orchestrator.canon import Signer
+from vector_orchestrator.daemon import Daemon
+from vector_orchestrator.duel.orchestrate import DuelRequest, Orchestrator
+from vector_orchestrator.ids import SubmissionRef
+from vector_orchestrator.queue import Queues
+from vector_orchestrator.spec import load_schema
+from vector_orchestrator.store.verify import Report, SchemaCheck, verify_store
+from vector_orchestrator.store.writer import Store, store_lock
 
 TRACK = "franka_1arm"
 
@@ -186,7 +186,7 @@ def test_a_duel_resumed_while_its_benchmark_is_missing_stays_in_progress_for_a_l
 def test_a_duel_the_hub_or_docker_cannot_serve_stays_in_progress_for_a_later_try(
     duel_spec, store, queues, tmp_path
 ):
-    from icil_orchestrator.duel.runtime import RuntimeUnavailable
+    from vector_orchestrator.duel.runtime import RuntimeUnavailable
 
     class Down(FakePolicyRuntime):
         def fetch(self, ref, *, workdir):
@@ -244,7 +244,7 @@ def test_a_king_whose_repository_is_gone_forfeits_and_the_challenger_is_crowned(
 ):
     """A king cannot hold the track by taking its repository private: it forfeits, and each
     challenger's entry buys a duel it can win."""
-    from icil_orchestrator.duel.runtime import SubmissionRefused
+    from vector_orchestrator.duel.runtime import SubmissionRefused
 
     publish(store, duel_spec, make_record(duel_spec, "genesis", 1, ZERO_REF, None))
     add(queues, REPLAY_REF)
@@ -340,7 +340,7 @@ def test_a_step_that_keeps_crashing_is_retried_with_an_exponential_backoff(
 
 
 def test_the_daemon_command_takes_its_backoff_cap():
-    from icil_orchestrator.cli import build_parser
+    from vector_orchestrator.cli import build_parser
 
     args = build_parser().parse_args(["daemon", "--store", "s", "--run-dir", "r"])
     assert args.max_backoff == 300.0

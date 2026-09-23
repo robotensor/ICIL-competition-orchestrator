@@ -9,18 +9,18 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from icil_orchestrator.duel.local_runtime import SubprocessPolicyRuntime
-from icil_orchestrator.ids import SubmissionRef
-from icil_orchestrator.live import LiveReporter
-from icil_orchestrator.submissions.docker import DockerTimeout
 from submission_helpers import FakeDocker
+from vector_orchestrator.duel.local_runtime import SubprocessPolicyRuntime
+from vector_orchestrator.ids import SubmissionRef
+from vector_orchestrator.live import LiveReporter
+from vector_orchestrator.submissions.docker import DockerTimeout
 
-EXAMPLES = Path(__file__).resolve().parents[1] / "packages" / "icil-policy" / "examples"
+EXAMPLES = Path(__file__).resolve().parents[1] / "packages" / "vector-policy" / "examples"
 REPLAY = EXAMPLES / "replay_policy"
 ZERO = EXAMPLES / "zero_policy"
 
-REPLAY_REF = SubmissionRef.make("robotensor/icil-replay-policy", "2" * 40)
-ZERO_REF = SubmissionRef.make("robotensor/icil-zero-policy", "1" * 40)
+REPLAY_REF = SubmissionRef.make("robotensor/vector-replay-policy", "2" * 40)
+ZERO_REF = SubmissionRef.make("robotensor/vector-zero-policy", "1" * 40)
 
 
 class Crash(BaseException):
@@ -90,9 +90,9 @@ class FakePolicyRuntime(SubprocessPolicyRuntime):
 def harness_voiding(units: set[str], side: str = "challenger"):
     """The fake benchmark, reporting `units` of `side` void for the harness's cause once their
     policy was driven: a simulator that lost the scene, which is nobody's loss."""
-    import icil_fake_benchmark
+    import vector_fake_benchmark
 
-    class HarnessVoiding(icil_fake_benchmark.FakeBenchmark):
+    class HarnessVoiding(vector_fake_benchmark.FakeBenchmark):
         def run_command(self, *, unit, prompt, out_dir, policy_address, authkey_env, **extra):
             if unit["unit_id"] in units and Path(out_dir).parent.name == side:
                 unit = {**unit, "fake_behaviour": "policy_then_void", "fake_void_cause": "harness"}

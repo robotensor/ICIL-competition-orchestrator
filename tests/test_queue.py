@@ -5,10 +5,10 @@ import threading
 
 import pytest
 
-from icil_orchestrator.ids import SubmissionRef
-from icil_orchestrator.queue import Queue, Queues
-from icil_orchestrator.spec import load_schema
-from icil_orchestrator.store.verify import Report, SchemaCheck
+from vector_orchestrator.ids import SubmissionRef
+from vector_orchestrator.queue import Queue, Queues
+from vector_orchestrator.spec import load_schema
+from vector_orchestrator.store.verify import Report, SchemaCheck
 
 
 def test_queue_replace_moves_to_back_and_persists(tmp_path):

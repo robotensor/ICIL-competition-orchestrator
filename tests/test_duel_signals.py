@@ -1,6 +1,6 @@
 """A duel stopped by a signal takes its unit's policy server and benchmark down before it exits.
 
-These run `icil-orchestrator duel` as a real process on the local runtime, with a policy slowed
+These run `vector-orchestrator duel` as a real process on the local runtime, with a policy slowed
 down so that a unit is surely under way, and look in /proc for what it left running.
 """
 
@@ -19,8 +19,8 @@ import pytest
 
 from conftest import FAKE_SITE
 from duel_helpers import REPLAY
-from icil_orchestrator.cli import main
-from icil_orchestrator.ids import SubmissionRef
+from vector_orchestrator.cli import main
+from vector_orchestrator.ids import SubmissionRef
 
 TRACK = "franka_1arm"
 SLOW_REF = SubmissionRef.make("org/slow-policy", "8" * 40)
@@ -99,7 +99,7 @@ def start_duel(spec, tmp_path: Path, slow: Path) -> subprocess.Popen:
     root, key = tmp_path / "store", tmp_path / "keys" / "orchestrator.ed25519"
     assert main(["--spec", str(spec.path), "store", "init", str(root), "--key", str(key)]) == 0
     env = {**os.environ, "PYTHONPATH": os.pathsep.join([str(FAKE_SITE), *sys.path])}
-    argv = [sys.executable, "-m", "icil_orchestrator", *duel_args(spec, tmp_path, slow)]
+    argv = [sys.executable, "-m", "vector_orchestrator", *duel_args(spec, tmp_path, slow)]
     log = open(tmp_path / "duel.log", "wb")  # noqa: SIM115 - the child writes it until it exits
     return subprocess.Popen(argv, env=env, stdout=log, stderr=subprocess.STDOUT, cwd=tmp_path)
 
@@ -153,7 +153,7 @@ def test_what_a_duel_killed_outright_left_is_reaped_before_its_unit_runs_again(
 ):
     """SIGKILL runs no teardown. The next start ends the orphans first - while they are still
     playing the unit - and the unit runs again in a directory of its own."""
-    from icil_orchestrator.duel.orchestrate import Orchestrator
+    from vector_orchestrator.duel.orchestrate import Orchestrator
 
     flag = tmp_path / "slow.flag"
     flag.touch()

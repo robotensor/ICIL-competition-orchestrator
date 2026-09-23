@@ -1,4 +1,4 @@
-"""`icil-orchestrator store init|verify` and `queue add|list|remove`, through the console script."""
+"""`vector-orchestrator store init|verify` and `queue add|list|remove`, through the console script."""
 
 from __future__ import annotations
 
@@ -9,13 +9,13 @@ from pathlib import Path
 
 import pytest
 
-from icil_orchestrator.canon import Signer
-from icil_orchestrator.cli import main
-from icil_orchestrator.ids import SubmissionRef
-from icil_orchestrator.queue import Queue
-from icil_orchestrator.store.writer import Store
 from store_helpers import TRACK, make_record, publish
 from submission_helpers import SHA_A, FakeHub
+from vector_orchestrator.canon import Signer
+from vector_orchestrator.cli import main
+from vector_orchestrator.ids import SubmissionRef
+from vector_orchestrator.queue import Queue
+from vector_orchestrator.store.writer import Store
 
 SHA_1, SHA_2 = "1" * 40, "2" * 40
 
@@ -31,7 +31,7 @@ def hub(monkeypatch):
 
 
 def cli(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
-    script = Path(sysconfig.get_path("scripts")) / "icil-orchestrator"
+    script = Path(sysconfig.get_path("scripts")) / "vector-orchestrator"
     return subprocess.run([str(script), *args], capture_output=True, text=True, cwd=cwd)
 
 
@@ -165,7 +165,7 @@ def test_queue_add_list_remove_and_publish_the_snapshot(spec, hub, tmp_path, cap
 
 
 def test_queue_add_waits_for_no_one_while_a_duel_holds_the_store(spec, hub, tmp_path, capsys):
-    from icil_orchestrator.store.writer import store_lock
+    from vector_orchestrator.store.writer import store_lock
 
     queue, root = tmp_path / "queue", tmp_path / "store"
     assert main(["store", "init", str(root), "--key", str(tmp_path / "k")]) == 0

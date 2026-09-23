@@ -19,17 +19,17 @@ from pathlib import Path
 
 import pytest
 
-from icil_orchestrator.benchmarks import subprocess_runner as runner
+from vector_orchestrator.benchmarks import subprocess_runner as runner
 
-EXAMPLES = Path(__file__).resolve().parents[1] / "packages" / "icil-policy" / "examples"
-AUTHKEY_ENV = "ICIL_TEST_POLICY_AUTHKEY"
+EXAMPLES = Path(__file__).resolve().parents[1] / "packages" / "vector-policy" / "examples"
+AUTHKEY_ENV = "VECTOR_TEST_POLICY_AUTHKEY"
 
 
 @pytest.fixture
 def fake(fake_installed):
-    import icil_fake_benchmark
+    import vector_fake_benchmark
 
-    return icil_fake_benchmark.BENCHMARK
+    return vector_fake_benchmark.BENCHMARK
 
 
 def a_unit(fake, **extra):
@@ -47,14 +47,14 @@ def materialized(fake, unit, out: Path) -> Path:
 
 
 def serve(example: str, workdir: Path):
-    """`python -m icil_policy.serve` on an example repository; `(process, address, key)`."""
+    """`python -m vector_policy.serve` on an example repository; `(process, address, key)`."""
     key = secrets.token_bytes(32)
-    address = Path(tempfile.mkdtemp(prefix="icil-duel-test-")) / "policy.sock"
+    address = Path(tempfile.mkdtemp(prefix="vector-duel-test-")) / "policy.sock"
     process = subprocess.Popen(
         [
             sys.executable,
             "-m",
-            "icil_policy.serve",
+            "vector_policy.serve",
             "--manifest",
             str(EXAMPLES / example / "icil.yaml"),
             "--address",
@@ -84,7 +84,7 @@ def test_a_prompt_is_named_arrays_with_its_meta_and_verifies(fake, tmp_path):
         assert arrays["actions"].shape == (5, 16)
     verdict = fake.verify_prompt(path=str(prompt), unit=unit)
     assert verdict["ok"], verdict["problems"]
-    from icil_orchestrator.canon import sha256_file
+    from vector_orchestrator.canon import sha256_file
 
     assert verdict["sha256"] == sha256_file(prompt)
 
