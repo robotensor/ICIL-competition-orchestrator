@@ -3,8 +3,8 @@ requires = ["hatchling>=1.25"]
 build-backend = "hatchling.build"
 
 [project]
-name = "vector-policy"
-version = "0.1.0.dev0"
+name = "robotensor-vector-policy"
+version = "0.2.0"
 description = "The policy protocol of Robotensor Vector: a policy served in its own process."
 readme = "README.md"
 license = { text = "Apache-2.0" }

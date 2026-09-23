@@ -3,8 +3,10 @@ requires = ["hatchling>=1.25"]
 build-backend = "hatchling.build"
 
 [project]
-name = "vector-orchestrator"
-version = "0.1.0.dev0"
+# The family is `robotensor-*` on PyPI, so what belongs to this subnet is visible at a glance
+# and the names cannot be taken by anyone else. The command keeps the short name.
+name = "robotensor-vector-engine"
+version = "0.2.0"
 description = "Orchestration layer of Robotensor Vector, the action-grounded in-context learning competition."
 readme = "README.md"
 license = { file = "LICENSE" }

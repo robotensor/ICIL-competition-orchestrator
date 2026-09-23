@@ -3,8 +3,8 @@ requires = ["hatchling>=1.25"]
 build-backend = "hatchling.build"
 
 [project]
-name = "vector-runtime"
-version = "0.1.0.dev0"
+name = "robotensor-vector-runtime"
+version = "0.2.0"
 description = "The validator's own BPP model runtime: build from a pinned template, load weights-only submissions, serve them."
 readme = "README.md"
 license = { text = "Apache-2.0" }
