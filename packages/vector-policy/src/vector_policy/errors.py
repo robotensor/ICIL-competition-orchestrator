@@ -8,7 +8,7 @@ class WireError(ValueError):
 
 
 class ManifestError(ValueError):
-    """An `icil.yaml` that cannot be served. The message lists every problem, not just the first."""
+    """An `policy.yaml` that cannot be served. The message lists every problem, not just the first."""
 
     def __init__(self, path: str, problems: list[str]) -> None:
         self.path = path

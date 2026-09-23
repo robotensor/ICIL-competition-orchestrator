@@ -1,4 +1,4 @@
-"""`icil.yaml`: what a competitor's repository serves, and how.
+"""`policy.yaml`: what a competitor's repository serves, and how.
 
     api: 1                              # required; the version of this schema and of the protocol
     policy: my_policy.policy:MyPolicy   # required; module:Class, importable from the repo root
@@ -30,7 +30,7 @@ from .errors import ManifestError
 API_VERSION = 1
 
 #: The file name a competitor's repository holds its manifest under.
-FILENAME = "icil.yaml"
+FILENAME = "policy.yaml"
 
 #: The largest manifest read. One names a class and a few constructor arguments.
 MAX_BYTES = 1 << 20
@@ -51,7 +51,7 @@ _PARSER_CHARS = 1000
 
 @dataclass(frozen=True)
 class Manifest:
-    """A valid `icil.yaml`. `root` is the directory holding it: the competitor's repository."""
+    """A valid `policy.yaml`. `root` is the directory holding it: the competitor's repository."""
 
     path: Path
     api: int

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- (refactor): the contract takes the competition's name, in one move, so every id derived from it
+  moves once: `specs/vector_level1.json` (track `vector_level1`, code `ve`; skill `vector_level1`,
+  code `vl`, on the suite of the same name), the benchmark distribution
+  `robotensor-benchmark-robotwin`, the baseline `robotensor/vector-base`, a submission's manifest
+  `policy.yaml`, the policy base image `vector-policy-base`, and `packages/vector-runtime`
+  (package `vector_runtime`), which the spec names as the validator's policy class. `BPP`,
+  `BPPPolicy`, `bpp_robotwin_l1_v1` and `behavior_prompting` are untouched: they name the model,
+  not the competition. Every duel id, event id and unit id of the track changes with the
+  fingerprint; the localnet store is rebuilt from genesis rather than migrated.
+
 - (refactor): the competition this orchestrates is Robotensor Vector, and the code says so:
   `icil_orchestrator` is `vector_orchestrator`, `icil-policy` is `vector-policy` (package
   `vector_policy`), the console script is `vector-orchestrator`, and the container labels, socket

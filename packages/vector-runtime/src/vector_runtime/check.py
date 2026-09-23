@@ -1,9 +1,9 @@
 """Is this `model.safetensors` exactly the pinned architecture's tensors? Decided from the header.
 
-    bpp-runtime check --weights DIR_OR_FILE [--template DIR] [--max-bytes N] [--no-hash]
+    vector-runtime check --weights DIR_OR_FILE [--template DIR] [--max-bytes N] [--no-hash]
 
 The standard library only: no torch, no safetensors, no numpy. Nothing in the file is executed or
-deserialized beyond its JSON header, which `bpp_runtime.header` parses by hand and strictly. The
+deserialized beyond its JSON header, which `vector_runtime.header` parses by hand and strictly. The
 file passes when
 
 - it is a regular file of at most `max_file_bytes` (8 GiB by default), with a sane header;
@@ -12,7 +12,7 @@ file passes when
 
 Normalizer statistics are loaded dynamically by the network, so a strict `load_state_dict` would
 not notice one missing or added: that is why the key set is checked here, exactly, and why the
-loader (`bpp_runtime.model`) also refuses non-finite or zero-scale statistics, which a header
+loader (`vector_runtime.model`) also refuses non-finite or zero-scale statistics, which a header
 cannot show.
 
 The report carries `weights_sha256`, the sha256 of the file's bytes: the identity a result is

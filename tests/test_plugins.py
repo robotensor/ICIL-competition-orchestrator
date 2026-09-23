@@ -69,7 +69,7 @@ def test_an_undeclared_benchmark_is_listed_but_never_imported(fake_installed, sp
 def test_a_declared_benchmark_that_is_absent_names_what_to_install(spec):
     robotwin = discover(spec)["robotwin"]
     assert robotwin.problems == [
-        "not installed: install robotwin-icil-competition, which advertises 'robotwin' in the "
+        "not installed: install robotensor-benchmark-robotwin, which advertises 'robotwin' in the "
         "'robotensor.benchmarks' entry point group"
     ]
 

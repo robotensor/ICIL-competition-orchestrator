@@ -56,7 +56,7 @@ def spec(spec_doc, write_spec, fake_installed):
 @pytest.fixture
 def docker():
     fake = InspectingFakeDocker()
-    fake.images["icil-policy-base:latest"] = FAKE_BASE_DIGEST
+    fake.images["vector-policy-base:latest"] = FAKE_BASE_DIGEST
     yield fake
     fake.kill_all()
 

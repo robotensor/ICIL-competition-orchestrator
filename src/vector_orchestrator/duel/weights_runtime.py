@@ -50,11 +50,11 @@ from .runtime import (
 )
 
 #: The manifest the runtime writes for the validator's policy class; never a submission's file.
-MANIFEST_FILE = "icil.yaml"
+MANIFEST_FILE = "policy.yaml"
 #: Environment variables a served policy may use beyond the subprocess allow-list. BPP needs none
 #: of them to serve (its CLIP backbone is built from the template and filled by the submission's
 #: weights, with no download), but a cache location or an offline switch set for the host is kept,
-#: and `BPP_RUNTIME_TEMPLATE` points the runtime at another template directory.
+#: and `VECTOR_RUNTIME_TEMPLATE` points the runtime at another template directory.
 POLICY_ENV_KEEP = (
     "HF_HOME",
     "HF_HUB_CACHE",
@@ -62,7 +62,7 @@ POLICY_ENV_KEEP = (
     "TRANSFORMERS_OFFLINE",
     "TORCH_HOME",
     "XDG_CACHE_HOME",
-    "BPP_RUNTIME_TEMPLATE",
+    "VECTOR_RUNTIME_TEMPLATE",
 )
 
 
@@ -77,12 +77,12 @@ class WeightsCheck:
 
 
 def default_checker(weights: Path) -> WeightsCheck:
-    """`bpp_runtime.check` on the weights file: the header against the pinned template, the size
+    """`vector_runtime.check` on the weights file: the header against the pinned template, the size
     cap and the file's sha256. Imported here, lazily, because it is the only part of the model
     runtime a validator host needs, and it needs no torch."""
-    from bpp_runtime import check as bpp_check
+    from vector_runtime import check as vector_check
 
-    report = bpp_check.check_weights(weights)
+    report = vector_check.check_weights(weights)
     return WeightsCheck(
         ok=bool(report.ok),
         errors=tuple(str(e) for e in report.errors),
@@ -218,7 +218,7 @@ class WeightsPolicyRuntime(SubprocessPolicyRuntime):
     # -- helpers ----------------------------------------------------------------------------
 
     def _write_manifest(self, workdir: Path, weights: Path) -> Path:
-        """The validator's own `icil.yaml`, beside nothing of the submission's: its policy class
+        """The validator's own `policy.yaml`, beside nothing of the submission's: its policy class
         and the weights file's absolute path (the server changes directory before building)."""
         # Absolute: the server starts in a directory of its own, where a relative path means nothing.
         directory = (workdir / "manifest").resolve()

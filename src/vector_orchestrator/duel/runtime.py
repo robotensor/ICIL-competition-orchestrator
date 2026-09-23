@@ -110,7 +110,7 @@ class PreparedSubmission:
     base_image_digest: str | None
     #: The submission's own image id; None for a runtime that builds none.
     image: str | None
-    #: `module:Class` from its `icil.yaml`, and what it answered `hello` with.
+    #: `module:Class` from its `policy.yaml`, and what it answered `hello` with.
     policy: str | None
     action_type: str | None
     #: Whatever the runtime needs to serve it again (an image tag, a checkout); not published.

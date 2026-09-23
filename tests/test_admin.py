@@ -31,8 +31,8 @@ DASHBOARD = {"track": TRACK, "duel_size": "smoke", "source": "dashboard-dev-mode
 @pytest.fixture
 def hub():
     fake = FakeHub()
-    fake.add("org/policy", SHA_A, {"icil.yaml": 80}, "main", "v1")
-    fake.add("org/other", SHA_B, {"icil.yaml": 80}, "main")
+    fake.add("org/policy", SHA_A, {"policy.yaml": 80}, "main", "v1")
+    fake.add("org/other", SHA_B, {"policy.yaml": 80}, "main")
     return fake
 
 
@@ -469,7 +469,7 @@ def test_a_commit_only_a_pull_request_holds_is_refused(server, hub, paths):
     """Anyone on the Hub can open a pull request on a public repository, and the Hub serves its
     commit by sha: queued, it would be duelled and published as the owner's code."""
     proposed = "9" * 40
-    hub.add("org/policy", proposed, {"icil.yaml": 80}, pr=1, parent=SHA_A)
+    hub.add("org/policy", proposed, {"policy.yaml": 80}, pr=1, parent=SHA_A)
     body = {"repo": "org/policy", "revision": proposed, **DASHBOARD}
     status, answer, _ = call(server, "POST", "/admin/submissions", body)
     assert status == 422 and answer["ok"] is False, answer

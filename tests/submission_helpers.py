@@ -189,7 +189,7 @@ def write_policy_repo(root: Path, policy: str = "pkg.policy:Policy", **manifest:
     lines = ["api: 1", f"policy: {policy}"]
     for key, value in manifest.items():
         lines.append(f"{key}: {value}")
-    (root / "icil.yaml").write_text("\n".join(lines) + "\n")
+    (root / "policy.yaml").write_text("\n".join(lines) + "\n")
     return root
 
 

@@ -160,7 +160,7 @@ def write_repo(root: Path, policy: str = "probe:Probe", kwargs=None, extra=None)
     lines = ["api: 1", f"policy: {policy}"]
     if kwargs:
         lines.append(f"kwargs: {json.dumps(kwargs)}")
-    manifest = root / "icil.yaml"
+    manifest = root / "policy.yaml"
     manifest.write_text("\n".join(lines) + "\n")
     return manifest
 

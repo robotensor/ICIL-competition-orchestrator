@@ -1,4 +1,4 @@
-# bpp-runtime
+# vector-runtime
 
 The validator's own runtime for BPP (Behavior Prompting Policy) submissions. A miner submits
 **weights only** - one `model.safetensors`, no code, no pickle - for the pinned architecture
@@ -7,7 +7,7 @@ network from the template with its own code, loads the weights and serves the po
 RoboTwin benchmark over the `vector-policy` socket protocol.
 
 ```
-src/bpp_runtime/
+src/vector_runtime/
   check.py, header.py   the file check: header only, standard library only (no torch)
   template.py           the pinned template: arch/bpp_robotwin_l1_v1.{cfg,tensors}.json
   model.py              build the network from the template, load and validate the weights
@@ -22,11 +22,11 @@ third_party/behavior_prompting/   the model source the checkpoints need, vendore
 
 ```bash
 # the validator host: the check only, no dependencies
-pip install -e packages/bpp-runtime
+pip install -e packages/vector-runtime
 
 # the policy environment (Python 3.12, CUDA): the model, its vendored source, the protocol
-pip install -e "packages/bpp-runtime[model]" \
-    -e packages/bpp-runtime/third_party/behavior_prompting -e packages/vector-policy
+pip install -e "packages/vector-runtime[model]" \
+    -e packages/vector-runtime/third_party/behavior_prompting -e packages/vector-policy
 ```
 
 ## Commands
@@ -34,10 +34,10 @@ pip install -e "packages/bpp-runtime[model]" \
 Each prints one JSON report and exits 0 when it passed, 1 when it did not.
 
 ```bash
-bpp-runtime check --weights DIR_OR_FILE            # the template's tensors exactly; weights_sha256
-bpp-runtime convert --ckpt epoch=0004.ckpt --out DIR   # DIR/model.safetensors, then checked
-bpp-runtime template --ckpt epoch0000.ckpt --out src/bpp_runtime/arch   # once, by the organizer
-bpp-runtime parity --ckpt X.ckpt --weights DIR --prompt prompt.npz [--seed 0] [--steps 30]
+vector-runtime check --weights DIR_OR_FILE            # the template's tensors exactly; weights_sha256
+vector-runtime convert --ckpt epoch=0004.ckpt --out DIR   # DIR/model.safetensors, then checked
+vector-runtime template --ckpt epoch0000.ckpt --out src/vector_runtime/arch   # once, by the organizer
+vector-runtime parity --ckpt X.ckpt --weights DIR --prompt prompt.npz [--seed 0] [--steps 30]
 ```
 
 `convert` unpickles the checkpoint: run it only on a checkpoint you made.
@@ -45,13 +45,13 @@ bpp-runtime parity --ckpt X.ckpt --weights DIR --prompt prompt.npz [--seed 0] [-
 ## Serving
 
 ```yaml
-# icil.yaml
+# policy.yaml
 api: 1
-policy: bpp_runtime.policy:BPPPolicy
+policy: vector_runtime.policy:BPPPolicy
 kwargs: {weights: /abs/path/model.safetensors, device: "cuda:0"}
 ```
 
-`python -m vector_policy.serve --manifest icil.yaml ...` then serves it. `BPPPolicy` takes
+`python -m vector_policy.serve --manifest policy.yaml ...` then serves it. `BPPPolicy` takes
 `weights` (an absolute path to `model.safetensors`, or its directory), `device` (default
 `cuda:0`), `template` (an absolute template directory; default the packaged one) and
 `weights_sha256` (optional: refuse a file with another hash). `action_type` is `ee`: each `act`
@@ -66,12 +66,12 @@ Measured on an RTX PRO 6000 Blackwell (torch 2.8.0+cu128), the BRL1 level-1 chec
 building and loading takes ~12 s (plus ~2 s of imports; `hello` answered in ~13 s), the loaded
 policy holds 2.1 GB of GPU memory (~2.9 GB per process with the CUDA context),
 `set_demonstration` takes 0.4-0.7 s, an `act` that predicts ~65 ms (the first of a process
-~230 ms) and one that pops a cached action ~1.2 ms. `bpp-runtime parity` on both checkpoints:
+~230 ms) and one that pops a cached action ~1.2 ms. `vector-runtime parity` on both checkpoints:
 prompts, predicted chunks and actions all bit-identical to the original checkpoints.
 
 ## Tests
 
 ```bash
-pytest packages/bpp-runtime -m "not gpu"   # the check and the header parser, no torch
-pytest packages/bpp-runtime -m gpu         # convert, load, parity on the BRL1 checkpoints
+pytest packages/vector-runtime -m "not gpu"   # the check and the header parser, no torch
+pytest packages/vector-runtime -m gpu         # convert, load, parity on the BRL1 checkpoints
 ```

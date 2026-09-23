@@ -3,13 +3,13 @@ requires = ["hatchling>=1.25"]
 build-backend = "hatchling.build"
 
 [project]
-name = "bpp-runtime"
+name = "vector-runtime"
 version = "0.1.0.dev0"
 description = "The validator's own BPP model runtime: build from a pinned template, load weights-only submissions, serve them."
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
-# `bpp-runtime check` runs on the validator host, which has no torch: the standard library only.
+# `vector-runtime check` runs on the validator host, which has no torch: the standard library only.
 dependencies = []
 
 [project.optional-dependencies]
@@ -40,10 +40,10 @@ model = [
 dev = ["pytest>=8"]
 
 [project.scripts]
-bpp-runtime = "bpp_runtime.cli:main"
+vector-runtime = "vector_runtime.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/bpp_runtime"]
+packages = ["src/vector_runtime"]
 
 [tool.ruff]
 extend = "../../pyproject.toml"

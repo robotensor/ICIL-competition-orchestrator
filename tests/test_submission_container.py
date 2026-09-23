@@ -347,7 +347,7 @@ def test_a_missing_class_is_rejected_at_hello_and_no_container_is_left(
     spec, docker, base, cache, tmp_path
 ):
     broken = shutil.copytree(EXAMPLE, tmp_path / "broken")
-    (broken / "icil.yaml").write_text("api: 1\npolicy: replay.policy:NoSuchPolicy\n")
+    (broken / "policy.yaml").write_text("api: 1\npolicy: replay.policy:NoSuchPolicy\n")
     report = check_submission(
         spec,
         "local/broken",

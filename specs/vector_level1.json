@@ -1,13 +1,13 @@
 {
  "spec_version": 8,
- "_comment": "The BPP subnet lane's contract (Robotensor Competition 1): weights-only submissions of one architecture the validator owns the code of, scored in rolling king-of-the-hill duels on RoboTwin's level benchmark, cross-scene. Its own file beside spec.json, the code-submission contract, so neither changes the other; the subnet validator loads it with --spec. Bumping spec_version changes every derived duel id.",
+ "_comment": "Robotensor Vector's contract (Competition 1 of the subnet, action-grounded in-context learning): weights-only submissions of one architecture the validator owns the code of, scored in rolling king-of-the-hill duels on RoboTwin's level benchmark, cross-scene. Its own file beside spec.json, the code-submission contract, so neither changes the other; the subnet validator loads it with --spec. Bumping spec_version changes every derived duel id.",
  "tracks": {
-  "bpp_l1": {
-   "id": "bpp_l1",
-   "code": "bp",
-   "slug": "bpp-level1",
-   "short": "BPP level 1",
-   "title": "BPP, one demonstration from another scene, level 1",
+  "vector_level1": {
+   "id": "vector_level1",
+   "code": "ve",
+   "slug": "vector-level1",
+   "short": "Vector level 1",
+   "title": "Vector: one demonstration from another scene, level 1",
    "blurb": "The policy is shown one demonstration of a task - the frames of three cameras, the action trajectory and the proprioception - recorded by RoboTwin's expert in one scene, and must do the task in another scene of the same level. Level 1 varies the objects' positions and yaw between the two. Submissions are weights of the BPP architecture only.",
    "k_demos": 1,
    "language": "none",
@@ -24,7 +24,7 @@
    "prompt_instance_disjoint": true,
    "prompts": "materialized",
    "skills": [
-    "bpp_level1"
+    "vector_level1"
    ],
    "default_size": "launch",
    "_comment": "Cross-scene: every unit's demonstration and evaluation scene are drawn from disjoint candidate lists, from seeds no public split of the level benchmark used, and the units are seeded from a chain block hash the challenger could not know when it committed. The difficulty rounds of the subnet spec are levels 1-4; this is level 1."
@@ -32,22 +32,22 @@
  },
  "benchmarks": {
   "robotwin": {
-   "distribution": "robotwin-icil-competition",
-   "repo": "robotensor/RoboTwin-BPP",
+   "distribution": "robotensor-benchmark-robotwin",
+   "repo": "robotensor/RoboTwin-Vector",
    "api_version": 1,
    "version": "0.2.0",
    "wheel_sha256": null,
-   "_comment": "The RoboTwin fork with the level gate and the harness under icil/, branch bpp-subnet. Installed editable from the fork, so pinned by version; a wheel pin follows the first release."
+   "_comment": "The RoboTwin fork with the level gate and the harness under bench/, branch vector. Installed editable from the fork, so pinned by version; a wheel pin follows the first release."
   }
  },
- "_benchmarks_comment": "Every benchmark is a separate distribution found through the `icil.benchmarks` entry point group. The orchestrator ships none: what it can score is exactly what is plugged into it.",
+ "_benchmarks_comment": "Every benchmark is a separate distribution found through the `robotensor.benchmarks` entry point group. The orchestrator ships none: what it can score is exactly what is plugged into it.",
  "skills": {
-  "bpp_level1": {
-   "code": "bl",
+  "vector_level1": {
+   "code": "vl",
    "title": "Sixteen tabletop tasks (two Franka arms, level 1)",
    "blurb": "RoboTwin's 16 pick-and-place and tool tasks of the level benchmark, dealt evenly over a duel's units. RoboTwin's expert produces the demonstration at evaluation time in one scene and its own check decides the outcome in another.",
    "benchmark": "robotwin",
-   "suite": "bpp_level1",
+   "suite": "vector_level1",
    "category": null,
    "max_steps": 800,
    "environment": {
@@ -130,7 +130,7 @@
     "README.md",
     ".gitattributes"
    ],
-   "policy": "bpp_runtime.policy:BPPPolicy",
+   "policy": "vector_runtime.policy:BPPPolicy",
    "template": {
     "cfg_sha256": "c2dcb559ab794e9c85c7da9069090fbf8aebc47f64ae0494534cfa24cc39cd8a",
     "tensors_sha256": "15ec2516d150b02f6b5ee1d8283a226635af93dcdd1335d6a4bd3a2b7aa659b0"
@@ -160,11 +160,11 @@
   "min_interval_s": 1.0
  },
  "baselines": {
-  "bpp_l1": {
-   "repo": "robotensor/bpp-base",
+  "vector_level1": {
+   "repo": "robotensor/vector-base",
    "revision": "741365e9d895f84cbc67f4982189d77ec8b3d822",
    "size": "smoke"
   },
-  "_comment": "The genesis king: BRL1's epoch0000 checkpoint (10.0% on its 200 held-out level-1 scenarios), converted to model.safetensors and published as robotensor/bpp-base; weights_sha256 e0d6264795601d06b3f8ca48dde9e167b76ce84ae790d9e9148de030c60ae4d1."
+  "_comment": "The genesis king: BRL1's epoch0000 checkpoint (10.0% on its 200 held-out level-1 scenarios), converted to model.safetensors and published as robotensor/vector-base; weights_sha256 e0d6264795601d06b3f8ca48dde9e167b76ce84ae790d9e9148de030c60ae4d1."
  }
 }

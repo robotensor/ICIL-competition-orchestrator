@@ -1,6 +1,6 @@
 """The pinned architecture a submission is held to: `arch/<name>.cfg.json` and `.tensors.json`.
 
-Both files are generated once, from the base checkpoint, by `bpp-runtime template`, and are
+Both files are generated once, from the base checkpoint, by `vector-runtime template`, and are
 committed: a submission never brings configuration of its own.
 
 `<name>.tensors.json` is `{key: {"shape": [...], "dtype": "F32"}}` for every tensor
@@ -34,7 +34,7 @@ from . import ARCHITECTURE
 #: The template directory shipped with this package.
 ARCH_DIR = Path(__file__).resolve().parent / "arch"
 #: An environment variable naming another template directory, for the check and the policy alike.
-TEMPLATE_ENV = "BPP_RUNTIME_TEMPLATE"
+TEMPLATE_ENV = "VECTOR_RUNTIME_TEMPLATE"
 TEMPLATE_FORMAT = 1
 #: What the reference adapter executes of each predicted chunk (its deploy.yml default).
 DEFAULT_EXEC_ACTION_HORIZON = 12
@@ -56,7 +56,7 @@ class TemplateError(ValueError):
 
 
 def template_dir(path: str | os.PathLike[str] | None = None) -> Path:
-    """`path`; else `$BPP_RUNTIME_TEMPLATE`; else the template shipped with this package."""
+    """`path`; else `$VECTOR_RUNTIME_TEMPLATE`; else the template shipped with this package."""
     if path is not None:
         return Path(path)
     return Path(os.environ.get(TEMPLATE_ENV) or ARCH_DIR)

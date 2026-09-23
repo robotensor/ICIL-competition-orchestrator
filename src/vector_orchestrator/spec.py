@@ -52,7 +52,7 @@ DEMO_VIEWS = ("sensorimotor",)
 #: per duel by the benchmark and published with the event. Pools were the weights-era alternative.
 PROMPT_SOURCES = ("materialized",)
 
-#: What a submission is: `code`, a repository with `icil.yaml`, its policy code and weights, run
+#: What a submission is: `code`, a repository with `policy.yaml`, its policy code and weights, run
 #: in the Docker sandbox; or `weights`, a repository holding only the weights of an architecture
 #: the validator owns the code of (`submission.model`), served by that code with no sandbox,
 #: since nothing of the submission's ever runs.

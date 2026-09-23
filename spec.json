@@ -1,6 +1,6 @@
 {
  "spec_version": 7,
- "_comment": "Normative constants for the Robotensor one-demonstration in-context imitation learning competition, as run by icil-orchestrator. Versions 1 to 6 were the ICIL-LiberoGen-bench validator's contracts (4 was published and rolled back); those numbers are retired and never reused. Version 7 is the first contract of the orchestrator: one track on a benchmark in its own distribution, and submissions that are runnable policy code rather than weights for a fixed architecture. Bumping spec_version changes every derived duel id.",
+ "_comment": "Normative constants for the Robotensor one-demonstration in-context imitation learning competition, as run by vector-orchestrator. Versions 1 to 6 were the ICIL-LiberoGen-bench validator's contracts (4 was published and rolled back); those numbers are retired and never reused. Version 7 is the first contract of the orchestrator: one track on a benchmark in its own distribution, and submissions that are runnable policy code rather than weights for a fixed architecture. Bumping spec_version changes every derived duel id.",
  "tracks": {
   "franka_1arm": {
    "id": "franka_1arm",
@@ -34,15 +34,15 @@
  },
  "benchmarks": {
   "robotwin": {
-   "distribution": "robotwin-icil-competition",
-   "repo": "robotensor/ICIL-robotwin-benchmark",
+   "distribution": "robotensor-benchmark-robotwin",
+   "repo": "robotensor/RoboTwin-Vector",
    "api_version": 1,
    "version": null,
    "wheel_sha256": null,
-   "_comment": "Pinned by distribution, version and wheel sha256 once the wheel is built (robotensor/ICIL-robotwin-benchmark#86). Entry-point discovery imports code into the orchestrator, so the pin is checked from the installed distribution's metadata before anything is imported from it. null means not yet pinned, and `icil-orchestrator benchmarks check` says so."
+   "_comment": "Pinned by distribution, version and wheel sha256 once the wheel is built (robotensor/RoboTwin-Vector#86). Entry-point discovery imports code into the orchestrator, so the pin is checked from the installed distribution's metadata before anything is imported from it. null means not yet pinned, and `vector-orchestrator benchmarks check` says so."
   }
  },
- "_benchmarks_comment": "Every benchmark is a separate distribution found through the `icil.benchmarks` entry point group. The orchestrator ships none: what it can score is exactly what is plugged into it.",
+ "_benchmarks_comment": "Every benchmark is a separate distribution found through the `robotensor.benchmarks` entry point group. The orchestrator ships none: what it can score is exactly what is plugged into it.",
  "skills": {
   "franka_pick_and_place": {
    "code": "fp",
@@ -129,7 +129,7 @@
    }
   }
  },
- "_skills_comment": "The skills are the three categories of the benchmark's surveyed `franka_1arm` suite (robotwin_icil/tasks.yml and docs/results/survey-franka-1arm.json in robotensor/ICIL-robotwin-benchmark at 98a7ffd): pick_and_place is place_empty_cup, stacking is stack_bowls_two, press_push is click_bell and press_stapler. The survey was small, 6 tasks x 3 seeds on a dual Franka, keeping a task whose expert solved at least 2 of 3 seeds with one arm. Stacking has no one-arm task, so stack_bowls_two, whose expert may switch arms, stands in: a scene the survey did not see can still make its expert use both arms. Changing the list, the ids or the codes is a spec_version bump. `max_steps` are per-skill caps; each task carries its own smaller limit from RoboTwin.",
+ "_skills_comment": "The skills are the three categories of the benchmark's surveyed `franka_1arm` suite (robotwin_bench/tasks.yml and docs/results/survey-franka-1arm.json in robotensor/RoboTwin-Vector at 98a7ffd): pick_and_place is place_empty_cup, stacking is stack_bowls_two, press_push is click_bell and press_stapler. The survey was small, 6 tasks x 3 seeds on a dual Franka, keeping a task whose expert solved at least 2 of 3 seeds with one arm. Stacking has no one-arm task, so stack_bowls_two, whose expert may switch arms, stands in: a scene the survey did not see can still make its expert use both arms. Changing the list, the ids or the codes is a spec_version bump. `max_steps` are per-skill caps; each task carries its own smaller limit from RoboTwin.",
  "duel": {
   "default_size": "smoke",
   "sizes": {
@@ -170,12 +170,12 @@
   "_comment": "Wall clocks the orchestrator enforces. A unit or materialization past its wall clock is void, not a loss. policy_budget_seconds is how long a policy may take over one unit, starting it and every call to it together; what it leaves of unit_wall_seconds is the benchmark's, and a policy that runs out of it loses the unit. The numbers are placeholders until the first smoke duel on the franka_1arm suite is measured."
  },
  "submission": {
-  "manifest": "icil.yaml",
+  "manifest": "policy.yaml",
   "manifest_api": 1,
   "policy_protocol": 1,
   "max_repo_bytes": 8589934592,
   "base_image": {
-   "name": "icil-policy-base",
+   "name": "vector-policy-base",
    "digest": null,
    "_comment": "Placeholder until docker/policy-base is built and referenced by digest. A submission's image is built FROM exactly this digest, and the event records it."
   },
@@ -193,7 +193,7 @@
    "cpus": 8,
    "pids": 1024
   },
-  "_comment": "A submission is a Hugging Face repository at a resolved commit sha holding `icil.yaml`, its policy code and weights. There is no architecture or model-type check: it is held to the manifest, the policy protocol and this sandbox. Its code runs only inside its own container, with no network, a read-only root filesystem, a non-root user and these limits; the orchestrator never imports, unpickles or executes anything from it. Each `tmpfs` path is a tmpfs of at most `tmpfs_bytes`, counted against `memory_bytes`, mounted nosuid and nodev, and executable when `tmpfs_exec` is true, so a policy may compile code at run time (torch.compile, Triton, C extensions) into its caches there; the first is its home and its caches' root."
+  "_comment": "A submission is a Hugging Face repository at a resolved commit sha holding `policy.yaml`, its policy code and weights. There is no architecture or model-type check: it is held to the manifest, the policy protocol and this sandbox. Its code runs only inside its own container, with no network, a read-only root filesystem, a non-root user and these limits; the orchestrator never imports, unpickles or executes anything from it. Each `tmpfs` path is a tmpfs of at most `tmpfs_bytes`, counted against `memory_bytes`, mounted nosuid and nodev, and executable when `tmpfs_exec` is true, so a policy may compile code at run time (torch.compile, Triton, C extensions) into its caches there; the first is its home and its caches' root."
  },
  "media": {
   "video": {

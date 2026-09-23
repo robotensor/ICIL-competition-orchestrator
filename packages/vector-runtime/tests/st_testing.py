@@ -7,8 +7,8 @@ import struct
 from pathlib import Path
 from typing import Any
 
-from bpp_runtime import ARCHITECTURE
-from bpp_runtime.header import DTYPE_SIZES
+from vector_runtime import ARCHITECTURE
+from vector_runtime.header import DTYPE_SIZES
 
 #: A small architecture: a weight, a bias, a zero-size dummy and a normalizer statistic.
 TENSORS = {

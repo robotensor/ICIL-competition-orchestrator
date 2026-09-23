@@ -58,7 +58,7 @@ history: the Hub serves a pull request's commits by sha too, and anyone on the H
 request, so a commit only a pull request holds - or one no branch holds any more - is refused, and
 so is a ref under `refs/`. The Hub has no cheaper ancestry check than listing histories, so a sha
 that is not a tip costs a history page or two per branch and tag.
-`submission check` fetches it into `cache/<sha>/` (git-ignored), reads its `icil.yaml` as a
+`submission check` fetches it into `cache/<sha>/` (git-ignored), reads its `policy.yaml` as a
 plain file, builds its image `FROM` the pinned base by digest with its checkout copied in and its
 requirements installed at build time (bounded by `--build-timeout`), runs it under
 `spec.submission.sandbox` - no network, a read-only root, `/tmp` a nosuid,nodev tmpfs of

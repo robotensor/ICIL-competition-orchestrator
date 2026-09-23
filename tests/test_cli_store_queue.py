@@ -24,8 +24,8 @@ SHA_1, SHA_2 = "1" * 40, "2" * 40
 def hub(monkeypatch):
     """The Hub `queue add` asks, with org/policy at SHA_1 and org/other at SHA_2."""
     fake = FakeHub()
-    fake.add("org/policy", SHA_1, {"icil.yaml": 80})
-    fake.add("org/other", SHA_2, {"icil.yaml": 80})
+    fake.add("org/policy", SHA_1, {"policy.yaml": 80})
+    fake.add("org/other", SHA_2, {"policy.yaml": 80})
     monkeypatch.setattr("huggingface_hub.HfApi", lambda: fake)
     return fake
 
@@ -190,7 +190,7 @@ def test_queue_add_on_a_corrupt_queue_file_says_so(hub, tmp_path, capsys):
 
 def test_queue_add_resolves_a_branch_or_tag_to_its_commit_once(tmp_path, capsys, monkeypatch):
     hub = FakeHub()
-    hub.add("org/policy", SHA_A, {"icil.yaml": 80}, "main", "v1")
+    hub.add("org/policy", SHA_A, {"policy.yaml": 80}, "main", "v1")
     monkeypatch.setattr("huggingface_hub.HfApi", lambda: hub)
     base = ["queue", "--queue", str(tmp_path / "queue")]
     assert main([*base, "add", "org/policy", "main"]) == 0
@@ -204,7 +204,7 @@ def test_queue_add_resolves_a_branch_or_tag_to_its_commit_once(tmp_path, capsys,
     assert main([*base, "add", "org/policy", "v1"]) == 0
     assert [e.key for e in Queue(tmp_path / "queue" / f"{TRACK}.json").entries()] == [key]
     # A sha is confirmed on the Hub and queued as given, with nothing to say about resolving it.
-    hub.add("org/other", "2" * 40, {"icil.yaml": 80})
+    hub.add("org/other", "2" * 40, {"policy.yaml": 80})
     capsys.readouterr()
     assert main([*base, "add", "org/other", "2" * 40]) == 0
     assert capsys.readouterr().err == ""
@@ -215,8 +215,8 @@ def test_queue_add_refuses_a_commit_only_a_pull_request_holds(tmp_path, capsys, 
     """Anyone on the Hub can open a pull request on a public repository, and the Hub serves its
     commit by sha: queued, it would be duelled and published as the owner's code."""
     hub = FakeHub()
-    hub.add("org/policy", SHA_A, {"icil.yaml": 80}, "main")
-    hub.add("org/policy", SHA_2, {"icil.yaml": 80}, pr=1, parent=SHA_A)
+    hub.add("org/policy", SHA_A, {"policy.yaml": 80}, "main")
+    hub.add("org/policy", SHA_2, {"policy.yaml": 80}, pr=1, parent=SHA_A)
     monkeypatch.setattr("huggingface_hub.HfApi", lambda: hub)
     base = ["queue", "--queue", str(tmp_path / "queue")]
     assert main([*base, "add", "org/policy", SHA_2]) == 2
@@ -230,7 +230,7 @@ def test_queue_add_refuses_a_commit_only_a_pull_request_holds(tmp_path, capsys, 
 
 def test_queue_add_refuses_what_it_cannot_queue(tmp_path, capsys, monkeypatch):
     hub = FakeHub()
-    hub.add("org/policy", SHA_A, {"icil.yaml": 80}, "main")
+    hub.add("org/policy", SHA_A, {"policy.yaml": 80}, "main")
     monkeypatch.setattr("huggingface_hub.HfApi", lambda: hub)
     base = ["queue", "--queue", str(tmp_path / "queue")]
     assert main([*base, "add", "not a repo", "1" * 40]) == 2

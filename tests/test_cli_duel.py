@@ -39,7 +39,7 @@ def hub(monkeypatch):
     """The Hub `queue add` confirms a commit with: both examples, at their refs' commits."""
     fake = FakeHub()
     for ref in (ZERO_REF, REPLAY_REF):
-        fake.add(ref.repo, ref.revision, {"icil.yaml": 80})
+        fake.add(ref.repo, ref.revision, {"policy.yaml": 80})
     monkeypatch.setattr("huggingface_hub.HfApi", lambda: fake)
     return fake
 
@@ -241,7 +241,7 @@ def test_the_daemon_takes_what_its_intake_queues(
     takes it and crowns it on the empty track, and a signal stops the intake with the loop."""
     root, _ = store
     caplog.set_level(logging.INFO, logger="vector_orchestrator.admin")
-    hub.add(REPLAY_REF.repo, REPLAY_REF.revision, {"icil.yaml": 80}, "main")
+    hub.add(REPLAY_REF.repo, REPLAY_REF.revision, {"policy.yaml": 80}, "main")
     monkeypatch.setattr("vector_orchestrator.admin.HubApi", lambda: hub)
     monkeypatch.setenv("VECTOR_TEST_ADMIN_TOKEN", ADMIN_TOKEN)
     port = free_port()

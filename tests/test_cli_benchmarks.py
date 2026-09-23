@@ -177,7 +177,7 @@ def test_check_hands_run_command_an_address_in_the_wire_form(
 def test_check_on_the_shipped_spec_says_robotwin_is_not_installed(spec, capsys):
     assert main(["benchmarks", "check", "robotwin"]) == 1
     out = capsys.readouterr().out
-    assert "problem: not installed: install robotwin-icil-competition" in out
+    assert "problem: not installed: install robotensor-benchmark-robotwin" in out
 
 
 def test_python_dash_m_runs_the_same_cli(fake_spec):

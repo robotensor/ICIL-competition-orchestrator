@@ -1,4 +1,4 @@
-"""`bpp-runtime check`: the template's tensors exactly, a sane file, and its sha256. No torch."""
+"""`vector-runtime check`: the template's tensors exactly, a sane file, and its sha256. No torch."""
 
 from __future__ import annotations
 
@@ -9,11 +9,11 @@ import sys
 
 import pytest
 
-from bpp_runtime import WEIGHTS_FILENAME
-from bpp_runtime.check import check, check_weights
-from bpp_runtime.cli import main
-from bpp_runtime.template import load_config, load_tensors
 from st_testing import TENSORS, safetensors_bytes, write_template
+from vector_runtime import WEIGHTS_FILENAME
+from vector_runtime.check import check, check_weights
+from vector_runtime.cli import main
+from vector_runtime.template import load_config, load_tensors
 
 
 @pytest.fixture
@@ -129,9 +129,9 @@ def test_a_symbolic_link_is_followed(tmp_path, template):
 
 
 def test_the_template_directory_can_come_from_the_environment(tmp_path, template, monkeypatch):
-    monkeypatch.setenv("BPP_RUNTIME_TEMPLATE", str(template))
+    monkeypatch.setenv("VECTOR_RUNTIME_TEMPLATE", str(template))
     assert check_weights(weights(tmp_path, safetensors_bytes())).ok
-    monkeypatch.setenv("BPP_RUNTIME_TEMPLATE", str(tmp_path / "nowhere"))
+    monkeypatch.setenv("VECTOR_RUNTIME_TEMPLATE", str(tmp_path / "nowhere"))
     assert "cannot read the template" in check_weights(weights(tmp_path, b"")).errors[0]
 
 
@@ -159,7 +159,7 @@ def test_the_packaged_template_is_the_bpp_architecture():
 
 def test_the_check_imports_no_torch_or_numpy():
     code = (
-        "import sys, bpp_runtime.check, bpp_runtime.cli; "
+        "import sys, vector_runtime.check, vector_runtime.cli; "
         "print(sorted(m for m in sys.modules if m.split('.')[0] in "
         "('torch', 'numpy', 'safetensors')))"
     )

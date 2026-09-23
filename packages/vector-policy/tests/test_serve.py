@@ -42,7 +42,7 @@ def test_the_replay_example_answers_hello_prompt_reset_act_with_the_next_action(
     examples, serve, demonstration, transport
 ):
     address = free_tcp_address() if transport == "tcp" else None
-    server = serve(examples / "replay_policy" / "icil.yaml", address=address)
+    server = serve(examples / "replay_policy" / "policy.yaml", address=address)
     arrays, info = demonstration
     conn = server.connect()
 

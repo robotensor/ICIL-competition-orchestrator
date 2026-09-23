@@ -37,8 +37,8 @@ from vector_orchestrator.submissions.resolve import (
 @pytest.fixture
 def hub():
     hub = FakeHub()
-    hub.add("org/policy", SHA_A, {"icil.yaml": 80, "policy.py": 1200, "weights.pt": 4000}, "main")
-    hub.add("org/policy", SHA_B, {"icil.yaml": 80, "policy.py": 1300}, "v2", "dev")
+    hub.add("org/policy", SHA_A, {"policy.yaml": 80, "policy.py": 1200, "weights.pt": 4000}, "main")
+    hub.add("org/policy", SHA_B, {"policy.yaml": 80, "policy.py": 1300}, "v2", "dev")
     return hub
 
 
@@ -57,7 +57,7 @@ def test_the_resolved_ref_is_keyed_by_the_sha_and_lists_the_files_with_sizes(hub
     assert resolved.ref == SubmissionRef.resolved("org/policy", SHA_A)
     assert resolved.ref.key == SubmissionRef.make("org/policy", SHA_A).key
     assert {f.path: f.size for f in resolved.files} == {
-        "icil.yaml": 80,
+        "policy.yaml": 80,
         "policy.py": 1200,
         "weights.pt": 4000,
     }
@@ -120,7 +120,7 @@ def history():
     """org/policy: main moved from OLD to TIP, v1 tags TAGGED off OLD, pull request 1 proposes
     PROPOSED on TIP, and pull request 2, closed, left CLOSED on no ref at all."""
     hub = FakeHub()
-    files = {"icil.yaml": 80}
+    files = {"policy.yaml": 80}
     hub.add("org/policy", OLD, files, "main")
     hub.add("org/policy", TIP, files, "main", parent=OLD)
     hub.add("org/policy", TAGGED, files, tags=("v1",), parent=OLD)
@@ -186,7 +186,7 @@ def test_an_entry_the_hub_gives_no_size_for_counts_nothing_and_is_not_downloaded
     """With `files_metadata` the Hub sizes every file, LFS ones included; an entry it does not
     size cannot be held to max_repo_bytes before it is on disk, so it is not fetched at all -
     the Hub's answer is the harness's problem, not the entry's."""
-    hub.add("org/lfs", SHA_A, {"icil.yaml": 80, "weights.pt": None}, "main")
+    hub.add("org/lfs", SHA_A, {"policy.yaml": 80, "weights.pt": None}, "main")
     resolved = resolve("org/lfs", "main", api=hub)
     assert resolved.declared_bytes == 80, "a lower bound: what was sized"
     assert [f.size for f in resolved.files] == [80, None]
@@ -233,7 +233,7 @@ def test_fetch_downloads_once_into_a_checkout_addressed_by_the_sha(spec, tmp_pat
     fetched = fetcher.fetch(resolved)
     assert fetched.root == tmp_path / "cache" / SHA_A / "repo"
     assert not fetched.cached and calls == [("org/policy", SHA_A, "model")]
-    assert sorted(p.name for p in fetched.root.iterdir()) == ["icil.yaml", "pkg", "weights.bin"]
+    assert sorted(p.name for p in fetched.root.iterdir()) == ["pkg", "policy.yaml", "weights.bin"]
     assert not (fetched.root / ".cache").exists(), "the Hub's bookkeeping is not the repository"
     assert (fetched.bytes, fetched.files) == measure(source)
     marker = json.loads((tmp_path / "cache" / SHA_A / "fetched.json").read_text())
@@ -262,7 +262,7 @@ def test_fetch_refuses_a_repository_over_max_repo_bytes_before_and_after_downloa
     assert not (tmp_path / "small" / SHA_A).exists()
 
     # Declared sizes are what the Hub says; what lands on disk is measured again.
-    hub.add("org/policy", SHA_B, {"icil.yaml": 1}, "tiny")
+    hub.add("org/policy", SHA_B, {"policy.yaml": 1}, "tiny")
     lying = HubFetcher(
         RepoCache(tmp_path / "lying", 100), api=hub, download=fake_download(source, calls)
     )
@@ -307,7 +307,7 @@ def test_a_local_directory_is_addressed_by_its_tree_and_copied_links_as_links(
     assert is_commit_sha(resolved.sha) and resolved.revision == "main"
     assert resolved.ref == SubmissionRef.resolved("local/policy", resolved.sha)
     assert {f.path for f in resolved.files} == {
-        "icil.yaml",
+        "policy.yaml",
         "pkg/__init__.py",
         "pkg/policy.py",
         "weights.bin",
@@ -356,36 +356,36 @@ def test_a_manifest_that_is_not_a_plain_file_of_the_repository_is_refused(spec, 
     root = write_policy_repo(tmp_path / "repo")
     assert check_repository(root, spec).policy == "pkg.policy:Policy"
 
-    (root / "icil.yaml").rename(root / "real.yaml")
-    with pytest.raises(SubmissionRejected, match="icil.yaml.*is not in the repository") as info:
+    (root / "policy.yaml").rename(root / "real.yaml")
+    with pytest.raises(SubmissionRejected, match="policy.yaml.*is not in the repository") as info:
         check_repository(root, spec)
     assert info.value.step == "manifest"
 
-    os.symlink("real.yaml", root / "icil.yaml")
+    os.symlink("real.yaml", root / "policy.yaml")
     with pytest.raises(SubmissionRejected, match="goes through a symbolic link"):
         check_repository(root, spec)
-    (root / "icil.yaml").unlink()
+    (root / "policy.yaml").unlink()
 
-    (root / "icil.yaml").mkdir()
+    (root / "policy.yaml").mkdir()
     with pytest.raises(SubmissionRejected, match="is not a regular file"):
         check_repository(root, spec)
-    (root / "icil.yaml").rmdir()
+    (root / "policy.yaml").rmdir()
 
-    os.mkfifo(root / "icil.yaml")
+    os.mkfifo(root / "policy.yaml")
     with pytest.raises(SubmissionRejected, match="is not a regular file"):
         check_repository(root, spec)  # and did not block opening the pipe
 
 
 def test_a_manifests_problems_are_the_rejections_reason(spec, tmp_path):
     root = write_policy_repo(tmp_path / "repo")
-    (root / "icil.yaml").write_text("api: 2\npolicy: not a class\nextra: 1\n")
+    (root / "policy.yaml").write_text("api: 2\npolicy: not a class\nextra: 1\n")
     with pytest.raises(SubmissionRejected) as info:
         check_repository(root, spec)
     reason = info.value.reason
     assert "api: must be 1" in reason and "policy: must be module:Class" in reason
     assert "unknown key(s) 'extra'" in reason
 
-    (root / "icil.yaml").write_text("api: 1\npolicy: pkg.policy:Policy\n")
+    (root / "policy.yaml").write_text("api: 1\npolicy: pkg.policy:Policy\n")
     other = json.loads(spec.path.read_text())
     other["submission"]["manifest_api"] = 2
     (tmp_path / "spec.json").write_text(json.dumps(other))

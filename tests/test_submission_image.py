@@ -63,7 +63,7 @@ def test_the_base_is_the_specs_name_at_the_digest_pinned_or_given(spec):
     assert base == BaseImage(name=spec.submission["base_image"]["name"], digest=FAKE_BASE_DIGEST)
     assert base.tag == f"{spec.submission['base_image']['name']}:{'b' * 64}"
     with pytest.raises(SubmissionError, match="is not an image digest"):
-        base_image(spec, "icil-policy-base:latest")
+        base_image(spec, "vector-policy-base:latest")
 
 
 def test_build_base_image_builds_the_dockerfile_from_the_repository_root(spec, docker):
@@ -81,7 +81,7 @@ def test_build_base_image_builds_the_dockerfile_from_the_repository_root(spec, d
 def test_ensure_base_wants_exactly_the_digest_on_this_host(spec, docker, base):
     with pytest.raises(SubmissionError, match="is not on this host"):
         ensure_base(docker, base)
-    docker.images["icil-policy-base:latest"] = "sha256:" + "c" * 64
+    docker.images["vector-policy-base:latest"] = "sha256:" + "c" * 64
     with pytest.raises(SubmissionError, match="is not on this host"):
         ensure_base(docker, base), "another build under the name is not the pinned base"
     docker.images["something:else"] = FAKE_BASE_DIGEST

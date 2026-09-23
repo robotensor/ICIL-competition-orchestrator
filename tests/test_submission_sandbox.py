@@ -460,7 +460,7 @@ def test_a_container_that_exits_before_listening_is_rejected_at_start(
     built = build_submission_image(
         docker, sandbox_spec, root, check_repository(root, sandbox_spec), ref, base
     )
-    (root / "icil.yaml").unlink()  # the server has nothing to serve and exits 2 at once
+    (root / "policy.yaml").unlink()  # the server has nothing to serve and exits 2 at once
     with PolicyContainer(
         sandbox_spec, docker, built.tag, name="vector-policy-dead", socket_dir=tmp_path / "s"
     ) as container:

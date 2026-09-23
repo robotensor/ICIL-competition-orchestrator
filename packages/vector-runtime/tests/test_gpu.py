@@ -18,11 +18,11 @@ pytest.importorskip("behavior_prompting")
 if not torch.cuda.is_available():
     pytest.skip("no CUDA device", allow_module_level=True)
 
-from bpp_runtime import WEIGHTS_FILENAME, parity  # noqa: E402
-from bpp_runtime.check import check  # noqa: E402
-from bpp_runtime.convert import convert  # noqa: E402
-from bpp_runtime.model import WeightsError, load_policy  # noqa: E402
-from bpp_runtime.policy import BPPPolicy  # noqa: E402
+from vector_runtime import WEIGHTS_FILENAME, parity  # noqa: E402
+from vector_runtime.check import check  # noqa: E402
+from vector_runtime.convert import convert  # noqa: E402
+from vector_runtime.model import WeightsError, load_policy  # noqa: E402
+from vector_runtime.policy import BPPPolicy  # noqa: E402
 
 CHECKPOINTS = Path(os.environ.get("BPP_CHECKPOINTS", "/root/robotensor/.cache/brl1/checkpoints"))
 BASE = CHECKPOINTS / "epoch0000.ckpt"

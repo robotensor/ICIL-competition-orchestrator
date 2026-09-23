@@ -215,7 +215,7 @@ def test_the_same_compile_anywhere_but_tmp_is_not_written_or_not_run(
     container) and /run/vector (the socket directory, which the policy may write) take it and refuse
     to run it."""
     outside = shutil.copytree(JIT_POLICY, tmp_path / "outside")
-    (outside / "icil.yaml").write_text(
+    (outside / "policy.yaml").write_text(
         "api: 1\npolicy: cjit.policy:CJitPolicy\nkwargs:\n  build_dir: /submission\n"
     )
     image = build(outside, "local/jit_outside")

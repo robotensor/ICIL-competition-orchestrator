@@ -8,8 +8,8 @@ import struct
 
 import pytest
 
-from bpp_runtime.header import HeaderError, read_header
 from st_testing import TENSORS, safetensors_bytes
+from vector_runtime.header import HeaderError, read_header
 
 
 def parse(data: bytes, **kwargs):

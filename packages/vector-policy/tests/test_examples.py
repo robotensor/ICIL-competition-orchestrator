@@ -10,7 +10,7 @@ NAMES = ("replay_policy", "zero_policy")
 
 def build(examples, name, monkeypatch):
     """The example's policy, built the way the server builds it: from its manifest's root."""
-    loaded = manifest.load(examples / name / "icil.yaml")
+    loaded = manifest.load(examples / name / "policy.yaml")
     monkeypatch.syspath_prepend(str(loaded.root))
     cls = getattr(importlib.import_module(loaded.module), loaded.attribute)
     return cls(**loaded.kwargs)
@@ -18,7 +18,7 @@ def build(examples, name, monkeypatch):
 
 @pytest.mark.parametrize("name", NAMES)
 def test_each_example_is_a_complete_repository_with_a_valid_manifest(examples, name):
-    loaded = manifest.load(examples / name / "icil.yaml")
+    loaded = manifest.load(examples / name / "policy.yaml")
     assert loaded.requirements_path is not None and loaded.requirements_path.is_file()
     assert (examples / name / "README.md").is_file()
     assert (loaded.root / loaded.module.replace(".", "/")).with_suffix(".py").is_file()

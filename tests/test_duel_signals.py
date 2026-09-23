@@ -110,7 +110,7 @@ def mid_unit(process: subprocess.Popen, tmp_path: Path, slow: Path) -> tuple[int
     while time.monotonic() < deadline:
         assert process.poll() is None, (tmp_path / "duel.log").read_text()
         started = sorted((tmp_path / "runs").glob(f"{TRACK}/*/challenger/*/runs.log"))
-        policies = processes_running(str(slow / "icil.yaml"))
+        policies = processes_running(str(slow / "policy.yaml"))
         if started and policies and started[0].read_text().strip():
             return int(started[0].read_text().split()[0]), policies
         time.sleep(0.05)

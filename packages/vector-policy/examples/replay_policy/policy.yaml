@@ -1,4 +1,4 @@
-# A competitor's manifest. `python -m vector_policy.serve --manifest icil.yaml` serves this policy.
+# A competitor's manifest. `python -m vector_policy.serve --manifest policy.yaml` serves this policy.
 api: 1
 policy: replay.policy:ReplayPolicy
 requirements: requirements.txt

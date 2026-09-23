@@ -1,6 +1,6 @@
 """A BPP training checkpoint -> `model.safetensors`, the one file a submission holds.
 
-    bpp-runtime convert --ckpt epoch=0004.ckpt --out DIR
+    vector-runtime convert --ckpt epoch=0004.ckpt --out DIR
 
 What a miner runs, on a checkpoint of their own. A checkpoint is a dill pickle of the training
 workspace (`cfg`, `state_dicts.{model,optimizer}`, `pickles`): unpickling one runs whatever it

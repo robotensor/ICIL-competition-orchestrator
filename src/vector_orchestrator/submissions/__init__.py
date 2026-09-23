@@ -6,7 +6,7 @@ The pieces, in the order a submission goes through them:
   time. Everything published hangs off that sha.
 - `fetch`: the repository at that sha into a content-addressed cache, no larger than
   `spec.submission.max_repo_bytes`.
-- `checks`: `icil.yaml` and what it names, looked at without importing anything from it.
+- `checks`: `policy.yaml` and what it names, looked at without importing anything from it.
 - `image`: the pinned base image and a submission's own image, built from it by digest.
 - `container`: the served policy inside `spec.submission.sandbox`, spoken to over one socket.
 - `check`: all of the above in order, for `vector-orchestrator submission check`.

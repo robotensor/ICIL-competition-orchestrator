@@ -26,7 +26,7 @@ def test_the_shipped_contract_is_one_franka_track_on_robotwin(spec, track):
         assert spec.category(skill) in ROBOTWIN_CATEGORIES
         assert spec.env(skill)["embodiment"][:2] == ["franka-panda", "franka-panda"]
         assert spec.env(skill)["action_dims"] == {"qpos": 16, "ee": 16}
-    assert spec.benchmark_pin("robotwin")["distribution"] == "robotwin-icil-competition"
+    assert spec.benchmark_pin("robotwin")["distribution"] == "robotensor-benchmark-robotwin"
     assert "PROVISIONAL" not in spec.raw["_skills_comment"]
     assert "surveyed `franka_1arm` suite" in spec.raw["_skills_comment"]
     assert spec.units_per_side(track, "smoke") == 3 * spec.units_per_skill(track, "smoke")
@@ -104,7 +104,7 @@ def test_validate_rejects_bad_specs(spec_doc, write_spec):
         lambda d: d["skills"]["franka_stacking"].update(benchmark="unity")
     )
     assert "skills.franka_stacking.architecture removed" in errors_after(
-        lambda d: d["skills"]["franka_stacking"].update(architecture="bpp")
+        lambda d: d["skills"]["franka_stacking"].update(architecture="anything")
     )
     assert any("model removed" in e for e in errors_after(lambda d: d.update(model={})))
     assert "benchmarks.robotwin.api_version == 1" in errors_after(

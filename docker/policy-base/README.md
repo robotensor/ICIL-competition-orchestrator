@@ -29,7 +29,7 @@ vector-orchestrator submission build-base            # context: the repository r
 ```
 
 prints the image's digest (`sha256:<64 hex>`, the id Docker computes over its configuration and
-layers) and tags the image `icil-policy-base:<hex>` and `icil-policy-base:latest`. The digest
+layers) and tags the image `vector-policy-base:<hex>` and `vector-policy-base:latest`. The digest
 belongs in `spec.json` under `submission.base_image.digest`; until it is pinned there, `submission
 check --base-image <digest>` names it, and every check or duel record names the digest it ran on.
 
@@ -49,7 +49,7 @@ before. So:
   ```bash
   vector-orchestrator submission build-base                  # prints it on stdout
   vector-orchestrator submission build-base --json           # "image_id"
-  docker image inspect --format '{{.Id}}' icil-policy-base:latest   # an image built before
+  docker image inspect --format '{{.Id}}' vector-policy-base:latest   # an image built before
   ```
 
 - Pinning a digest pins that one image. A host that judges against it needs that image, moved with

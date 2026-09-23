@@ -7,7 +7,7 @@ import pytest
 from vector_policy import ManifestError, manifest
 
 
-def write(root, text, name="icil.yaml"):
+def write(root, text, name="policy.yaml"):
     path = root / name
     path.write_text(textwrap.dedent(text))
     return path
@@ -48,7 +48,7 @@ def test_every_key_is_read(tmp_path):
 def test_a_relative_path_is_made_absolute(tmp_path, monkeypatch):
     write(tmp_path, "api: 1\npolicy: a:B\n")
     monkeypatch.chdir(tmp_path)
-    assert manifest.load("icil.yaml").path == tmp_path / "icil.yaml"
+    assert manifest.load("policy.yaml").path == tmp_path / "policy.yaml"
 
 
 def test_every_problem_is_listed_in_one_error(tmp_path):
@@ -202,4 +202,4 @@ def test_a_python_tag_is_refused_and_never_run(tmp_path):
 
 def test_a_missing_file_is_a_manifest_error(tmp_path):
     with pytest.raises(ManifestError, match="cannot be read"):
-        manifest.load(tmp_path / "icil.yaml")
+        manifest.load(tmp_path / "policy.yaml")

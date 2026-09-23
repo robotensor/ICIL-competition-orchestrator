@@ -193,11 +193,11 @@ def test_a_refused_submission_fails_every_unit_with_the_reason_and_serves_nothin
 ):
     runtime = FakePolicyRuntime(duel_spec)
     results = side(
-        duel_spec, fake, units, prompts, tmp_path, runtime, refused="manifest: icil.yaml: api"
+        duel_spec, fake, units, prompts, tmp_path, runtime, refused="manifest: policy.yaml: api"
     )
     assert all((r["success"], r["void"]) == (False, False) for r in results.values())
     assert {r["error"] for r in results.values()} == {
-        "the challenger's submission was refused: manifest: icil.yaml: api"
+        "the challenger's submission was refused: manifest: policy.yaml: api"
     }
     assert runtime.serves == []
 
@@ -406,7 +406,7 @@ def slow_policy(root: Path, act_s: float) -> Path:
         "        k, self.k = min(self.k, len(self.actions) - 1), self.k + 1\n"
         "        return {'action': self.actions[k]}\n"
     )
-    (root / "icil.yaml").write_text("api: 1\npolicy: slow.policy:Policy\n")
+    (root / "policy.yaml").write_text("api: 1\npolicy: slow.policy:Policy\n")
     return root
 
 

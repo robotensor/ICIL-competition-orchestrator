@@ -48,7 +48,7 @@ def test_the_replay_example_gets_the_demonstrations_next_action_back_end_to_end(
     examples, serve, demonstration, transport
 ):
     address = free_tcp_address() if transport == "tcp" else None
-    server = serve(examples / "replay_policy" / "icil.yaml", address=address)
+    server = serve(examples / "replay_policy" / "policy.yaml", address=address)
     arrays, info = demonstration
     actions = arrays["actions"]
     with remote(server) as policy:
@@ -72,7 +72,7 @@ def test_the_replay_example_gets_the_demonstrations_next_action_back_end_to_end(
 
 
 def test_the_zero_example_answers_zeros_of_an_action_row(examples, serve, demonstration):
-    server = serve(examples / "zero_policy" / "icil.yaml")
+    server = serve(examples / "zero_policy" / "policy.yaml")
     arrays, info = demonstration
     with remote(server) as policy:
         assert policy.hello()["action_type"] == "qpos"
@@ -210,7 +210,7 @@ def test_a_server_that_starts_listening_late_is_waited_for(examples, serve):
     thread.start()
     try:
         time.sleep(0.5)
-        server = serve(examples / "zero_policy" / "icil.yaml", address=address, authkey=key)
+        server = serve(examples / "zero_policy" / "policy.yaml", address=address, authkey=key)
         thread.join(timeout=30)
         assert "policy" in connected, connected
         with connected["policy"] as policy:

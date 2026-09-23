@@ -1,6 +1,6 @@
 """Converted weights served by `BPPPolicy` act exactly as the original checkpoint does.
 
-    bpp-runtime parity --ckpt X.ckpt --weights DIR --prompt PROMPT.npz [--seed 0] [--steps 30]
+    vector-runtime parity --ckpt X.ckpt --weights DIR --prompt PROMPT.npz [--seed 0] [--steps 30]
                        [--xpolicylab DIR] [--tolerance 1e-5]
 
 Two policies, one process, one GPU:
@@ -18,7 +18,7 @@ observations, with diffusion noise drawn from a generator seeded alike, and ever
 match. When XPolicyLab is importable (`--xpolicylab`, or already on the path) the reference is
 handed the demonstration as a real XPolicyLab HDF5 file, written as RoboTwin's `pkl2hdf5` writes
 one (`images_encoding`, fixed-width byte columns) and read back by behavior_prompting's own
-reader, so the candidate's in-memory conversion (`bpp_runtime.demo`) is checked too. Otherwise
+reader, so the candidate's in-memory conversion (`vector_runtime.demo`) is checked too. Otherwise
 the reference gets the candidate's converted trajectory and only the model is compared.
 """
 

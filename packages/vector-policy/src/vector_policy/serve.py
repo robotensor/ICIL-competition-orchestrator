@@ -369,9 +369,9 @@ def _accept(listener: Listener) -> Any:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m vector_policy.serve",
-        description="Serve the policy named by an icil.yaml to one client, then exit.",
+        description="Serve the policy named by an policy.yaml to one client, then exit.",
     )
-    parser.add_argument("--manifest", required=True, help="the competitor repository's icil.yaml")
+    parser.add_argument("--manifest", required=True, help="the competitor repository's policy.yaml")
     parser.add_argument(
         "--address", required=True, help="a Unix socket path, or host:port, to listen on"
     )

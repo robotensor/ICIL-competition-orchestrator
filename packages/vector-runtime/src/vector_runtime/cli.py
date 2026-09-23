@@ -1,9 +1,9 @@
-"""`bpp-runtime`: check, convert, template, parity.
+"""`vector-runtime`: check, convert, template, parity.
 
-    bpp-runtime check    --weights DIR_OR_FILE [--template DIR] [--max-bytes N] [--no-hash]
-    bpp-runtime convert  --ckpt X.ckpt --out DIR [--template DIR] [--overwrite]
-    bpp-runtime template --ckpt X.ckpt --out DIR [--name NAME] [--exec-action-horizon 12]
-    bpp-runtime parity   --ckpt X.ckpt --weights DIR --prompt PROMPT.npz [--seed 0] [--steps 30]
+    vector-runtime check    --weights DIR_OR_FILE [--template DIR] [--max-bytes N] [--no-hash]
+    vector-runtime convert  --ckpt X.ckpt --out DIR [--template DIR] [--overwrite]
+    vector-runtime template --ckpt X.ckpt --out DIR [--name NAME] [--exec-action-horizon 12]
+    vector-runtime parity   --ckpt X.ckpt --weights DIR --prompt PROMPT.npz [--seed 0] [--steps 30]
 
 Each prints one JSON report on standard output and exits 0 when it passed, 1 when it did not and
 2 on a usage error. Only `check` runs without the `model` extra, and it imports no torch.
@@ -25,7 +25,7 @@ EXIT_FAILED = 1
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="bpp-runtime", description=__doc__.split("\n")[0])
+    parser = argparse.ArgumentParser(prog="vector-runtime", description=__doc__.split("\n")[0])
     commands = parser.add_subparsers(dest="command", required=True)
 
     check = commands.add_parser("check", help="check model.safetensors against the template")

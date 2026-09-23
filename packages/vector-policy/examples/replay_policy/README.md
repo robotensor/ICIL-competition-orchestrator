@@ -7,7 +7,7 @@ beat.
 
 A submission repository holds:
 
-- `icil.yaml` - names the policy class (`replay.policy:ReplayPolicy`) and its requirements;
+- `policy.yaml` - names the policy class (`replay.policy:ReplayPolicy`) and its requirements;
 - `requirements.txt` - what the policy needs beyond `vector-policy`;
 - `replay/` - the policy's code, importable from the repository root.
 
@@ -16,7 +16,7 @@ Serve it locally, the way the competition does in a sandboxed container:
 ```bash
 pip install vector-policy   # or: pip install -e packages/vector-policy from the orchestrator repo
 export VECTOR_POLICY_AUTHKEY=$(python -c "import secrets; print(secrets.token_hex(32))")
-python -m vector_policy.serve --manifest icil.yaml --address /tmp/replay.sock \
+python -m vector_policy.serve --manifest policy.yaml --address /tmp/replay.sock \
     --authkey-env VECTOR_POLICY_AUTHKEY --log-file /tmp/replay.log
 ```
 

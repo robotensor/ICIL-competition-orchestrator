@@ -56,7 +56,7 @@ def serve(example: str, workdir: Path):
             "-m",
             "vector_policy.serve",
             "--manifest",
-            str(EXAMPLES / example / "icil.yaml"),
+            str(EXAMPLES / example / "policy.yaml"),
             "--address",
             str(address),
             "--authkey-env",

@@ -6,10 +6,10 @@
       },
       "installed_version": null,
       "pin": {
-        "_comment": "Pinned by distribution, version and wheel sha256 once the wheel is built (robotensor/ICIL-robotwin-benchmark#86). Entry-point discovery imports code into the orchestrator, so the pin is checked from the installed distribution's metadata before anything is imported from it. null means not yet pinned, and `icil-orchestrator benchmarks check` says so.",
+        "_comment": "Pinned by distribution, version and wheel sha256 once the wheel is built (robotensor/RoboTwin-Vector#86). Entry-point discovery imports code into the orchestrator, so the pin is checked from the installed distribution's metadata before anything is imported from it. null means not yet pinned, and `vector-orchestrator benchmarks check` says so.",
         "api_version": 1,
-        "distribution": "robotwin-icil-competition",
-        "repo": "robotensor/ICIL-robotwin-benchmark",
+        "distribution": "robotensor-benchmark-robotwin",
+        "repo": "robotensor/RoboTwin-Vector",
         "version": null,
         "wheel_sha256": null
       }
@@ -154,7 +154,7 @@
       "wall_seconds": 1800.0
     }
   },
-  "spec_fingerprint": "351de61f8572d7579940d9c0360667a94250647d0ee2d1aa841a4dc00f20905c",
+  "spec_fingerprint": "4d211da87d4a05bd40ddae0c15e7cc448fa76b06db10ef45a4cffa92bd712e4b",
   "spec_version": 7,
   "started_at": "2026-09-13T10:00:00Z",
   "ties": 3,

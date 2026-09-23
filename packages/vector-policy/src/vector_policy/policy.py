@@ -1,6 +1,6 @@
 """What a competitor implements: the `Policy` protocol.
 
-A policy is a plain class. The server builds it once from `icil.yaml`, with the manifest's
+A policy is a plain class. The server builds it once from `policy.yaml`, with the manifest's
 `kwargs`, and then, for as long as its one client is connected:
 
 - `set_demonstration(arrays, info)` hands it the one demonstration, as named arrays. The names are

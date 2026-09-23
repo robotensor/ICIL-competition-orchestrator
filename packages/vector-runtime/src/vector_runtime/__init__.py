@@ -3,13 +3,13 @@
 A miner submits weights only: one `model.safetensors`, no code and no pickle. Everything that
 turns those bytes into a policy is the validator's:
 
-- `bpp_runtime.check`: is this file exactly the pinned architecture's tensors? Header only, the
+- `vector_runtime.check`: is this file exactly the pinned architecture's tensors? Header only, the
   standard library only, so it runs on a host without torch.
-- `bpp_runtime.template`: the pinned architecture, `arch/<name>.cfg.json` (the resolved model and
+- `vector_runtime.template`: the pinned architecture, `arch/<name>.cfg.json` (the resolved model and
   prompt-dataset configuration) and `arch/<name>.tensors.json` (every tensor's shape and dtype).
-- `bpp_runtime.policy.BPPPolicy`: builds the model from the template, loads the weights and
+- `vector_runtime.policy.BPPPolicy`: builds the model from the template, loads the weights and
   serves it over the `vector-policy` protocol.
-- `bpp_runtime.convert`: what a miner runs to turn a training checkpoint into `model.safetensors`;
+- `vector_runtime.convert`: what a miner runs to turn a training checkpoint into `model.safetensors`;
   the only code that unpickles, and only a file its caller owns.
 
 Importing this package imports nothing but the standard library.

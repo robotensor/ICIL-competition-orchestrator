@@ -1,14 +1,14 @@
 """`BPPPolicy`: a weights-only BPP submission, served over the `vector-policy` protocol.
 
-    # icil.yaml of the validator's own policy repository
+    # policy.yaml of the validator's own policy repository
     api: 1
-    policy: bpp_runtime.policy:BPPPolicy
+    policy: vector_runtime.policy:BPPPolicy
     kwargs: {weights: /abs/path/to/model.safetensors, device: "cuda:0"}
 
 It reproduces the reference XPolicyLab adapter (`XPolicyLab/policy/BPP/model.py`) on the
 benchmark's arrays, and nothing from the submission but its tensors is used:
 
-- `set_demonstration` turns the demonstration into the training data's form (`bpp_runtime.demo`:
+- `set_demonstration` turns the demonstration into the training data's form (`vector_runtime.demo`:
   one frame fewer, JPEG round trip, XPolicyLab names) and builds the prompt with the task's own
   dataset class (`only_prompt=True`), as the reference `build_prompt` does. The network encodes it
   once; it is kept until the next `reset`.
@@ -37,7 +37,7 @@ import numpy as np
 from . import ARCHITECTURE
 from . import demo as demo_mod
 
-log = logging.getLogger("bpp_runtime.policy")
+log = logging.getLogger("vector_runtime.policy")
 
 #: The task name the prompt's one-episode replay buffer is filed under (the reference's default).
 PROMPT_TASK = "demo"

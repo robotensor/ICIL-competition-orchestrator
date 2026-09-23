@@ -14,9 +14,9 @@ pip install -e packages/vector-policy     # from the orchestrator repository
 pytest packages/vector-policy             # its tests, on their own
 ```
 
-## For a competitor: a policy and its `icil.yaml`
+## For a competitor: a policy and its `policy.yaml`
 
-A submission is a repository with `icil.yaml` at its root:
+A submission is a repository with `policy.yaml` at its root:
 
 ```yaml
 api: 1                              # required
@@ -52,7 +52,7 @@ demonstration's actions, [`examples/zero_policy`](examples/zero_policy) answers 
 
 ```bash
 export VECTOR_POLICY_AUTHKEY=$(python -c "import secrets; print(secrets.token_hex(32))")
-python -m vector_policy.serve --manifest examples/replay_policy/icil.yaml \
+python -m vector_policy.serve --manifest examples/replay_policy/policy.yaml \
     --address /tmp/policy.sock --authkey-env VECTOR_POLICY_AUTHKEY --log-file /tmp/policy.log
 ```
 

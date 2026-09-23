@@ -8,7 +8,7 @@
                --env TRITON_CACHE_DIR=... --env TORCHINDUCTOR_CACHE_DIR=...
                --env TORCH_EXTENSIONS_DIR=... --env VECTOR_POLICY_AUTHKEY <image>
                sh -c 'mkdir -p -m 0700 "$HOME" "$XDG_CACHE_HOME" && exec "$@"' sh
-               python -m vector_policy.serve --manifest /submission/icil.yaml
+               python -m vector_policy.serve --manifest /submission/policy.yaml
                       --address /run/vector/policy.sock --authkey-env VECTOR_POLICY_AUTHKEY
                       --log-file /run/vector/policy.log
 
